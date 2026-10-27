@@ -6,7 +6,13 @@ import { Pool } from "pg";
 import { SQL } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { getTableConfig, PgDialect } from "drizzle-orm/pg-core";
-import { ownReportsTable } from "@workspace/db/schema";
+import {
+  clientsTable,
+  membersTable,
+  ownReportsTable,
+  rolesTable,
+  sitesTable,
+} from "@workspace/db/schema";
 
 // Never read DATABASE_URL or WMS settings. No TCP listener, customer database,
 // shared development database, or caller-selected cleanup target is possible.
@@ -41,13 +47,21 @@ function renderSchemaSql(expression: SQL) {
 
 function renderDefault(value: unknown): string {
   if (value instanceof SQL) return renderSchemaSql(value);
+  if (Array.isArray(value) && value.length === 0) return "'{}'";
   if (typeof value === "string") return `'${value.replaceAll("'", "''")}'`;
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
   if (typeof value === "boolean") return value ? "true" : "false";
   throw new Error("Report fixture schema contains an unsupported column default");
 }
 
-function createTableFromDrizzleSchema(table: typeof ownReportsTable) {
+type FixtureTable =
+  | typeof clientsTable
+  | typeof sitesTable
+  | typeof rolesTable
+  | typeof membersTable
+  | typeof ownReportsTable;
+
+function createTableFromDrizzleSchema(table: FixtureTable) {
   const config = getTableConfig(table);
   const tableName = config.schema
     ? `${quoteIdentifier(config.schema)}.${quoteIdentifier(config.name)}`
@@ -58,6 +72,7 @@ function createTableFromDrizzleSchema(table: typeof ownReportsTable) {
     }
     const parts = [quoteIdentifier(column.name), column.getSQLType()];
     if (column.notNull) parts.push("NOT NULL");
+    if (column.primary) parts.push("PRIMARY KEY");
     if (column.hasDefault) {
       if (column.defaultFn) {
         throw new Error(`Report fixture cannot generate runtime default for ${column.name}`);
@@ -143,22 +158,17 @@ export async function startDatabase() {
     run("pg_ctl", ["-D", data, "-l", join(directory, "postgres.log"), "-o",
       `-F -k ${directory} -c listen_addresses=''`, "-w", "start"]);
     started = true;
-    // These supporting tables stay minimal; the report table and its indexes
-    // are generated from the real Drizzle schema to prevent constraint drift.
-    await pool.query(`
-      CREATE TABLE wareiq_clients (id text PRIMARY KEY, name text NOT NULL, active boolean NOT NULL DEFAULT true);
-      CREATE TABLE wareiq_sites (
-        id text PRIMARY KEY, client_id text NOT NULL REFERENCES wareiq_clients(id),
-        source_id text NOT NULL, name text NOT NULL, active boolean NOT NULL DEFAULT true);
-      CREATE TABLE wareiq_roles (
-        id text PRIMARY KEY, client_id text NOT NULL REFERENCES wareiq_clients(id), name text NOT NULL,
-        report_ids text[] NOT NULL DEFAULT '{}', can_create_own_reports boolean NOT NULL DEFAULT false);
-      CREATE TABLE wareiq_members (
-        id text PRIMARY KEY, email text NOT NULL UNIQUE, name text NOT NULL,
-        client_id text NOT NULL REFERENCES wareiq_clients(id), role_id text NOT NULL REFERENCES wareiq_roles(id),
-        site_ids text[] NOT NULL DEFAULT '{}', primary_site_id text, active boolean NOT NULL DEFAULT true);
-    `);
-    await pool.query(createTableFromDrizzleSchema(ownReportsTable));
+    // Generate every table from the production schema so column, default,
+    // foreign-key, check, and index changes cannot silently drift in tests.
+    for (const table of [
+      clientsTable,
+      sitesTable,
+      rolesTable,
+      membersTable,
+      ownReportsTable,
+    ]) {
+      await pool.query(createTableFromDrizzleSchema(table));
+    }
   } catch (error) {
     await stopDatabase();
     throw error; // Missing PostgreSQL binaries are a failure, never a skipped test.
