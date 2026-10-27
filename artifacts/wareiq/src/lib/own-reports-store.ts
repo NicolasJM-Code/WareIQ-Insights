@@ -6,6 +6,7 @@ import { useListAccessOwnReports, getListAccessOwnReportsQueryKey, saveAccessOwn
   deleteAccessOwnReport, type AccessOwnReport } from '@workspace/api-client-react';
 import { importAccessOwnReports, type AccessLegacyReportImportInput } from '@workspace/api-client-react';
 export { LEGACY_REPORTS_KEY as OWN_REPORTS_KEY } from './legacy-report-import';
+import { safeAnalyticsSection, trackEvent } from './analytics';
 import type { SectionId } from './report-catalog';
 import { useAccess } from './use-access';
 
@@ -14,16 +15,38 @@ export type OwnReport = Omit<AccessOwnReport, 'section'> & { section: SectionId 
 export type OwnReportInput = Pick<OwnReport, 'section' | 'name' | 'description' | 'dataset' | 'fields' | 'sourceDefault'>;
 export type SaveResult = { ok: true; report?: OwnReport } | { ok: false; error: string };
 const changed = () => window.dispatchEvent(new Event('wareiq-own-reports-changed'));
+function importFailureCategory(error: unknown): string {
+  if (error && typeof error === 'object') {
+    const value = error as { status?: unknown; response?: { status?: unknown } };
+    const status = typeof value.status === 'number' ? value.status : value.response?.status;
+    if (status === 401 || status === 403) return 'permission';
+    if (status === 409) return 'conflict';
+    if (status === 400 || status === 422) return 'invalid_selection';
+    if (typeof status === 'number') return 'server_error';
+  }
+  return error instanceof TypeError ? 'network' : 'unknown';
+}
 function errorMessage(error: unknown) {
   const body = (error as { data?: { error?: unknown } })?.data;
   return typeof body?.error === 'string' ? body.error : 'The report could not be saved. Check your permissions and try again.';
 }
 export async function importLegacyReports(input: AccessLegacyReportImportInput): Promise<SaveResult> {
+  const sections = new Set(input.reports.map((report) => report.section));
+  const section = sections.size === 1 ? safeAnalyticsSection(input.reports[0]?.section) : undefined;
+  const eventSection: Record<string, string> = section ? { section } : {};
+  const selectedCount = input.reports.length;
   try {
     await importAccessOwnReports(input);
     changed();
+    trackEvent('legacy_report_import_success', { ...eventSection, selected_count: selectedCount });
     return { ok: true };
   } catch (error) {
+    trackEvent('legacy_report_import_failure', {
+      ...eventSection,
+      stage: 'import',
+      reason: importFailureCategory(error),
+      selected_count: selectedCount,
+    });
     const message = (error as { data?: { error?: unknown } })?.data?.error;
     return { ok: false, error: typeof message === 'string' ? message :
       'The import could not be confirmed. Check your account reports before retrying. Browser originals are unchanged.' };

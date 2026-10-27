@@ -5,6 +5,7 @@ import { btn } from '@/components/reports-ui';
 import { getDataset, type Section } from '@/lib/report-catalog';
 import { clearCorruptLegacyReports, readLegacyReports, type LegacyPreview } from '@/lib/legacy-report-import';
 import { importLegacyReports, NAME_MAX, type OwnReport } from '@/lib/own-reports-store';
+import { safeAnalyticsSection, trackEvent } from '@/lib/analytics';
 import { useAccess } from '@/lib/use-access';
 
 export function LegacyReportImport({ section, reports, ready }: { section: Section; reports: OwnReport[]; ready: boolean }) {
@@ -33,6 +34,7 @@ function ImportForAccount({ section, reports, ready, ownerId, accountLabel, clie
   const [confirmCleanup, setConfirmCleanup] = useState(false);
   const [cleanupNotice, setCleanupNotice] = useState('');
   const inFlight = useRef(false);
+  const cancellationTracked = useRef(false);
   const candidates = preview?.candidates.filter((r) => r.input.section === section.id) ?? [];
   const picked = candidates.filter((r) => selected.includes(r.index));
   const nameFor = (r: typeof candidates[number]) => (names[r.index] ?? r.input.name).trim();
@@ -49,14 +51,46 @@ function ImportForAccount({ section, reports, ready, ownerId, accountLabel, clie
       return 'This name is already used in this section. Rename it or leave it unselected.';
     return undefined;
   }
+  function cancelImport() {
+    if (!done && preview && !cancellationTracked.current) {
+      cancellationTracked.current = true;
+      const safeSection = safeAnalyticsSection(section.id);
+      trackEvent('legacy_report_import_cancel', {
+        ...(safeSection ? { section: safeSection } : {}),
+        selected_count: picked.length,
+      });
+    }
+    setPreview(null);
+  }
   const canSubmit = ready && !busy && !done && confirmed && picked.length > 0 && picked.length <= 50 && picked.every((r) => !issue(r));
   return <>
     <button className={btn.ghost} disabled={!ready} data-testid="button-preview-legacy" onClick={() => {
       setSelected([]); setNames({}); setConfirmed(false); setDone(false); setError('');
       setConfirmCleanup(false); setCleanupNotice('');
-      setPreview(readLegacyReports());
+      cancellationTracked.current = false;
+      const nextPreview = readLegacyReports();
+      setPreview(nextPreview);
+      const safeSection = safeAnalyticsSection(section.id);
+      trackEvent('legacy_report_import_preview', {
+        ...(safeSection ? { section: safeSection } : {}),
+        candidate_count: nextPreview.candidates.filter((r) => r.input.section === section.id).length,
+        invalid_count: nextPreview.invalid,
+        result: nextPreview.error ? 'failed' : nextPreview.candidates.some((r) => r.input.section === section.id) ? 'available' : 'empty',
+      });
+      if (nextPreview.error) {
+        const reason = nextPreview.error === 'Browser storage is blocked or unavailable. Originals are unchanged.' ? 'storage_unavailable'
+          : nextPreview.error === 'Browser reports are too large to preview safely. Originals are unchanged.' ? 'too_large'
+            : nextPreview.error === 'Unsupported browser report format. Originals are unchanged.' ? 'unsupported_format'
+              : nextPreview.error === 'Browser reports could not be read. Originals are unchanged.' ? 'unreadable_data'
+                : 'preview_failed';
+        trackEvent('legacy_report_import_failure', {
+          ...(safeSection ? { section: safeSection } : {}),
+          stage: 'preview',
+          reason,
+        });
+      }
     }}>Import browser reports</button>
-    <Dialog open={preview !== null} onOpenChange={(open) => { if (!open && !inFlight.current) setPreview(null); }}>
+    <Dialog open={preview !== null} onOpenChange={(open) => { if (!open && !inFlight.current) cancelImport(); }}>
       <DialogContent className="max-w-2xl" data-testid="dialog-legacy-import">
         <DialogHeader>
           <DialogTitle>Import browser reports · {section.label}</DialogTitle>
@@ -126,9 +160,14 @@ function ImportForAccount({ section, reports, ready, ownerId, accountLabel, clie
           {error && <p role="alert" className="text-sm text-destructive" data-testid="error-legacy-import">{error}</p>}
         </>}
         <div className="flex justify-end gap-2">
-          <button className={btn.ghost} disabled={busy} onClick={() => setPreview(null)} data-testid="button-cancel-legacy">{done ? 'Close' : 'Cancel'}</button>
+          <button className={btn.ghost} disabled={busy} onClick={cancelImport} data-testid="button-cancel-legacy">{done ? 'Close' : 'Cancel'}</button>
           {!done && <button className={btn.primary} disabled={!canSubmit} data-testid="button-confirm-legacy-import" onClick={async () => {
             if (!canSubmit || inFlight.current) return;
+            const safeSection = safeAnalyticsSection(section.id);
+            trackEvent('legacy_report_import_confirmation', {
+              ...(safeSection ? { section: safeSection } : {}),
+              selected_count: picked.length,
+            });
             inFlight.current = true; setBusy(true); setError('');
             try {
               const result = await importLegacyReports({ expectedOwnerId: ownerId, expectedClientId: clientId, confirmedOwnership: true,

@@ -3,3 +3,4 @@
 - [Clerk provider test boundaries](clerk-provider-testing.md) — bare development cookies can yield misleading denial results; require a successful control for each transport.
 - [Access-history evidence](access-history-evidence.md) — current provider roles cannot prove the outcome of an interrupted historical attempt.
 - [Authorization fixtures](authorization-fixtures.md) — positive role checks require a verified primary email and isolated membership reads.
+- [Workspace type outputs](workspace-type-outputs.md) — run the root library typecheck build before diagnosing app errors caused by stale referenced package declarations.
