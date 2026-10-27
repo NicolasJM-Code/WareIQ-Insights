@@ -1,13 +1,13 @@
 import { type ReactNode } from 'react';
-import { Show } from '@clerk/react';
+import { useAuth } from '@clerk/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
-import { Route, Switch, Redirect, useLocation, Router as WouterRouter } from 'wouter';
-import { AuthProvider, Landing, SignInPage, SignUpPage } from '@/components/auth-provider';
-import { ReportingAccess, AdministratorAccess } from '@/lib/access';
+import { Route, Switch, useLocation, Router as WouterRouter } from 'wouter';
+import { AuthProvider, SignInPage, SignUpPage } from '@/components/auth-provider';
+import { AdministratorAccess } from '@/lib/access';
 import { AppShell } from '@/components/shell';
 import { ReportProvider } from '@/lib/report-context';
 import Dashboard from '@/pages/dashboard';
@@ -25,6 +25,8 @@ import Settings from '@/pages/settings';
 import { SECTIONS } from '@/lib/report-catalog';
 import { ReportsIndex, DefaultReportView } from '@/pages/section-reports';
 import { OwnReportsIndex, OwnReportView, OwnReportBuilder } from '@/pages/own-reports';
+import { AccessGate } from '@/components/access-gate';
+import UserAccess from '@/pages/user-access';
 
 const queryClient = new QueryClient();
 
@@ -32,7 +34,7 @@ function Router() {
   return (
     <AppShell>
       <RoutedErrorBoundary>
-        <Switch>
+        <AccessGate><Switch>
           <Route path="/" component={Dashboard} />
           <Route path="/dashboard" component={Dashboard} />
           {SECTIONS.flatMap((s) => [
@@ -54,8 +56,9 @@ function Router() {
           <Route path="/labour" component={Labour} />
           <Route path="/exceptions" component={Exceptions} />
           <Route path="/settings"><AdministratorAccess><Settings /></AdministratorAccess></Route>
+          <Route path="/user-access" component={UserAccess} />
           <Route component={NotFound} />
-        </Switch>
+        </Switch></AccessGate>
       </RoutedErrorBoundary>
     </AppShell>
   );
@@ -72,18 +75,22 @@ function App() {
       <TooltipProvider>
         <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
           <AuthProvider>
-            <Switch>
-              <Route path="/"><Show when="signed-in"><Redirect to="/dashboard" /></Show><Show when="signed-out"><Landing /></Show></Route>
+            <ReportScope><Switch>
               <Route path="/sign-in/*?" component={SignInPage} />
               <Route path="/sign-up/*?" component={SignUpPage} />
-              <Route><ReportingAccess><ReportProvider><Router /></ReportProvider></ReportingAccess></Route>
-            </Switch>
+              <Route><Router /></Route>
+            </Switch></ReportScope>
           </AuthProvider>
         </WouterRouter>
         <Toaster />
       </TooltipProvider>
     </QueryClientProvider>
   );
+}
+
+function ReportScope({ children }: { children: ReactNode }) {
+  const { userId, sessionId } = useAuth();
+  return <ReportProvider key={`${userId}:${sessionId}`}>{children}</ReportProvider>;
 }
 
 export default App;

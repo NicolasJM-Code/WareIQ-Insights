@@ -30,6 +30,8 @@ function loadPrefs(key: string): Prefs {
 }
 
 interface Ctx {
+  siteId: string;
+  setSiteId: (siteId: string) => void;
   warehouse: 'ALL' | WhCode;
   setWarehouse: (w: 'ALL' | WhCode) => void;
   range: RangeDays;
@@ -46,6 +48,7 @@ const ReportCtx = createContext<Ctx | null>(null);
 export function ReportProvider({ children }: { children: ReactNode }) {
   const { userId } = useAuth();
   const key = `${KEY}.${userId}`;
+  const [siteId, setSiteId] = useState('');
   const [prefs, setPrefsState] = useState<Prefs>(() => loadPrefs(key));
   const [warehouse, setWarehouse] = useState<'ALL' | WhCode>('ALL');
   const [range, setRange] = useState<RangeDays>(prefs.defaultRange);
@@ -79,7 +82,7 @@ export function ReportProvider({ children }: { children: ReactNode }) {
     setPrefsState(DEFAULT_PREFS);
   }, [key]);
 
-  const value = useMemo(() => ({ warehouse, setWarehouse, range, setRange, refreshedAt, refreshing, refresh, prefs, setPrefs, resetPrefs }), [warehouse, range, refreshedAt, refreshing, refresh, prefs, setPrefs, resetPrefs]);
+  const value = useMemo(() => ({ siteId, setSiteId, warehouse, setWarehouse, range, setRange, refreshedAt, refreshing, refresh, prefs, setPrefs, resetPrefs }), [siteId, warehouse, range, refreshedAt, refreshing, refresh, prefs, setPrefs, resetPrefs]);
   return <ReportCtx.Provider value={value}>{children}</ReportCtx.Provider>;
 }
 

@@ -1,139 +1,62 @@
-// Own report DEFINITIONS saved in this browser's localStorage (versioned).
-// Only names, dataset ids and field keys are stored: never operational rows,
-// never credentials. Namespaced by the verified signed-in user.
-import { useSyncExternalStore } from 'react';
-import { SECTION_IDS, type SectionId } from './report-catalog';
+// Definitions are scoped to the signed-in account and client on the server.
+// Legacy browser-only definitions are left untouched and never auto-imported.
+import { useEffect } from 'react';
+import { useUser } from '@clerk/react';
+import { useListAccessOwnReports, getListAccessOwnReportsQueryKey, saveAccessOwnReport,
+  deleteAccessOwnReport, type AccessOwnReport } from '@workspace/api-client-react';
+import type { SectionId } from './report-catalog';
+import { useAccess } from './use-access';
 
 export const OWN_REPORTS_KEY = 'wareiq.own-reports';
-let storageKey: string | null = null;
-const VERSION = 1;
-
-export interface OwnReport { id: string; section: SectionId; name: string; description: string; dataset: string; fields: string[]; createdAt: string; updatedAt: string; sourceDefault?: string }
-export type OwnReportInput = Pick<OwnReport, 'section' | 'name' | 'description' | 'dataset' | 'fields' | 'sourceDefault'>;
-
-interface State { status: 'ok' | 'corrupt' | 'unavailable'; reports: OwnReport[]; invalid: unknown[]; detail?: string }
-export type SaveResult = { ok: true; report?: OwnReport } | { ok: false; error: string };
-
-const isStr = (v: unknown): v is string => typeof v === 'string';
 export const NAME_MAX = 80;
-
-function validate(x: unknown): OwnReport | null {
-  if (!x || typeof x !== 'object') return null;
-  const o = x as Record<string, unknown>;
-  if (!isStr(o.id) || !o.id) return null;
-  if (!isStr(o.section) || !(SECTION_IDS as string[]).includes(o.section)) return null;
-  if (!isStr(o.name) || !o.name.trim() || o.name.length > NAME_MAX) return null;
-  if (!isStr(o.dataset) || !o.dataset) return null;
-  if (!Array.isArray(o.fields) || !o.fields.length || !o.fields.every(isStr)) return null;
-  if (!isStr(o.createdAt) || !isStr(o.updatedAt)) return null;
-  if (o.description != null && !isStr(o.description)) return null;
-  if (o.sourceDefault != null && !isStr(o.sourceDefault)) return null;
-  return {
-    id: o.id, section: o.section as SectionId, name: o.name, description: (o.description as string | undefined) ?? '', dataset: o.dataset,
-    fields: [...new Set(o.fields as string[])], createdAt: o.createdAt, updatedAt: o.updatedAt, sourceDefault: o.sourceDefault as string | undefined,
-  };
+export type OwnReport = Omit<AccessOwnReport, 'section'> & { section: SectionId };
+export type OwnReportInput = Pick<OwnReport, 'section' | 'name' | 'description' | 'dataset' | 'fields' | 'sourceDefault'>;
+export type SaveResult = { ok: true; report?: OwnReport } | { ok: false; error: string };
+const changed = () => window.dispatchEvent(new Event('wareiq-own-reports-changed'));
+function errorMessage(error: unknown) {
+  const body = (error as { data?: { error?: unknown } })?.data;
+  return typeof body?.error === 'string' ? body.error : 'The report could not be saved. Check your permissions and try again.';
 }
-
-function load(): State {
-  if (!storageKey) return { status: 'ok', reports: [], invalid: [] };
-  let raw: string | null;
+export async function createReport(input: OwnReportInput): Promise<SaveResult> {
   try {
-    raw = localStorage.getItem(storageKey);
-  } catch {
-    return { status: 'unavailable', reports: [], invalid: [], detail: 'Browser storage is blocked, so own reports cannot be read or saved.' };
-  }
-  if (raw == null) return { status: 'ok', reports: [], invalid: [] };
+    const report = await saveAccessOwnReport(input);
+    changed();
+    return { ok: true, report: report as OwnReport };
+  } catch (error) { return { ok: false, error: errorMessage(error) }; }
+}
+export async function updateReport(id: string, input: OwnReportInput): Promise<SaveResult> {
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== 'object') throw new Error('not an object');
-    const p = parsed as { version?: unknown; reports?: unknown };
-    if (p.version !== VERSION) return { status: 'corrupt', reports: [], invalid: [], detail: `Stored own reports use an unsupported format (version ${String(p.version)}).` };
-    if (!Array.isArray(p.reports)) throw new Error('reports missing');
-    const reports: OwnReport[] = [];
-    const invalid: unknown[] = [];
-    for (const r of p.reports) {
-      const v = validate(r);
-      if (v) reports.push(v); else invalid.push(r);
-    }
-    return { status: 'ok', reports, invalid };
-  } catch {
-    return { status: 'corrupt', reports: [], invalid: [], detail: 'Stored own reports could not be read. They have been left untouched.' };
-  }
+    const report = await saveAccessOwnReport({ ...input, id });
+    changed();
+    return { ok: true, report: report as OwnReport };
+  } catch (error) { return { ok: false, error: errorMessage(error) }; }
 }
-
-let state: State = typeof window === 'undefined' ? { status: 'ok', reports: [], invalid: [] } : load();
-const listeners = new Set<() => void>();
-const emit = () => listeners.forEach((l) => l());
-
-// Old unowned demo definitions are left untouched, never assigned to whoever
-// signs in first. Browser storage is not a security boundary for sensitive data.
-export function setOwnReportsUser(userId: string | null) {
-  storageKey = userId ? `${OWN_REPORTS_KEY}.${userId}` : null;
-  state = load();
-  emit();
+export async function duplicateReport(report: OwnReport): Promise<SaveResult> {
+  return createReport({ section: report.section, name: `${report.name.slice(0, 68)} (copy)`,
+    description: report.description, dataset: report.dataset, fields: report.fields, sourceDefault: report.sourceDefault });
 }
-
-if (typeof window !== 'undefined') {
-  window.addEventListener('storage', (e) => {
-    if (e.key === storageKey || e.key === null) { state = load(); emit(); }
-  });
+export async function deleteReport(id: string): Promise<SaveResult> {
+  try { await deleteAccessOwnReport(id); changed(); return { ok: true }; }
+  catch (error) { return { ok: false, error: errorMessage(error) }; }
 }
-
-function persist(next: OwnReport[]): SaveResult {
-  if (!storageKey) return { ok: false, error: 'Sign in before saving reports.' };
-  if (state.status === 'corrupt') return { ok: false, error: 'Saved reports in this browser are unreadable. Resolve that first; nothing was saved.' };
-  if (state.status === 'unavailable') return { ok: false, error: 'Browser storage is unavailable (private mode or blocked). Nothing was saved.' };
-  try {
-    // Invalid entries we could not parse are written back untouched, never silently dropped.
-    localStorage.setItem(storageKey, JSON.stringify({ version: VERSION, reports: [...next, ...state.invalid] }));
-  } catch (e) {
-    const quota = e instanceof DOMException && (e.name === 'QuotaExceededError' || e.code === 22);
-    return { ok: false, error: quota ? 'Browser storage is full. Nothing was saved; delete some reports or free space.' : 'The browser refused to write to storage. Nothing was saved.' };
-  }
-  state = { ...state, reports: next };
-  emit();
-  return { ok: true };
-}
-
-const newId = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
-
-export function createReport(input: OwnReportInput): SaveResult {
-  const now = new Date().toISOString();
-  const report: OwnReport = { ...input, name: input.name.trim(), description: input.description.trim(), id: newId(), createdAt: now, updatedAt: now };
-  const res = persist([...state.reports, report]);
-  return res.ok ? { ok: true, report } : res;
-}
-export function updateReport(id: string, input: OwnReportInput): SaveResult {
-  const cur = state.reports.find((r) => r.id === id);
-  if (!cur) return { ok: false, error: 'This report no longer exists in this browser.' };
-  const report: OwnReport = { ...cur, ...input, name: input.name.trim(), description: input.description.trim(), updatedAt: new Date().toISOString() };
-  const res = persist(state.reports.map((r) => (r.id === id ? report : r)));
-  return res.ok ? { ok: true, report } : res;
-}
-export function duplicateReport(id: string): SaveResult {
-  const cur = state.reports.find((r) => r.id === id);
-  if (!cur) return { ok: false, error: 'This report no longer exists in this browser.' };
-  const name = `${cur.name} (copy)`.slice(0, NAME_MAX);
-  return createReport({ section: cur.section, name, description: cur.description, dataset: cur.dataset, fields: cur.fields, sourceDefault: cur.sourceDefault });
-}
-export function deleteReport(id: string): SaveResult {
-  return persist(state.reports.filter((r) => r.id !== id));
-}
-/** Explicit, user-confirmed removal of unreadable stored data. */
-export function clearCorruptStore(): SaveResult {
-  try {
-    if (!storageKey) return { ok: false, error: 'Sign in before changing reports.' };
-    localStorage.removeItem(storageKey);
-  } catch {
-    return { ok: false, error: 'The browser refused to clear storage.' };
-  }
-  state = { status: 'ok', reports: [], invalid: [] };
-  emit();
-  return { ok: true };
-}
-
-const subscribe = (l: () => void) => { listeners.add(l); return () => { listeners.delete(l); }; };
-const snap = () => state;
 export function useOwnReportsState() {
-  return useSyncExternalStore(subscribe, snap, snap);
+  const { user } = useUser();
+  const access = useAccess();
+  const enabled = !!user && !!access.data?.canCreateOwnReports;
+  const query = useListAccessOwnReports({ query: {
+    queryKey: [...getListAccessOwnReportsQueryKey(), user?.id, access.data?.clientId],
+    enabled, staleTime: 0, refetchInterval: 15000, retry: false,
+  } });
+  const refetch = query.refetch;
+  useEffect(() => {
+    const listener = () => { if (enabled) void refetch(); };
+    window.addEventListener('wareiq-own-reports-changed', listener);
+    return () => window.removeEventListener('wareiq-own-reports-changed', listener);
+  }, [refetch, enabled]);
+  return {
+    status: query.isError ? 'unavailable' as const : 'ok' as const,
+    reports: (enabled ? query.data ?? [] : []) as OwnReport[],
+    invalid: [] as unknown[], loading: enabled && query.isLoading,
+    detail: query.isError ? 'Own reports could not be loaded from your account. Retry or contact your administrator.' : undefined,
+  };
 }

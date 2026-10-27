@@ -29,9 +29,244 @@ export interface SettingsAccess {
   canAdminister: boolean;
 }
 
+export interface AccessProblem {
+  error: string;
+}
+
+export interface AccessClientInput {
+  id?: string;
+  /**
+     * @minLength 1
+     * @maxLength 100
+     */
+  name: string;
+  active: boolean;
+}
+
+export interface AccessClient {
+  id: string;
+  name: string;
+  active: boolean;
+}
+
+export interface AccessSite {
+  id: string;
+  clientId: string;
+  sourceId: string;
+  name: string;
+  active: boolean;
+}
+
+export interface AccessRoleInput {
+  id?: string;
+  clientId: string;
+  /**
+     * @minLength 1
+     * @maxLength 80
+     */
+  name: string;
+  /** @maxItems 200 */
+  reportIds: string[];
+  canCreateOwnReports: boolean;
+}
+
+export interface AccessRole {
+  id: string;
+  clientId: string;
+  name: string;
+  reportIds: string[];
+  canCreateOwnReports: boolean;
+}
+
+export interface AccessUserInput {
+  id?: string;
+  /** @maxLength 254 */
+  email: string;
+  /**
+     * @minLength 1
+     * @maxLength 100
+     */
+  name: string;
+  clientId: string;
+  roleId: string;
+  /** @maxItems 100 */
+  siteIds: string[];
+  /** @nullable */
+  primarySiteId: string | null;
+  active: boolean;
+}
+
+export interface AccessUser {
+  id: string;
+  email: string;
+  name: string;
+  clientId: string;
+  roleId: string;
+  siteIds: string[];
+  /** @nullable */
+  primarySiteId: string | null;
+  active: boolean;
+}
+
+export interface AccessReport {
+  id: string;
+  name: string;
+  section: string;
+  sectionName: string;
+}
+
+export interface AccessDirectory {
+  clients: AccessClient[];
+  sites: AccessSite[];
+  roles: AccessRole[];
+  users: AccessUser[];
+  reports: AccessReport[];
+}
+
+export type AccessSessionStatus = typeof AccessSessionStatus[keyof typeof AccessSessionStatus];
+
+
+export const AccessSessionStatus = {
+  signed_out: 'signed_out',
+  unassigned: 'unassigned',
+  disabled: 'disabled',
+  pending_sites: 'pending_sites',
+  active: 'active',
+} as const;
+
+export interface AccessSession {
+  status: AccessSessionStatus;
+  platformAdmin: boolean;
+  canCreateOwnReports: boolean;
+  /** @nullable */
+  clientId: string | null;
+  /** @nullable */
+  clientName: string | null;
+  reportIds: string[];
+  sites: AccessSite[];
+}
+
+export interface AccessOwnReportInput {
+  id?: string;
+  section: string;
+  /**
+     * @minLength 1
+     * @maxLength 80
+     */
+  name: string;
+  /** @maxLength 1000 */
+  description: string;
+  dataset: string;
+  /**
+     * @minItems 1
+     * @maxItems 100
+     */
+  fields: string[];
+  sourceDefault?: string;
+}
+
+export interface AccessOwnReport {
+  id: string;
+  section: string;
+  name: string;
+  description: string;
+  dataset: string;
+  fields: string[];
+  sourceDefault?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AccessRunInput {
+  /** @minLength 1 */
+  siteId: string;
+}
+
+export type AccessRunResultStatus = typeof AccessRunResultStatus[keyof typeof AccessRunResultStatus];
+
+
+export const AccessRunResultStatus = {
+  not_connected: 'not_connected',
+} as const;
+
+export interface AccessRunResult {
+  status: AccessRunResultStatus;
+  message: string;
+}
+
+export type WmsConnectionInputSslMode = typeof WmsConnectionInputSslMode[keyof typeof WmsConnectionInputSslMode];
+
+
+export const WmsConnectionInputSslMode = {
+  'verify-full': 'verify-full',
+} as const;
+
+export interface WmsConnectionInput {
+  /**
+     * @minLength 1
+     * @maxLength 253
+     * @pattern ^[A-Za-z0-9][A-Za-z0-9.-]*$
+     */
+  host: string;
+  /**
+     * @minimum 1
+     * @maximum 65535
+     */
+  port: number;
+  /**
+     * @minLength 1
+     * @maxLength 63
+     * @pattern ^[A-Za-z_][A-Za-z0-9_$]*$
+     */
+  database: string;
+  /**
+     * @minLength 1
+     * @maxLength 63
+     * @pattern ^[A-Za-z_][A-Za-z0-9_$]*$
+     */
+  schema: string;
+  /**
+     * @minLength 1
+     * @maxLength 63
+     * @pattern ^[A-Za-z_][A-Za-z0-9_$]*$
+     */
+  username: string;
+  sslMode: WmsConnectionInputSslMode;
+  /**
+     * @minimum 5
+     * @maximum 300
+     */
+  queryTimeoutSec: number;
+}
+
+export type WmsConnectionResultStatus = typeof WmsConnectionResultStatus[keyof typeof WmsConnectionResultStatus];
+
+
+export const WmsConnectionResultStatus = {
+  connected: 'connected',
+  error: 'error',
+} as const;
+
+export interface WmsConnectionResult {
+  status: WmsConnectionResultStatus;
+  code: string;
+  message: string;
+  testedAt: string;
+  lastSuccessfulAt?: string;
+}
+
+export interface WmsError {
+  error: string;
+}
+
 export interface HealthStatus {
   status: string;
 }
+
+/**
+ * Sanitized validation, sign-in, permission, not-found, conflict or service error (400, 401, 403, 404, 409, 503)
+ */
+export type AccessFailureResponse = AccessProblem;
 
 /**
  * Sign-in required

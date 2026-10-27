@@ -1,8 +1,11 @@
 # WareIQ access operations
 
-WareIQ uses Replit-managed Clerk, not application-managed passwords. The only
-application roles are `admin`, `supervisor`, and `unassigned`. All new accounts
-are unassigned. The first person to sign up is **not** automatically an admin.
+WareIQ uses Replit-managed Clerk, not application-managed passwords. New accounts
+have no reporting access. The first signup is **not** automatically an administrator.
+Trusted Clerk `admin` metadata grants platform administration. Reporting users are
+approved by verified email in **User access**, assigned to one client, a client-specific
+role, and one or more imported WMS sites. Own-report creation is a separate permission.
+The former global `supervisor` role does not bypass these client/site assignments.
 
 ## Establish the first administrator or change a role
 
@@ -14,7 +17,10 @@ are unassigned. The first person to sign up is **not** automatically an admin.
    pnpm --filter @workspace/scripts wareiq:role --email <verified-email> --role admin --confirm-ownership
    ```
 
-   Use `supervisor` for reporting-only access or `unassigned` to revoke access.
+   Use User access to approve or disable reporting users and change their roles.
+   Use `unassigned` here to remove platform administrator rights. Removing those
+   rights does not delete any separately approved client membership; disable that
+   membership as well when all reporting access must be revoked.
    The command preserves unrelated metadata and skips unchanged grants. It is
    an explicit manual action, never a startup seed that could restore revoked
    privileges. Do not pass secret keys on the command line.
@@ -39,19 +45,35 @@ by running the command in development.
 - Remaining reporting endpoints require supervisor or administrator access.
   Register new reporting handlers **after** the existing central guards. Mount
   connection/configuration handlers under the administrator prefixes above.
-  Never mount a new router ahead of the guards to make it work.
-- Roles come from current Clerk **public metadata**, retrieved server-side on
-  each request, not client headers, unsafe metadata, or stale token role claims.
-  Provider failures deny access. The application exposes no role-edit API.
+  The access router is mounted before the generic fallback guard because its
+  `/access/me` endpoint describes signed-out status. Every other access operation
+  authenticates and authorizes internally; never add an unguarded operation there.
+- Platform administration comes from current Clerk **public metadata**, retrieved
+  server-side on each request, not client headers or stale token role claims.
+  Client reporting grants come from active application-database membership and
+  roles. Provider failures deny access. Role-edit APIs require platform administration.
 - Cookie-authenticated mutation requests require a matching Origin. CORS is
   not enabled for third-party browser clients.
 - Never return WMS passwords, usernames, connection strings, or raw database
   errors. Role checks do not make returning credentials safe.
-- Browser storage contains only per-user demo report definitions and preferences,
-  not operational records or secrets. Old unowned demo definitions are left
-  untouched and are not assigned to a new account automatically.
+- Own-report definitions are private to a verified account and client in the
+  application database. Browser storage holds only per-user preferences. Legacy
+  local report definitions remain untouched and are not automatically imported.
 - Logout uses Clerk's session revocation, returns to the public landing page,
   clears cached queries, and unmounts reporting state when the identity changes.
 
-This access layer does not create a WMS connection, implement site-level
-permissions, schedules, alerts, or durable audit logging.
+Site and report permissions are enforced server-side. Users may be approved as
+pending without sites, but cannot run reports until real WMS sites are imported
+and assigned. Live report mappings, schedules, alerts and durable audit history
+are not implemented.
+
+## WMS credential destination approval
+
+Connection tests never send credentials to an arbitrary administrator-entered host.
+The server must have a valid matching PostgreSQL `WMS_DATABASE_URL`, or a
+`WMS_PGPASSWORD` plus all four server-only settings: `WMS_APPROVED_HOST`,
+`WMS_APPROVED_PORT`, `WMS_APPROVED_DATABASE`, `WMS_APPROVED_USERNAME`.
+Explicit approval settings must be complete; mismatches and missing approval
+fail before DNS lookup or creating a PostgreSQL pool. Changing browser fields
+does not approve a new endpoint. Owners must make destination changes securely
+on the server; do not disable TLS verification to make a test pass.

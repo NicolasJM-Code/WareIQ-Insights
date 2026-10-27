@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+security:
+  - clerkSession: []
 paths:
   /auth/session:
     get:
@@ -43,9 +45,183 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/AuthUnavailable"
+  /access/me:
+    get:
+      operationId: getAccessSession
+      security: []
+      responses:
+        default: { $ref: "#/components/responses/AccessFailure" }
+        "200":
+          description: Current trusted access profile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessSession" }
+  /access/admin:
+    get:
+      operationId: getAccessAdmin
+      responses:
+        default: { $ref: "#/components/responses/AccessFailure" }
+        "200":
+          description: Administrator access directory
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessDirectory" }
+  /access/clients:
+    post:
+      operationId: saveAccessClient
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccessClientInput" }
+      responses:
+        default: { $ref: "#/components/responses/AccessFailure" }
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessClient" }
+  /access/roles:
+    post:
+      operationId: saveAccessRole
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccessRoleInput" }
+      responses:
+        default: { $ref: "#/components/responses/AccessFailure" }
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessRole" }
+  /access/users:
+    post:
+      operationId: saveAccessUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccessUserInput" }
+      responses:
+        default: { $ref: "#/components/responses/AccessFailure" }
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessUser" }
+  /access/{entity}/{id}:
+    delete:
+      operationId: deleteAccessEntry
+      parameters:
+        - { name: entity, in: path, required: true, schema: { type: string, enum: [clients, roles, users] } }
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        default: { $ref: "#/components/responses/AccessFailure" }
+        "204": { description: Deleted }
+  /access/own-reports:
+    get:
+      operationId: listAccessOwnReports
+      responses:
+        default: { $ref: "#/components/responses/AccessFailure" }
+        "200":
+          description: Definitions owned by the signed-in user in their client
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AccessOwnReport" } }
+    post:
+      operationId: saveAccessOwnReport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccessOwnReportInput" }
+      responses:
+        default: { $ref: "#/components/responses/AccessFailure" }
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessOwnReport" }
+  /access/own-reports/{id}:
+    delete:
+      operationId: deleteAccessOwnReport
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        default: { $ref: "#/components/responses/AccessFailure" }
+        "204": { description: Deleted }
+  /access/reports/{id}/run:
+    post:
+      operationId: runAccessReport
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccessRunInput" }
+      responses:
+        default: { $ref: "#/components/responses/AccessFailure" }
+        "200":
+          description: Report result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessRunResult" }
+  /wms/connection/test:
+    post:
+      operationId: testWmsConnection
+      summary: Test a WMS connection without saving credentials or querying warehouse records
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WmsConnectionInput"
+      responses:
+        "200":
+          description: Actual connection test result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WmsConnectionResult"
+        "400":
+          description: Invalid connection fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WmsError"
+        "401":
+          description: Sign in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WmsError"
+        "403":
+          description: Administrator access required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WmsError"
+        "429":
+          description: Connection test already running or too frequent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WmsError"
+        "503":
+          description: Authentication service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WmsError"
   /healthz:
     get:
       operationId: healthCheck
+      security: []
       tags: [health]
       summary: Health check
       description: Returns server health status
@@ -57,7 +233,17 @@ paths:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
 components:
+  securitySchemes:
+    clerkSession:
+      type: apiKey
+      in: cookie
+      name: __session
   responses:
+    AccessFailure:
+      description: Sanitized validation, sign-in, permission, not-found, conflict or service error (400, 401, 403, 404, 409, 503)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/AccessProblem" }
     Unauthorized:
       description: Sign-in required
       content:
@@ -102,6 +288,196 @@ components:
       properties:
         canAdminister:
           type: boolean
+    AccessProblem:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+    AccessClientInput:
+      type: object
+      required: [name, active]
+      properties:
+        id: { type: string }
+        name: { type: string, minLength: 1, maxLength: 100 }
+        active: { type: boolean }
+    AccessClient:
+      type: object
+      required: [id, name, active]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        active: { type: boolean }
+    AccessSite:
+      type: object
+      required: [id, clientId, sourceId, name, active]
+      properties:
+        id: { type: string }
+        clientId: { type: string }
+        sourceId: { type: string }
+        name: { type: string }
+        active: { type: boolean }
+    AccessRoleInput:
+      type: object
+      required: [clientId, name, reportIds, canCreateOwnReports]
+      properties:
+        id: { type: string }
+        clientId: { type: string }
+        name: { type: string, minLength: 1, maxLength: 80 }
+        reportIds: { type: array, uniqueItems: true, items: { type: string }, maxItems: 200 }
+        canCreateOwnReports: { type: boolean }
+    AccessRole:
+      type: object
+      required: [id, clientId, name, reportIds, canCreateOwnReports]
+      properties:
+        id: { type: string }
+        clientId: { type: string }
+        name: { type: string }
+        reportIds: { type: array, items: { type: string } }
+        canCreateOwnReports: { type: boolean }
+    AccessUserInput:
+      type: object
+      required: [email, name, clientId, roleId, siteIds, primarySiteId, active]
+      properties:
+        id: { type: string }
+        email: { type: string, format: email, maxLength: 254 }
+        name: { type: string, minLength: 1, maxLength: 100 }
+        clientId: { type: string }
+        roleId: { type: string }
+        siteIds: { type: array, uniqueItems: true, maxItems: 100, items: { type: string } }
+        primarySiteId: { type: [string, "null"] }
+        active: { type: boolean }
+    AccessUser:
+      type: object
+      required: [id, email, name, clientId, roleId, siteIds, primarySiteId, active]
+      properties:
+        id: { type: string }
+        email: { type: string }
+        name: { type: string }
+        clientId: { type: string }
+        roleId: { type: string }
+        siteIds: { type: array, items: { type: string } }
+        primarySiteId: { type: [string, "null"] }
+        active: { type: boolean }
+    AccessReport:
+      type: object
+      required: [id, name, section, sectionName]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        section: { type: string }
+        sectionName: { type: string }
+    AccessDirectory:
+      type: object
+      required: [clients, sites, roles, users, reports]
+      properties:
+        clients: { type: array, items: { $ref: "#/components/schemas/AccessClient" } }
+        sites: { type: array, items: { $ref: "#/components/schemas/AccessSite" } }
+        roles: { type: array, items: { $ref: "#/components/schemas/AccessRole" } }
+        users: { type: array, items: { $ref: "#/components/schemas/AccessUser" } }
+        reports: { type: array, items: { $ref: "#/components/schemas/AccessReport" } }
+    AccessSession:
+      type: object
+      required: [status, platformAdmin, canCreateOwnReports, reportIds, sites, clientId, clientName]
+      properties:
+        status: { type: string, enum: [signed_out, unassigned, disabled, pending_sites, active] }
+        platformAdmin: { type: boolean }
+        canCreateOwnReports: { type: boolean }
+        clientId: { type: [string, "null"] }
+        clientName: { type: [string, "null"] }
+        reportIds: { type: array, items: { type: string } }
+        sites: { type: array, items: { $ref: "#/components/schemas/AccessSite" } }
+    AccessOwnReportInput:
+      type: object
+      required: [section, name, description, dataset, fields]
+      properties:
+        id: { type: string }
+        section: { type: string }
+        name: { type: string, minLength: 1, maxLength: 80 }
+        description: { type: string, maxLength: 1000 }
+        dataset: { type: string }
+        fields: { type: array, minItems: 1, maxItems: 100, uniqueItems: true, items: { type: string } }
+        sourceDefault: { type: string }
+    AccessOwnReport:
+      type: object
+      required: [id, section, name, description, dataset, fields, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        section: { type: string }
+        name: { type: string }
+        description: { type: string }
+        dataset: { type: string }
+        fields: { type: array, items: { type: string } }
+        sourceDefault: { type: string }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+    AccessRunInput:
+      type: object
+      required: [siteId]
+      properties:
+        siteId: { type: string, minLength: 1 }
+    AccessRunResult:
+      type: object
+      required: [status, message]
+      properties:
+        status: { type: string, enum: [not_connected] }
+        message: { type: string }
+    WmsConnectionInput:
+      type: object
+      additionalProperties: false
+      required: [host, port, database, schema, username, sslMode, queryTimeoutSec]
+      properties:
+        host:
+          type: string
+          minLength: 1
+          maxLength: 253
+          pattern: '^[A-Za-z0-9][A-Za-z0-9.-]*$'
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        database:
+          type: string
+          minLength: 1
+          maxLength: 63
+          pattern: '^[A-Za-z_][A-Za-z0-9_$]*$'
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 63
+          pattern: '^[A-Za-z_][A-Za-z0-9_$]*$'
+        username:
+          type: string
+          minLength: 1
+          maxLength: 63
+          pattern: '^[A-Za-z_][A-Za-z0-9_$]*$'
+        sslMode:
+          type: string
+          enum: [verify-full]
+        queryTimeoutSec:
+          type: integer
+          minimum: 5
+          maximum: 300
+    WmsConnectionResult:
+      type: object
+      required: [status, code, message, testedAt]
+      properties:
+        status:
+          type: string
+          enum: [connected, error]
+        code:
+          type: string
+        message:
+          type: string
+        testedAt:
+          type: string
+        lastSuccessfulAt:
+          type: string
+    WmsError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
     HealthStatus:
       type: object
       properties:

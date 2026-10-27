@@ -12,26 +12,19 @@ import { BrowserOnlyNote, Chip, MissingPanel, btn, useCatalogCtx } from '@/compo
 import { getDataset, getSection, type Dataset, type Section, type SectionId } from '@/lib/report-catalog';
 import { columnsFor, resolveFields, scopeLabel, scopedRows, searchTextFor, slug } from '@/lib/report-engine';
 import {
-  NAME_MAX, clearCorruptStore, createReport, deleteReport, duplicateReport, updateReport, useOwnReportsState, type OwnReport,
+  NAME_MAX, createReport, deleteReport, duplicateReport, updateReport, useOwnReportsState, type OwnReport,
 } from '@/lib/own-reports-store';
 import { useReport, useDocTitle } from '@/lib/report-context';
 import { dateTime } from '@/lib/format';
 import { toast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { useAccess } from '@/lib/use-access';
+import { ReportRunControl } from '@/components/report-run-control';
 
 // ---------- shared ----------
 function StoreBanner() {
   const st = useOwnReportsState();
-  const [confirm, setConfirm] = useState(false);
-  if (st.status === 'ok' && !st.invalid.length) return null;
-  if (st.status === 'ok') {
-    return (
-      <div className="mb-4 flex items-start gap-2 rounded-md border border-[hsl(42_70%_75%)] bg-[hsl(42_90%_92%)] px-3 py-2 text-[12px] text-[hsl(30_75%_24%)]" data-testid="status-store-invalid">
-        <TriangleAlert className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-        {st.invalid.length} stored report {st.invalid.length === 1 ? 'entry is' : 'entries are'} unreadable and hidden. They are kept as-is in browser storage and not overwritten.
-      </div>
-    );
-  }
+  if (st.status === 'ok') return null;
   return (
     <div className="mb-4 rounded-md border border-[hsl(4_60%_84%)] bg-[hsl(4_75%_95%)] px-3 py-2.5 text-[12px] text-[hsl(4_65%_32%)]" data-testid="status-store-error">
       <div className="flex items-start gap-2">
@@ -40,23 +33,7 @@ function StoreBanner() {
           <p className="font-semibold">Own reports cannot be saved right now.</p>
           <p>{st.detail}</p>
         </div>
-        {st.status === 'corrupt' && <button className={btn.ghost} onClick={() => setConfirm(true)} data-testid="button-clear-corrupt">Clear unreadable data</button>}
       </div>
-      <AlertDialog open={confirm} onOpenChange={setConfirm}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Clear unreadable own reports?</AlertDialogTitle>
-            <AlertDialogDescription>This permanently removes the unreadable own-report data stored in this browser for every section. It cannot be recovered. Sample data and settings are not affected.</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel data-testid="button-cancel-clear">Keep it</AlertDialogCancel>
-            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" data-testid="button-confirm-clear"
-              onClick={() => { const r = clearCorruptStore(); toast(r.ok ? { title: 'Storage cleared', description: 'You can create own reports again.' } : { title: 'Could not clear', description: r.error, variant: 'destructive' }); }}>
-              Clear data
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }
@@ -67,14 +44,14 @@ function DeleteDialog({ report, open, onOpenChange, onDeleted }: { report: OwnRe
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Delete "{report.name}"?</AlertDialogTitle>
-          <AlertDialogDescription>The report definition is removed from this browser. This cannot be undone. No operational data is affected.</AlertDialogDescription>
+          <AlertDialogDescription>The report definition is removed from your account. This cannot be undone. No operational data is affected.</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel data-testid="button-cancel-delete">Cancel</AlertDialogCancel>
           <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" data-testid="button-confirm-delete"
-            onClick={() => {
-              const r = deleteReport(report.id);
-              if (r.ok) { toast({ title: 'Report deleted', description: `"${report.name}" removed from this browser.` }); onDeleted?.(); }
+            onClick={async () => {
+              const r = await deleteReport(report.id);
+              if (r.ok) { toast({ title: 'Report deleted', description: `"${report.name}" removed from your account.` }); onDeleted?.(); }
               else toast({ title: 'Not deleted', description: r.error, variant: 'destructive' });
             }}>
             Delete
@@ -85,9 +62,9 @@ function DeleteDialog({ report, open, onOpenChange, onDeleted }: { report: OwnRe
   );
 }
 
-function doDuplicate(r: OwnReport, base: string, go: (to: string) => void) {
-  const res = duplicateReport(r.id);
-  if (res.ok && res.report) { toast({ title: 'Report duplicated', description: `Saved "${res.report.name}" in this browser.` }); go(`${base}/own-reports/${res.report.id}/edit`); }
+async function doDuplicate(r: OwnReport, base: string, go: (to: string) => void) {
+  const res = await duplicateReport(r);
+  if (res.ok && res.report) { toast({ title: 'Report duplicated', description: `Saved "${res.report.name}" in your account.` }); go(`${base}/own-reports/${res.report.id}/edit`); }
   else if (!res.ok) toast({ title: 'Not duplicated', description: res.error, variant: 'destructive' });
 }
 
@@ -166,6 +143,7 @@ export function OwnReportsIndex({ sectionId }: { sectionId: SectionId }) {
 
 // ---------- run view ----------
 export function OwnReportView({ sectionId }: { sectionId: SectionId }) {
+  const access = useAccess();
   const s = getSection(sectionId)!;
   const { id } = useParams<{ id: string }>();
   const [, go] = useLocation();
@@ -179,20 +157,22 @@ export function OwnReportView({ sectionId }: { sectionId: SectionId }) {
   const resolved = useMemo(() => (ds && r ? resolveFields(ds, r.fields) : { found: [], missing: [] }), [ds, r]);
   const columns = useMemo(() => columnsFor(resolved.found), [resolved]);
   const search = useMemo(() => searchTextFor(resolved.found), [resolved]);
-  const rows = useMemo(() => (ds ? scopedRows(ds, ctx, warehouse, range) : []), [ds, ctx, warehouse, range]);
+  const rows = useMemo(() => (ds && access.data?.platformAdmin ? scopedRows(ds, ctx, warehouse, range) : []), [ds, ctx, warehouse, range, access.data?.platformAdmin]);
 
-  if (!r) return <MissingPanel title="Own report not found" body="It may have been deleted, saved in a different browser, or belong to another section." back={`${s.base}/own-reports`} backLabel="Own reports" />;
+  if (st.loading) return <p role="status">Loading your own report…</p>;
+  if (!r) return <MissingPanel title="Own report not found" body="It may have been deleted, belong to another account, or no longer be permitted." back={`${s.base}/own-reports`} backLabel="Own reports" />;
   const canWrite = st.status === 'ok';
 
   return (
     <div>
       <Link href={`${s.base}/own-reports`} className="inline-flex items-center gap-1 text-[12px] text-muted-foreground hover:text-foreground mb-2" data-testid="link-back-own"><ArrowLeft className="h-3.5 w-3.5" />Own reports</Link>
-      <PageHeader eyebrow={`${s.eyebrow} · Own report · this browser`} title={r.name} description={r.description || `Custom report on ${ds?.label.toLowerCase() ?? 'an unavailable dataset'}.`}>
+      <PageHeader eyebrow={`${s.eyebrow} · Own report · your account`} title={r.name} description={r.description || `Custom report on ${ds?.label.toLowerCase() ?? 'an unavailable dataset'}.`}>
         <DemoBadge />
         {canWrite && <Link href={`${s.base}/own-reports/${r.id}/edit`} className={btn.ghost} data-testid="link-edit-report"><Pencil className="h-3.5 w-3.5" />Edit</Link>}
         <button className={btn.ghost} disabled={!canWrite} onClick={() => doDuplicate(r, s.base, go)} data-testid="button-duplicate-report"><Copy className="h-3.5 w-3.5" />Duplicate</button>
         <button className={cn(btn.ghost, 'hover:text-destructive hover:border-destructive/50')} disabled={!canWrite} onClick={() => setDel(true)} data-testid="button-delete-report"><Trash2 className="h-3.5 w-3.5" />Delete</button>
       </PageHeader>
+      <ReportRunControl reportId={r.id} />
       <StoreBanner />
       {ds && (
         <div className="rise flex flex-wrap items-center gap-1.5 mb-3">
@@ -238,11 +218,14 @@ export function OwnReportBuilder({ sectionId }: { sectionId: SectionId }) {
   }, [existing?.id, fromDef?.id, s.id]);
 
   useDocTitle(editing ? `Edit ${existing?.name ?? 'report'}` : 'New own report');
-  if (editing && !existing) return <MissingPanel title="Own report not found" body="It may have been deleted or saved in a different browser." back={`${s.base}/own-reports`} backLabel="Own reports" />;
+  if (st.loading) return <p role="status">Loading your report definition…</p>;
+  if (editing && !existing) return <MissingPanel title="Own report not found" body="It may have been deleted or belong to another account." back={`${s.base}/own-reports`} backLabel="Own reports" />;
   return <Builder key={`${params.id ?? 'new'}-${fromDef?.id ?? ''}`} s={s} initial={initial} existing={existing} fromTitle={fromDef?.title} fromId={fromDef?.id} unknownFrom={!!fromId && !fromDef && !editing} />;
 }
 
 function Builder({ s, initial, existing, fromTitle, fromId, unknownFrom }: { s: Section; initial: Draft; existing?: OwnReport; fromTitle?: string; fromId?: string; unknownFrom: boolean }) {
+  const access = useAccess();
+  const [saving, setSaving] = useState(false);
   const [, go] = useLocation();
   const st = useOwnReportsState();
   const { warehouse, range } = useReport();
@@ -278,7 +261,7 @@ function Builder({ s, initial, existing, fromTitle, fromId, unknownFrom }: { s: 
 
   const columns = useMemo(() => columnsFor(found), [found]);
   const searchText = useMemo(() => searchTextFor(found), [found]);
-  const rows = useMemo(() => (ds ? scopedRows(ds, ctx, warehouse, range) : []), [ds, ctx, warehouse, range]);
+  const rows = useMemo(() => (ds && access.data?.platformAdmin ? scopedRows(ds, ctx, warehouse, range) : []), [ds, ctx, warehouse, range, access.data?.platformAdmin]);
 
   const toggle = (k: string) => setD((p) => ({ ...p, fields: p.fields.includes(k) ? p.fields.filter((x) => x !== k) : [...p.fields, k] }));
   const move = (i: number, dir: -1 | 1) => setD((p) => {
@@ -297,15 +280,18 @@ function Builder({ s, initial, existing, fromTitle, fromId, unknownFrom }: { s: 
   const pendingTarget = pendingDs ? getDataset(s, pendingDs) : undefined;
   const matching = pendingTarget ? d.fields.filter((k) => pendingTarget.fields.some((f) => f.key === k)) : [];
 
-  const save = () => {
+  const save = async () => {
+    if (saving) return;
     setTouched(true);
     setSaveError(null);
     if (!valid || !ds) return;
     const input = { section: s.id, name: d.name, description: d.description, dataset: d.dataset, fields: found.map((f) => f.key), sourceDefault: existing?.sourceDefault ?? fromId };
-    const res = existing ? updateReport(existing.id, input) : createReport(input);
+    setSaving(true);
+    const res = existing ? await updateReport(existing.id, input) : await createReport(input);
+    setSaving(false);
     if (!res.ok) { setSaveError(res.error); toast({ title: 'Report not saved', description: res.error, variant: 'destructive' }); return; }
     savedRef.current = true;
-    toast({ title: existing ? 'Report updated' : 'Report saved', description: `"${trimmed}" saved in this browser.` });
+    toast({ title: existing ? 'Report updated' : 'Report saved', description: `"${trimmed}" saved in your account.` });
     go(`${s.base}/own-reports/${res.report!.id}`);
   };
 
@@ -319,7 +305,7 @@ function Builder({ s, initial, existing, fromTitle, fromId, unknownFrom }: { s: 
       <PageHeader eyebrow={`${s.eyebrow} · ${existing ? 'Edit own report' : 'New own report'}`} title={existing ? 'Edit report' : 'Build a report'}
         description={fromTitle ? `Starting from the standard "${fromTitle}" report. Saving creates your own copy; the standard report stays unchanged.` : `Choose a dataset and the ${s.label.toLowerCase()} fields to show. The preview updates as you go.`}>
         <button className={btn.ghost} onClick={() => leave(cancelTo)} data-testid="button-cancel"><X className="h-3.5 w-3.5" />Cancel</button>
-        <button className={btn.primary} onClick={save} disabled={!canWrite} data-testid="button-save"><Save className="h-3.5 w-3.5" />{existing ? 'Save changes' : 'Save report'}</button>
+        <button className={btn.primary} onClick={save} disabled={!canWrite || saving} data-testid="button-save"><Save className="h-3.5 w-3.5" />{saving ? 'Saving…' : existing ? 'Save changes' : 'Save report'}</button>
       </PageHeader>
       <StoreBanner />
       {unknownFrom && <div className="mb-3 text-[12px] text-muted-foreground" data-testid="status-unknown-source">The standard report you tried to copy was not found, so this starts blank.</div>}

@@ -13,7 +13,8 @@ import { time } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { SECTIONS, sectionForPath } from '@/lib/report-catalog';
 import { SectionTabs, activeSub, sectionLinks } from '@/components/reports-ui';
-import { useAccess, AccountSummary } from '@/lib/access';
+import { AccountSummary } from '@/lib/access';
+import { useAccess } from '@/lib/use-access';
 
 export const NAV = [
   { group: 'Overview', items: [{ href: '/dashboard', label: 'Executive dashboard', icon: LayoutDashboard }] },
@@ -37,11 +38,12 @@ export const NAV = [
       { href: '/exceptions', label: 'Exceptions', icon: TriangleAlert },
     ],
   },
-  { group: 'Administration', items: [{ href: '/settings', label: 'Settings', icon: Settings }] },
+  { group: 'Administration', items: [{ href: '/user-access', label: 'User access', icon: Users }, { href: '/settings', label: 'Settings', icon: Settings }] },
 ];
 
 function NavList({ onNavigate }: { onNavigate?: () => void }) {
-  const { canAdminister } = useAccess();
+  const access = useAccess();
+  const canAdminister = !!access.data?.platformAdmin;
   const [loc] = useLocation();
   const current = sectionForPath(loc);
   const [open, setOpen] = useState<Set<string>>(() => new Set(current ? [current.id] : []));
@@ -54,7 +56,12 @@ function NavList({ onNavigate }: { onNavigate?: () => void }) {
         <div key={g.group}>
           <div className="px-2 mb-1.5 text-[10px] font-mono uppercase tracking-[0.18em] text-sidebar-foreground/45">{g.group}</div>
           <ul className="space-y-0.5">
-            {g.items.map((it) => {
+            {g.items.filter((it) => {
+              if (access.data?.platformAdmin) return true;
+              if (it.href === '/' || it.href === '/dashboard') return true;
+              const section = SECTIONS.find((s) => s.overview === it.href);
+              return !!section && section.id !== 'settings' && section.defaults.some((r) => access.data?.reportIds.includes(r.id));
+            }).map((it) => {
               const sec = SECTIONS.find((x) => (x.overview === '/' ? '/dashboard' : x.overview) === it.href);
               const inSection = !!sec && current?.id === sec.id;
               const active = loc === it.href || (sec ? inSection && activeSub(sec, loc) === 'overview' : false);
@@ -91,7 +98,7 @@ function NavList({ onNavigate }: { onNavigate?: () => void }) {
                   </div>
                   {sec && expanded && (
                     <ul id={`subnav-${sec.id}`} className="ml-[17px] mt-0.5 mb-1 border-l border-sidebar-border pl-2 space-y-px">
-                      {sectionLinks(sec).filter((l) => l.key !== 'overview').map((l) => {
+                      {sectionLinks(sec).filter((l) => l.key !== 'overview' && (l.key !== 'own' || access.data?.canCreateOwnReports)).map((l) => {
                         const on = inSection && activeSub(sec, loc) === l.key;
                         return (
                           <li key={l.key}>
@@ -132,16 +139,17 @@ function Brand() {
 }
 
 function SidebarFooter() {
-  const { canAdminister } = useAccess();
+  const access = useAccess();
+  if (!access.data?.platformAdmin) return null;
   return (
-    <Link href={canAdminister ? '/settings' : '/dashboard'} className="m-3 rounded border border-sidebar-border p-3 text-[11px] text-sidebar-foreground/70 hover:border-sidebar-primary/50 transition-colors" data-testid="link-connection-status">
+    <Link href="/settings" className="m-3 rounded border border-sidebar-border p-3 text-[11px] text-sidebar-foreground/70 hover:border-sidebar-primary/50 transition-colors" data-testid="link-connection-status">
       <div className="flex items-center gap-2 text-sidebar-accent-foreground font-medium text-xs">
         <Database className="h-3.5 w-3.5" /> WMS database
         <span className="ml-auto inline-flex items-center gap-1 font-mono text-[10px] uppercase text-sidebar-foreground/60">
           <span className="h-1.5 w-1.5 rounded-full bg-sidebar-foreground/40" /> Disconnected
         </span>
       </div>
-      <p className="mt-1.5 leading-snug">Showing generated sample data. Live setup needs a server-side service.</p>
+      <p className="mt-1.5 leading-snug">Reports use sample data. Test database access in Settings; live reports need approved source mappings.</p>
     </Link>
   );
 }
@@ -160,14 +168,17 @@ export function DemoBadge({ className }: { className?: string }) {
 }
 
 function TopBar({ onMenu }: { onMenu: () => void }) {
-  const { warehouse, setWarehouse, range, setRange, refresh, refreshing, refreshedAt, prefs } = useReport();
+  const access = useAccess();
+  const { siteId, setSiteId, warehouse, setWarehouse, range, setRange, refresh, refreshing, refreshedAt, prefs } = useReport();
+  const sites = access.data?.sites ?? [];
+  const selectedSite = sites.some((s) => s.id === siteId) ? siteId : sites[0]?.id ?? '';
   return (
     <header className="sticky top-0 z-30 border-b bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/70">
       <div className="flex flex-wrap items-center gap-2 px-4 md:px-6 min-h-14 py-2">
         <button onClick={onMenu} className="lg:hidden -ml-1 p-2 rounded hover:bg-muted" aria-label="Open navigation" data-testid="button-menu">
           <Menu className="h-5 w-5" />
         </button>
-        <Select value={warehouse} onValueChange={(v) => setWarehouse(v as 'ALL' | WhCode)}>
+        {access.data?.platformAdmin ? <Select value={warehouse} onValueChange={(v) => setWarehouse(v as 'ALL' | WhCode)}>
           <SelectTrigger className="h-8 w-[178px] bg-card text-[13px]" data-testid="select-warehouse" aria-label="Warehouse">
             <SelectValue />
           </SelectTrigger>
@@ -177,7 +188,9 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
               <SelectItem key={w.code} value={w.code}>{w.code} · {w.name}</SelectItem>
             ))}
           </SelectContent>
-        </Select>
+        </Select> : sites.length ? <select aria-label="Assigned site" className="h-8 rounded border bg-card px-2 text-sm" value={selectedSite} onChange={(e) => setSiteId(e.target.value)}>
+          {sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}
+        </select> : <span className="text-xs text-muted-foreground">Sites pending WMS import</span>}
         <div role="radiogroup" aria-label="Date range" className="flex h-8 rounded-md border bg-card p-0.5 text-[12px] font-mono">
           {([1, 7, 30, 90] as RangeDays[]).map((r) => (
             <button key={r} role="radio" aria-checked={range === r} onClick={() => setRange(r)} data-testid={`button-range-${r}`}
@@ -196,7 +209,7 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
             className="h-8 w-8 grid place-items-center rounded-md border bg-card hover:border-primary/50 disabled:opacity-60 transition-colors">
             <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
           </button>
-          <AccountSummary />
+          {access.data && access.data.status !== 'signed_out' && <AccountSummary />}
         </div>
       </div>
       <div className="relative h-px overflow-hidden">

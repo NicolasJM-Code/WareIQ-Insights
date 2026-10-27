@@ -52,7 +52,7 @@ app.use((req, res, next) => {
   }
   next();
 });
-app.use(express.json());
+app.use(express.json({ limit: "8kb" }));
 app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", router);

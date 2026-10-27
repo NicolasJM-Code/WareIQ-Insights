@@ -1,1 +1,2 @@
 - [Vite instrumentation compatibility](vite-instrumentation.md) — metadata injection can break generic JSX even when TypeScript passes.
+- [Vite dependency cache](vite-dependency-cache.md) — merged dependency updates can leave the dev preview using stale React renderers despite passing builds.

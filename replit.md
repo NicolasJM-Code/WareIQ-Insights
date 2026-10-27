@@ -36,6 +36,23 @@ WareIQ reports against an existing operational PostgreSQL WMS database; it must 
 
 The initial application is a frontend demonstration with labeled sample data, not a live WMS integration. Database credentials must not be stored in browser storage or source control. Production connections need server-side secrets, a dedicated SELECT-only account, connection pooling, query timeouts, and administrator access control.
 
+Settings now supports an actual metadata-only connection test via `POST /api/wms/connection/test`. It requires a Clerk user with trusted `publicMetadata.role = "admin"`. Host/port/database/schema/username come from the form; the password comes only from `WMS_PGPASSWORD` or a valid `WMS_DATABASE_URL` matching the form destination and username. Optional `WMS_CA_CERT` supplies a private CA. Verified TLS is mandatory. Tests support public addresses only and reject privileged/write-capable accounts; they do not save a connection or switch reports to live data. Last-success and visible test history are session-only; server logs contain sanitized outcome codes. Approved source mappings are still required for live reports.
+
+Both credential formats are bound to a server-approved host, port, database and username before DNS lookup or opening a connection. A valid server-held PostgreSQL `WMS_DATABASE_URL` provides that binding; standalone `WMS_PGPASSWORD` requires all of `WMS_APPROVED_HOST`, `WMS_APPROVED_PORT`, `WMS_APPROVED_DATABASE` and `WMS_APPROVED_USERNAME`. Explicit destination settings override URL destination approval and must be complete. A URL password must also match its own URL destination. Never let an administrator's browser fields define the destination allowlist. **Why:** a valid-TLS PostgreSQL server controlled by an administrator could otherwise request and capture a server-held password.
+
+Each menu must offer **Reports** (default reports) and **Own reports** (user-created reports using only fields available within that section). Keep custom report field choices scoped to their reporting section.
+
+### User access
+
+- User access management is available at `/user-access` to trusted Clerk platform administrators. Ordinary reporting users are approved by verified login email; they belong to one client, have a role within that client, and may access multiple sites with a primary site.
+- Role permissions select individual default reports and separately allow creating own reports within permitted reporting sections. Platform administration is separate from a client's reporting role; granting report-building rights must never grant administration.
+- Sites must come from the connected WMS database. Do not create fictional or manual sites to unlock reporting. Users may be approved pending site import, but report execution requires an active site assigned to that user and client, checked on the server.
+- Access configuration and private own-report definitions live in the application database (`DATABASE_URL`), never the operational WMS database. The server derives identity, ownership and client scope; a browser-supplied client/site/owner cannot grant access.
+- Unassigned or disabled accounts cannot access reporting. Active users see only role-granted report names. Until the WMS is mapped, normal users receive no generated sample rows as client data. Existing sample overviews remain administrator-only demonstrations.
+- Previous browser-only own-report definitions are left untouched and not automatically migrated. **Why:** shared browser storage has no trustworthy owner or client identity; assigning it to the next signed-in person could disclose another person's definitions.
+
+Default report names and section assignments come from `attached_assets/Pasted-1-Executive-Dashboard-Warehouse-Performance-Summary-Dai_1793099471452.txt`. The user explicitly requested names only; develop actual default report contents later. Do not attach sample queries, export actions, or field templates to these entries.
+
 ## Access administration
 
 Managed Clerk authentication is required for reporting. Roles are explicitly

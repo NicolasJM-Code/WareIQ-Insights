@@ -6,26 +6,51 @@
  * OpenAPI spec version: 0.1.0
  */
 import {
+  useMutation,
   useQuery
 } from '@tanstack/react-query';
 import type {
+  DataTag,
+  DefinedInitialDataOptions,
+  DefinedUseQueryResult,
+  MutationFunction,
+  QueryClient,
   QueryFunction,
   QueryKey,
+  UndefinedInitialDataOptions,
+  UseMutationOptions,
+  UseMutationResult,
   UseQueryOptions,
   UseQueryResult
 } from '@tanstack/react-query';
 
 import type {
+  AccessClient,
+  AccessClientInput,
+  AccessDirectory,
+  AccessFailureResponse,
+  AccessOwnReport,
+  AccessOwnReportInput,
+  AccessRole,
+  AccessRoleInput,
+  AccessRunInput,
+  AccessRunResult,
+  AccessSession,
+  AccessUser,
+  AccessUserInput,
   AuthSession,
   AuthUnavailableResponse,
   ForbiddenResponse,
   HealthStatus,
   SettingsAccess,
-  UnauthorizedResponse
+  UnauthorizedResponse,
+  WmsConnectionInput,
+  WmsConnectionResult,
+  WmsError
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
-import type { ErrorType } from '../custom-fetch';
+import type { ErrorType , BodyType } from '../custom-fetch';
 
 type AwaitedInput<T> = PromiseLike<T> | T;
 
@@ -84,7 +109,7 @@ export const getGetAuthSessionQueryKey = () => {
     }
 
 
-export const getGetAuthSessionQueryOptions = <TData = Awaited<ReturnType<typeof getAuthSession>>, TError = ErrorType<UnauthorizedResponse | AuthUnavailableResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAuthSession>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetAuthSessionQueryOptions = <TData = Awaited<ReturnType<typeof getAuthSession>>, TError = ErrorType<UnauthorizedResponse | AuthUnavailableResponse>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAuthSession>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -99,25 +124,49 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 
 
 
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAuthSession>>, TError, TData> & { queryKey: QueryKey }
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAuthSession>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
 
 export type GetAuthSessionQueryResult = NonNullable<Awaited<ReturnType<typeof getAuthSession>>>
 export type GetAuthSessionQueryError = ErrorType<UnauthorizedResponse | AuthUnavailableResponse>
 
 
+export function useGetAuthSession<TData = Awaited<ReturnType<typeof getAuthSession>>, TError = ErrorType<UnauthorizedResponse | AuthUnavailableResponse>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAuthSession>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getAuthSession>>,
+          TError,
+          Awaited<ReturnType<typeof getAuthSession>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAuthSession<TData = Awaited<ReturnType<typeof getAuthSession>>, TError = ErrorType<UnauthorizedResponse | AuthUnavailableResponse>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAuthSession>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getAuthSession>>,
+          TError,
+          Awaited<ReturnType<typeof getAuthSession>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAuthSession<TData = Awaited<ReturnType<typeof getAuthSession>>, TError = ErrorType<UnauthorizedResponse | AuthUnavailableResponse>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAuthSession>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
  * @summary Get the verified user's application permissions
  */
 
 export function useGetAuthSession<TData = Awaited<ReturnType<typeof getAuthSession>>, TError = ErrorType<UnauthorizedResponse | AuthUnavailableResponse>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAuthSession>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-
- ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAuthSession>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getGetAuthSessionQueryOptions(options)
 
-  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
   return withQueryKey(query, queryOptions.queryKey);
 }
@@ -161,7 +210,7 @@ export const getGetSettingsAccessQueryKey = () => {
     }
 
 
-export const getGetSettingsAccessQueryOptions = <TData = Awaited<ReturnType<typeof getSettingsAccess>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | AuthUnavailableResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSettingsAccess>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetSettingsAccessQueryOptions = <TData = Awaited<ReturnType<typeof getSettingsAccess>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | AuthUnavailableResponse>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSettingsAccess>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -176,25 +225,49 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 
 
 
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSettingsAccess>>, TError, TData> & { queryKey: QueryKey }
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSettingsAccess>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
 
 export type GetSettingsAccessQueryResult = NonNullable<Awaited<ReturnType<typeof getSettingsAccess>>>
 export type GetSettingsAccessQueryError = ErrorType<UnauthorizedResponse | ForbiddenResponse | AuthUnavailableResponse>
 
 
+export function useGetSettingsAccess<TData = Awaited<ReturnType<typeof getSettingsAccess>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | AuthUnavailableResponse>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSettingsAccess>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getSettingsAccess>>,
+          TError,
+          Awaited<ReturnType<typeof getSettingsAccess>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSettingsAccess<TData = Awaited<ReturnType<typeof getSettingsAccess>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | AuthUnavailableResponse>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSettingsAccess>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getSettingsAccess>>,
+          TError,
+          Awaited<ReturnType<typeof getSettingsAccess>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSettingsAccess<TData = Awaited<ReturnType<typeof getSettingsAccess>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | AuthUnavailableResponse>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSettingsAccess>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
  * @summary Check administrator access without returning connection credentials
  */
 
 export function useGetSettingsAccess<TData = Awaited<ReturnType<typeof getSettingsAccess>>, TError = ErrorType<UnauthorizedResponse | ForbiddenResponse | AuthUnavailableResponse>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSettingsAccess>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-
- ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSettingsAccess>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getGetSettingsAccessQueryOptions(options)
 
-  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
   return withQueryKey(query, queryOptions.queryKey);
 }
@@ -204,6 +277,928 @@ export function useGetSettingsAccess<TData = Awaited<ReturnType<typeof getSettin
 
 
 
+
+export const getGetAccessSessionUrl = () => {
+
+
+
+
+  return `/api/access/me`
+}
+
+export const getAccessSession = async ( options?: Parameters<typeof customFetch>[1]): Promise<AccessSession> => {
+
+  return customFetch<AccessSession>(getGetAccessSessionUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAccessSessionQueryKey = () => {
+    return [
+    `/api/access/me`
+    ] as const;
+    }
+
+
+export const getGetAccessSessionQueryOptions = <TData = Awaited<ReturnType<typeof getAccessSession>>, TError = ErrorType<AccessFailureResponse>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAccessSession>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAccessSessionQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAccessSession>>> = ({ signal }) => getAccessSession({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAccessSession>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetAccessSessionQueryResult = NonNullable<Awaited<ReturnType<typeof getAccessSession>>>
+export type GetAccessSessionQueryError = ErrorType<AccessFailureResponse>
+
+
+export function useGetAccessSession<TData = Awaited<ReturnType<typeof getAccessSession>>, TError = ErrorType<AccessFailureResponse>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAccessSession>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getAccessSession>>,
+          TError,
+          Awaited<ReturnType<typeof getAccessSession>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAccessSession<TData = Awaited<ReturnType<typeof getAccessSession>>, TError = ErrorType<AccessFailureResponse>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAccessSession>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getAccessSession>>,
+          TError,
+          Awaited<ReturnType<typeof getAccessSession>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAccessSession<TData = Awaited<ReturnType<typeof getAccessSession>>, TError = ErrorType<AccessFailureResponse>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAccessSession>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+
+export function useGetAccessSession<TData = Awaited<ReturnType<typeof getAccessSession>>, TError = ErrorType<AccessFailureResponse>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAccessSession>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetAccessSessionQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetAccessAdminUrl = () => {
+
+
+
+
+  return `/api/access/admin`
+}
+
+export const getAccessAdmin = async ( options?: Parameters<typeof customFetch>[1]): Promise<AccessDirectory> => {
+
+  return customFetch<AccessDirectory>(getGetAccessAdminUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAccessAdminQueryKey = () => {
+    return [
+    `/api/access/admin`
+    ] as const;
+    }
+
+
+export const getGetAccessAdminQueryOptions = <TData = Awaited<ReturnType<typeof getAccessAdmin>>, TError = ErrorType<AccessFailureResponse>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAccessAdmin>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAccessAdminQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAccessAdmin>>> = ({ signal }) => getAccessAdmin({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAccessAdmin>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetAccessAdminQueryResult = NonNullable<Awaited<ReturnType<typeof getAccessAdmin>>>
+export type GetAccessAdminQueryError = ErrorType<AccessFailureResponse>
+
+
+export function useGetAccessAdmin<TData = Awaited<ReturnType<typeof getAccessAdmin>>, TError = ErrorType<AccessFailureResponse>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAccessAdmin>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getAccessAdmin>>,
+          TError,
+          Awaited<ReturnType<typeof getAccessAdmin>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAccessAdmin<TData = Awaited<ReturnType<typeof getAccessAdmin>>, TError = ErrorType<AccessFailureResponse>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAccessAdmin>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getAccessAdmin>>,
+          TError,
+          Awaited<ReturnType<typeof getAccessAdmin>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAccessAdmin<TData = Awaited<ReturnType<typeof getAccessAdmin>>, TError = ErrorType<AccessFailureResponse>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAccessAdmin>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+
+export function useGetAccessAdmin<TData = Awaited<ReturnType<typeof getAccessAdmin>>, TError = ErrorType<AccessFailureResponse>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAccessAdmin>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetAccessAdminQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getSaveAccessClientUrl = () => {
+
+
+
+
+  return `/api/access/clients`
+}
+
+export const saveAccessClient = async (accessClientInput: AccessClientInput, options?: Parameters<typeof customFetch>[1]): Promise<AccessClient> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AccessClient>(getSaveAccessClientUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(accessClientInput)
+  }
+);}
+
+
+
+
+
+export const getSaveAccessClientMutationKey = () => ['saveAccessClient'] as const;
+
+export const getSaveAccessClientMutationOptions = <TError = ErrorType<AccessFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveAccessClient>>, TError,SaveAccessClientMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof saveAccessClient>>, TError,SaveAccessClientMutationVariables, TContext> => {
+
+const mutationKey = getSaveAccessClientMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveAccessClient>>, SaveAccessClientMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveAccessClient(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveAccessClientMutationResult = NonNullable<Awaited<ReturnType<typeof saveAccessClient>>>
+    export type SaveAccessClientMutationBody = BodyType<AccessClientInput>
+    export type SaveAccessClientMutationError = ErrorType<AccessFailureResponse>
+    export type SaveAccessClientMutationVariables = {data: BodyType<AccessClientInput>}
+
+    export const useSaveAccessClient = <TError = ErrorType<AccessFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveAccessClient>>, TError,SaveAccessClientMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof saveAccessClient>>,
+        TError,
+        SaveAccessClientMutationVariables,
+        TContext
+      > => {
+      return useMutation(getSaveAccessClientMutationOptions(options), queryClient);
+    }
+
+export const getSaveAccessRoleUrl = () => {
+
+
+
+
+  return `/api/access/roles`
+}
+
+export const saveAccessRole = async (accessRoleInput: AccessRoleInput, options?: Parameters<typeof customFetch>[1]): Promise<AccessRole> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AccessRole>(getSaveAccessRoleUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(accessRoleInput)
+  }
+);}
+
+
+
+
+
+export const getSaveAccessRoleMutationKey = () => ['saveAccessRole'] as const;
+
+export const getSaveAccessRoleMutationOptions = <TError = ErrorType<AccessFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveAccessRole>>, TError,SaveAccessRoleMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof saveAccessRole>>, TError,SaveAccessRoleMutationVariables, TContext> => {
+
+const mutationKey = getSaveAccessRoleMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveAccessRole>>, SaveAccessRoleMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveAccessRole(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveAccessRoleMutationResult = NonNullable<Awaited<ReturnType<typeof saveAccessRole>>>
+    export type SaveAccessRoleMutationBody = BodyType<AccessRoleInput>
+    export type SaveAccessRoleMutationError = ErrorType<AccessFailureResponse>
+    export type SaveAccessRoleMutationVariables = {data: BodyType<AccessRoleInput>}
+
+    export const useSaveAccessRole = <TError = ErrorType<AccessFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveAccessRole>>, TError,SaveAccessRoleMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof saveAccessRole>>,
+        TError,
+        SaveAccessRoleMutationVariables,
+        TContext
+      > => {
+      return useMutation(getSaveAccessRoleMutationOptions(options), queryClient);
+    }
+
+export const getSaveAccessUserUrl = () => {
+
+
+
+
+  return `/api/access/users`
+}
+
+export const saveAccessUser = async (accessUserInput: AccessUserInput, options?: Parameters<typeof customFetch>[1]): Promise<AccessUser> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AccessUser>(getSaveAccessUserUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(accessUserInput)
+  }
+);}
+
+
+
+
+
+export const getSaveAccessUserMutationKey = () => ['saveAccessUser'] as const;
+
+export const getSaveAccessUserMutationOptions = <TError = ErrorType<AccessFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveAccessUser>>, TError,SaveAccessUserMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof saveAccessUser>>, TError,SaveAccessUserMutationVariables, TContext> => {
+
+const mutationKey = getSaveAccessUserMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveAccessUser>>, SaveAccessUserMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveAccessUser(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveAccessUserMutationResult = NonNullable<Awaited<ReturnType<typeof saveAccessUser>>>
+    export type SaveAccessUserMutationBody = BodyType<AccessUserInput>
+    export type SaveAccessUserMutationError = ErrorType<AccessFailureResponse>
+    export type SaveAccessUserMutationVariables = {data: BodyType<AccessUserInput>}
+
+    export const useSaveAccessUser = <TError = ErrorType<AccessFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveAccessUser>>, TError,SaveAccessUserMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof saveAccessUser>>,
+        TError,
+        SaveAccessUserMutationVariables,
+        TContext
+      > => {
+      return useMutation(getSaveAccessUserMutationOptions(options), queryClient);
+    }
+
+export const getDeleteAccessEntryUrl = (entity: 'clients' | 'roles' | 'users',
+    id: string,) => {
+
+
+
+
+  return `/api/access/${entity}/${id}`
+}
+
+export const deleteAccessEntry = async (entity: 'clients' | 'roles' | 'users',
+    id: string, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getDeleteAccessEntryUrl(entity,id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteAccessEntryMutationKey = () => ['deleteAccessEntry'] as const;
+
+export const getDeleteAccessEntryMutationOptions = <TError = ErrorType<AccessFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAccessEntry>>, TError,DeleteAccessEntryMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteAccessEntry>>, TError,DeleteAccessEntryMutationVariables, TContext> => {
+
+const mutationKey = getDeleteAccessEntryMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteAccessEntry>>, DeleteAccessEntryMutationVariables> = (props) => {
+          const {entity,id} = props ?? {};
+
+          return  deleteAccessEntry(entity,id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteAccessEntryMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAccessEntry>>>
+
+    export type DeleteAccessEntryMutationError = ErrorType<AccessFailureResponse>
+    export type DeleteAccessEntryMutationVariables = {entity: 'clients' | 'roles' | 'users';id: string}
+
+    export const useDeleteAccessEntry = <TError = ErrorType<AccessFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAccessEntry>>, TError,DeleteAccessEntryMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteAccessEntry>>,
+        TError,
+        DeleteAccessEntryMutationVariables,
+        TContext
+      > => {
+      return useMutation(getDeleteAccessEntryMutationOptions(options), queryClient);
+    }
+
+export const getListAccessOwnReportsUrl = () => {
+
+
+
+
+  return `/api/access/own-reports`
+}
+
+export const listAccessOwnReports = async ( options?: Parameters<typeof customFetch>[1]): Promise<AccessOwnReport[]> => {
+
+  return customFetch<AccessOwnReport[]>(getListAccessOwnReportsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAccessOwnReportsQueryKey = () => {
+    return [
+    `/api/access/own-reports`
+    ] as const;
+    }
+
+
+export const getListAccessOwnReportsQueryOptions = <TData = Awaited<ReturnType<typeof listAccessOwnReports>>, TError = ErrorType<AccessFailureResponse>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAccessOwnReports>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAccessOwnReportsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAccessOwnReports>>> = ({ signal }) => listAccessOwnReports({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAccessOwnReports>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListAccessOwnReportsQueryResult = NonNullable<Awaited<ReturnType<typeof listAccessOwnReports>>>
+export type ListAccessOwnReportsQueryError = ErrorType<AccessFailureResponse>
+
+
+export function useListAccessOwnReports<TData = Awaited<ReturnType<typeof listAccessOwnReports>>, TError = ErrorType<AccessFailureResponse>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAccessOwnReports>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listAccessOwnReports>>,
+          TError,
+          Awaited<ReturnType<typeof listAccessOwnReports>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListAccessOwnReports<TData = Awaited<ReturnType<typeof listAccessOwnReports>>, TError = ErrorType<AccessFailureResponse>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAccessOwnReports>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listAccessOwnReports>>,
+          TError,
+          Awaited<ReturnType<typeof listAccessOwnReports>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListAccessOwnReports<TData = Awaited<ReturnType<typeof listAccessOwnReports>>, TError = ErrorType<AccessFailureResponse>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAccessOwnReports>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+
+export function useListAccessOwnReports<TData = Awaited<ReturnType<typeof listAccessOwnReports>>, TError = ErrorType<AccessFailureResponse>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAccessOwnReports>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListAccessOwnReportsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getSaveAccessOwnReportUrl = () => {
+
+
+
+
+  return `/api/access/own-reports`
+}
+
+export const saveAccessOwnReport = async (accessOwnReportInput: AccessOwnReportInput, options?: Parameters<typeof customFetch>[1]): Promise<AccessOwnReport> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AccessOwnReport>(getSaveAccessOwnReportUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(accessOwnReportInput)
+  }
+);}
+
+
+
+
+
+export const getSaveAccessOwnReportMutationKey = () => ['saveAccessOwnReport'] as const;
+
+export const getSaveAccessOwnReportMutationOptions = <TError = ErrorType<AccessFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveAccessOwnReport>>, TError,SaveAccessOwnReportMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof saveAccessOwnReport>>, TError,SaveAccessOwnReportMutationVariables, TContext> => {
+
+const mutationKey = getSaveAccessOwnReportMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveAccessOwnReport>>, SaveAccessOwnReportMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveAccessOwnReport(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveAccessOwnReportMutationResult = NonNullable<Awaited<ReturnType<typeof saveAccessOwnReport>>>
+    export type SaveAccessOwnReportMutationBody = BodyType<AccessOwnReportInput>
+    export type SaveAccessOwnReportMutationError = ErrorType<AccessFailureResponse>
+    export type SaveAccessOwnReportMutationVariables = {data: BodyType<AccessOwnReportInput>}
+
+    export const useSaveAccessOwnReport = <TError = ErrorType<AccessFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveAccessOwnReport>>, TError,SaveAccessOwnReportMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof saveAccessOwnReport>>,
+        TError,
+        SaveAccessOwnReportMutationVariables,
+        TContext
+      > => {
+      return useMutation(getSaveAccessOwnReportMutationOptions(options), queryClient);
+    }
+
+export const getDeleteAccessOwnReportUrl = (id: string,) => {
+
+
+
+
+  return `/api/access/own-reports/${id}`
+}
+
+export const deleteAccessOwnReport = async (id: string, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getDeleteAccessOwnReportUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteAccessOwnReportMutationKey = () => ['deleteAccessOwnReport'] as const;
+
+export const getDeleteAccessOwnReportMutationOptions = <TError = ErrorType<AccessFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAccessOwnReport>>, TError,DeleteAccessOwnReportMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteAccessOwnReport>>, TError,DeleteAccessOwnReportMutationVariables, TContext> => {
+
+const mutationKey = getDeleteAccessOwnReportMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteAccessOwnReport>>, DeleteAccessOwnReportMutationVariables> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteAccessOwnReport(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteAccessOwnReportMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAccessOwnReport>>>
+
+    export type DeleteAccessOwnReportMutationError = ErrorType<AccessFailureResponse>
+    export type DeleteAccessOwnReportMutationVariables = {id: string}
+
+    export const useDeleteAccessOwnReport = <TError = ErrorType<AccessFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAccessOwnReport>>, TError,DeleteAccessOwnReportMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteAccessOwnReport>>,
+        TError,
+        DeleteAccessOwnReportMutationVariables,
+        TContext
+      > => {
+      return useMutation(getDeleteAccessOwnReportMutationOptions(options), queryClient);
+    }
+
+export const getRunAccessReportUrl = (id: string,) => {
+
+
+
+
+  return `/api/access/reports/${id}/run`
+}
+
+export const runAccessReport = async (id: string,
+    accessRunInput: AccessRunInput, options?: Parameters<typeof customFetch>[1]): Promise<AccessRunResult> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AccessRunResult>(getRunAccessReportUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(accessRunInput)
+  }
+);}
+
+
+
+
+
+export const getRunAccessReportMutationKey = () => ['runAccessReport'] as const;
+
+export const getRunAccessReportMutationOptions = <TError = ErrorType<AccessFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runAccessReport>>, TError,RunAccessReportMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof runAccessReport>>, TError,RunAccessReportMutationVariables, TContext> => {
+
+const mutationKey = getRunAccessReportMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof runAccessReport>>, RunAccessReportMutationVariables> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  runAccessReport(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RunAccessReportMutationResult = NonNullable<Awaited<ReturnType<typeof runAccessReport>>>
+    export type RunAccessReportMutationBody = BodyType<AccessRunInput>
+    export type RunAccessReportMutationError = ErrorType<AccessFailureResponse>
+    export type RunAccessReportMutationVariables = {id: string;data: BodyType<AccessRunInput>}
+
+    export const useRunAccessReport = <TError = ErrorType<AccessFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runAccessReport>>, TError,RunAccessReportMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof runAccessReport>>,
+        TError,
+        RunAccessReportMutationVariables,
+        TContext
+      > => {
+      return useMutation(getRunAccessReportMutationOptions(options), queryClient);
+    }
+
+export const getTestWmsConnectionUrl = () => {
+
+
+
+
+  return `/api/wms/connection/test`
+}
+
+/**
+ * @summary Test a WMS connection without saving credentials or querying warehouse records
+ */
+export const testWmsConnection = async (wmsConnectionInput: WmsConnectionInput, options?: Parameters<typeof customFetch>[1]): Promise<WmsConnectionResult> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<WmsConnectionResult>(getTestWmsConnectionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(wmsConnectionInput)
+  }
+);}
+
+
+
+
+
+export const getTestWmsConnectionMutationKey = () => ['testWmsConnection'] as const;
+
+export const getTestWmsConnectionMutationOptions = <TError = ErrorType<WmsError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof testWmsConnection>>, TError,TestWmsConnectionMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof testWmsConnection>>, TError,TestWmsConnectionMutationVariables, TContext> => {
+
+const mutationKey = getTestWmsConnectionMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof testWmsConnection>>, TestWmsConnectionMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  testWmsConnection(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type TestWmsConnectionMutationResult = NonNullable<Awaited<ReturnType<typeof testWmsConnection>>>
+    export type TestWmsConnectionMutationBody = BodyType<WmsConnectionInput>
+    export type TestWmsConnectionMutationError = ErrorType<WmsError>
+    export type TestWmsConnectionMutationVariables = {data: BodyType<WmsConnectionInput>}
+
+    /**
+ * @summary Test a WMS connection without saving credentials or querying warehouse records
+ */
+export const useTestWmsConnection = <TError = ErrorType<WmsError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof testWmsConnection>>, TError,TestWmsConnectionMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof testWmsConnection>>,
+        TError,
+        TestWmsConnectionMutationVariables,
+        TContext
+      > => {
+      return useMutation(getTestWmsConnectionMutationOptions(options), queryClient);
+    }
 
 export const getHealthCheckUrl = () => {
 
@@ -239,7 +1234,7 @@ export const getHealthCheckQueryKey = () => {
     }
 
 
-export const getHealthCheckQueryOptions = <TData = Awaited<ReturnType<typeof healthCheck>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof healthCheck>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getHealthCheckQueryOptions = <TData = Awaited<ReturnType<typeof healthCheck>>, TError = ErrorType<unknown>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof healthCheck>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -254,25 +1249,49 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 
 
 
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof healthCheck>>, TError, TData> & { queryKey: QueryKey }
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof healthCheck>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
 
 export type HealthCheckQueryResult = NonNullable<Awaited<ReturnType<typeof healthCheck>>>
 export type HealthCheckQueryError = ErrorType<unknown>
 
 
+export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, TError = ErrorType<unknown>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof healthCheck>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof healthCheck>>,
+          TError,
+          Awaited<ReturnType<typeof healthCheck>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, TError = ErrorType<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof healthCheck>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof healthCheck>>,
+          TError,
+          Awaited<ReturnType<typeof healthCheck>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, TError = ErrorType<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof healthCheck>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
  * @summary Health check
  */
 
 export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof healthCheck>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-
- ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof healthCheck>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getHealthCheckQueryOptions(options)
 
-  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
   return withQueryKey(query, queryOptions.queryKey);
 }

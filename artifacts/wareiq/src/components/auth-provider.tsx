@@ -4,6 +4,7 @@ import { publishableKeyFromHost } from '@clerk/react/internal';
 import { shadcn } from '@clerk/themes';
 import { Link, useLocation } from 'wouter';
 import { AccessMessage } from '@/lib/access';
+import { ClearUserCache } from '@/lib/auth-provider';
 
 const clerkPubKey = publishableKeyFromHost(
   window.location.hostname,
@@ -41,7 +42,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signIn: { start: { title: 'Welcome to WareIQ', subtitle: 'Sign in for warehouse reporting' } },
       signUp: { start: { title: 'Join WareIQ', subtitle: 'Reporting access requires approval from the application owner' } },
     }}
-  >{children}</ClerkProvider>;
+  ><ClearUserCache />{children}</ClerkProvider>;
 }
 
 export function SignInPage() {

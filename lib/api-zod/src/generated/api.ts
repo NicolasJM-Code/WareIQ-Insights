@@ -27,6 +27,255 @@ export const GetSettingsAccessResponse = zod.object({
 })
 
 
+export const GetAccessSessionResponse = zod.object({
+  "status": zod.enum(['signed_out', 'unassigned', 'disabled', 'pending_sites', 'active']),
+  "platformAdmin": zod.boolean(),
+  "canCreateOwnReports": zod.boolean(),
+  "clientId": zod.string().nullable(),
+  "clientName": zod.string().nullable(),
+  "reportIds": zod.array(zod.string()),
+  "sites": zod.array(zod.object({
+  "id": zod.string(),
+  "clientId": zod.string(),
+  "sourceId": zod.string(),
+  "name": zod.string(),
+  "active": zod.boolean()
+}))
+})
+
+
+export const GetAccessAdminResponse = zod.object({
+  "clients": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "active": zod.boolean()
+})),
+  "sites": zod.array(zod.object({
+  "id": zod.string(),
+  "clientId": zod.string(),
+  "sourceId": zod.string(),
+  "name": zod.string(),
+  "active": zod.boolean()
+})),
+  "roles": zod.array(zod.object({
+  "id": zod.string(),
+  "clientId": zod.string(),
+  "name": zod.string(),
+  "reportIds": zod.array(zod.string()),
+  "canCreateOwnReports": zod.boolean()
+})),
+  "users": zod.array(zod.object({
+  "id": zod.string(),
+  "email": zod.string(),
+  "name": zod.string(),
+  "clientId": zod.string(),
+  "roleId": zod.string(),
+  "siteIds": zod.array(zod.string()),
+  "primarySiteId": zod.string().nullable(),
+  "active": zod.boolean()
+})),
+  "reports": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "section": zod.string(),
+  "sectionName": zod.string()
+}))
+})
+
+
+export const saveAccessClientBodyNameMax = 100;
+
+
+
+export const SaveAccessClientBody = zod.object({
+  "id": zod.string().optional(),
+  "name": zod.string().min(1).max(saveAccessClientBodyNameMax),
+  "active": zod.boolean()
+})
+
+export const SaveAccessClientResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "active": zod.boolean()
+})
+
+
+export const saveAccessRoleBodyNameMax = 80;
+
+export const saveAccessRoleBodyReportIdsMax = 200;
+
+
+
+export const SaveAccessRoleBody = zod.object({
+  "id": zod.string().optional(),
+  "clientId": zod.string(),
+  "name": zod.string().min(1).max(saveAccessRoleBodyNameMax),
+  "reportIds": zod.array(zod.string()).max(saveAccessRoleBodyReportIdsMax),
+  "canCreateOwnReports": zod.boolean()
+})
+
+export const SaveAccessRoleResponse = zod.object({
+  "id": zod.string(),
+  "clientId": zod.string(),
+  "name": zod.string(),
+  "reportIds": zod.array(zod.string()),
+  "canCreateOwnReports": zod.boolean()
+})
+
+
+export const saveAccessUserBodyEmailMax = 254;
+
+export const saveAccessUserBodyNameMax = 100;
+
+export const saveAccessUserBodySiteIdsMax = 100;
+
+
+
+export const SaveAccessUserBody = zod.object({
+  "id": zod.string().optional(),
+  "email": zod.string().email().max(saveAccessUserBodyEmailMax),
+  "name": zod.string().min(1).max(saveAccessUserBodyNameMax),
+  "clientId": zod.string(),
+  "roleId": zod.string(),
+  "siteIds": zod.array(zod.string()).max(saveAccessUserBodySiteIdsMax),
+  "primarySiteId": zod.string().nullable(),
+  "active": zod.boolean()
+})
+
+export const SaveAccessUserResponse = zod.object({
+  "id": zod.string(),
+  "email": zod.string(),
+  "name": zod.string(),
+  "clientId": zod.string(),
+  "roleId": zod.string(),
+  "siteIds": zod.array(zod.string()),
+  "primarySiteId": zod.string().nullable(),
+  "active": zod.boolean()
+})
+
+
+export const DeleteAccessEntryParams = zod.object({
+  "entity": zod.enum(['clients', 'roles', 'users']),
+  "id": zod.coerce.string()
+})
+
+export const DeleteAccessEntryResponse = zod.void()
+
+
+export const ListAccessOwnReportsResponseItem = zod.object({
+  "id": zod.string(),
+  "section": zod.string(),
+  "name": zod.string(),
+  "description": zod.string(),
+  "dataset": zod.string(),
+  "fields": zod.array(zod.string()),
+  "sourceDefault": zod.string().optional(),
+  "createdAt": zod.string(),
+  "updatedAt": zod.string()
+})
+export const ListAccessOwnReportsResponse = zod.array(ListAccessOwnReportsResponseItem)
+
+
+export const saveAccessOwnReportBodyNameMax = 80;
+
+export const saveAccessOwnReportBodyDescriptionMax = 1000;
+
+export const saveAccessOwnReportBodyFieldsMax = 100;
+
+
+
+export const SaveAccessOwnReportBody = zod.object({
+  "id": zod.string().optional(),
+  "section": zod.string(),
+  "name": zod.string().min(1).max(saveAccessOwnReportBodyNameMax),
+  "description": zod.string().max(saveAccessOwnReportBodyDescriptionMax),
+  "dataset": zod.string(),
+  "fields": zod.array(zod.string()).min(1).max(saveAccessOwnReportBodyFieldsMax),
+  "sourceDefault": zod.string().optional()
+})
+
+export const SaveAccessOwnReportResponse = zod.object({
+  "id": zod.string(),
+  "section": zod.string(),
+  "name": zod.string(),
+  "description": zod.string(),
+  "dataset": zod.string(),
+  "fields": zod.array(zod.string()),
+  "sourceDefault": zod.string().optional(),
+  "createdAt": zod.string(),
+  "updatedAt": zod.string()
+})
+
+
+export const DeleteAccessOwnReportParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const DeleteAccessOwnReportResponse = zod.void()
+
+
+export const RunAccessReportParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+
+
+
+export const RunAccessReportBody = zod.object({
+  "siteId": zod.string().min(1)
+})
+
+export const RunAccessReportResponse = zod.object({
+  "status": zod.enum(['not_connected']),
+  "message": zod.string()
+})
+
+
+/**
+ * @summary Test a WMS connection without saving credentials or querying warehouse records
+ */
+export const testWmsConnectionBodyHostMax = 253;
+
+
+export const testWmsConnectionBodyHostRegExp = new RegExp('^[A-Za-z0-9][A-Za-z0-9.-]*$');
+export const testWmsConnectionBodyPortMax = 65535;
+
+export const testWmsConnectionBodyDatabaseMax = 63;
+
+
+export const testWmsConnectionBodyDatabaseRegExp = new RegExp('^[A-Za-z_][A-Za-z0-9_$]*$');
+export const testWmsConnectionBodySchemaMax = 63;
+
+
+export const testWmsConnectionBodySchemaRegExp = new RegExp('^[A-Za-z_][A-Za-z0-9_$]*$');
+export const testWmsConnectionBodyUsernameMax = 63;
+
+
+export const testWmsConnectionBodyUsernameRegExp = new RegExp('^[A-Za-z_][A-Za-z0-9_$]*$');
+export const testWmsConnectionBodyQueryTimeoutSecMin = 5;
+export const testWmsConnectionBodyQueryTimeoutSecMax = 300;
+
+
+
+export const TestWmsConnectionBody = zod.object({
+  "host": zod.string().min(1).max(testWmsConnectionBodyHostMax).regex(testWmsConnectionBodyHostRegExp),
+  "port": zod.number().int().min(1).max(testWmsConnectionBodyPortMax),
+  "database": zod.string().min(1).max(testWmsConnectionBodyDatabaseMax).regex(testWmsConnectionBodyDatabaseRegExp),
+  "schema": zod.string().min(1).max(testWmsConnectionBodySchemaMax).regex(testWmsConnectionBodySchemaRegExp),
+  "username": zod.string().min(1).max(testWmsConnectionBodyUsernameMax).regex(testWmsConnectionBodyUsernameRegExp),
+  "sslMode": zod.enum(['verify-full']),
+  "queryTimeoutSec": zod.number().int().min(testWmsConnectionBodyQueryTimeoutSecMin).max(testWmsConnectionBodyQueryTimeoutSecMax)
+})
+
+export const TestWmsConnectionResponse = zod.object({
+  "status": zod.enum(['connected', 'error']),
+  "code": zod.string(),
+  "message": zod.string(),
+  "testedAt": zod.string(),
+  "lastSuccessfulAt": zod.string().optional()
+})
+
+
 /**
  * Returns server health status
  * @summary Health check

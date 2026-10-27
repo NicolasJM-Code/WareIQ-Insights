@@ -12,6 +12,9 @@ import { PageHeader, Pill } from '@/components/report-kit';
 import { useReport, useDocTitle, type Prefs, type RefreshInterval, type RangeDays } from '@/lib/report-context';
 import { toast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { useTestWmsConnection, type WmsConnectionResult } from '@workspace/api-client-react';
+import { useUser, UserButton } from '@clerk/react';
+import { Link } from 'wouter';
 
 const hostRe = /^(?=.{1,253}$)([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$|^(\d{1,3}\.){3}\d{1,3}$/;
 const ident = /^[a-zA-Z_][a-zA-Z0-9_$]{0,62}$/;
@@ -22,12 +25,15 @@ const connSchema = z.object({
   database: z.string().trim().min(1, 'Database name is required').regex(ident, 'Letters, digits and underscores; must not start with a digit'),
   schema: z.string().trim().min(1, 'Schema is required').regex(ident, 'Letters, digits and underscores; must not start with a digit'),
   username: z.string().trim().min(1, 'Reporting username is required').regex(ident, 'Use a valid PostgreSQL role name'),
-  sslMode: z.enum(['require', 'verify-full', 'disable']),
+  sslMode: z.literal('verify-full'),
   refreshInterval: z.enum(['1', '5', '15', '30', 'manual']),
   queryTimeoutSec: z.coerce.number({ invalid_type_error: 'Timeout must be a number' }).int('Whole seconds').min(5, 'Minimum 5 seconds').max(300, 'Maximum 300 seconds'),
 });
 type Conn = z.infer<typeof connSchema>;
 
+interface LogEntry { at: string; host: string; outcome: string }
+interface LogEntry { at: string; host: string; outcome: string }
+interface LogEntry { at: string; host: string; outcome: string }
 interface LogEntry { at: string; host: string; outcome: string }
 
 function Section({ icon: Icon, title, children, aside }: { icon: typeof Database; title: string; children: ReactNode; aside?: ReactNode }) {
@@ -48,32 +54,58 @@ const Unavailable = () => <Pill tone="neutral">Unavailable until live setup</Pil
 export default function Settings() {
   useDocTitle('Settings');
   const { prefs, setPrefs, resetPrefs } = useReport();
-  // Password lives only in this component's state; it is never persisted, copied or sent anywhere.
-  const [password, setPassword] = useState('');
-  const [pwError, setPwError] = useState<string | null>(null);
-  const [testResult, setTestResult] = useState<null | 'invalid' | 'unavailable'>(null);
+  const { user, isSignedIn } = useUser();
+  const testConnection = useTestWmsConnection();
+  const [requestError, setRequestError] = useState<string | null>(null);
+  const [lastSuccessfulAt, setLastSuccessfulAt] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<WmsConnectionResult | 'invalid' | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
 
-  useEffect(() => () => setPassword(''), []);
+  useEffect(() => {
+    setTestResult(null);
+    setRequestError(null);
+    setLastSuccessfulAt(null);
+    setLog([]);
+  }, [user?.id]);
 
   const form = useForm<Conn>({
     resolver: zodResolver(connSchema),
     defaultValues: { host: '', port: 5432, database: '', schema: 'public', username: '', sslMode: 'verify-full', refreshInterval: prefs.refreshInterval, queryTimeoutSec: prefs.queryTimeoutSec },
     mode: 'onTouched',
   });
+  useEffect(() => {
+    const subscription = form.watch(() => {
+      setTestResult(null);
+      setRequestError(null);
+    });
+    return () => subscription.unsubscribe();
+  }, [form]);
 
   const onTest = async () => {
+    if (testConnection.isPending) return;
+    setRequestError(null);
     const ok = await form.trigger();
-    const pwOk = password.length > 0;
-    setPwError(pwOk ? null : 'Password is required to test a connection');
-    if (!ok || !pwOk) {
+    if (!ok) {
       setTestResult('invalid');
       return;
     }
-    // Honest outcome: a browser cannot open a PostgreSQL socket, and this demo has no server-side service.
-    setTestResult('unavailable');
-    setPassword('');
-    setLog((l) => [{ at: new Date().toISOString(), host: `${form.getValues('host')}:${form.getValues('port')}`, outcome: 'Not attempted: live testing unavailable in demo (no server-side reporting service)' }, ...l].slice(0, 20));
+    setTestResult(null);
+    const { refreshInterval: _refreshInterval, ...input } = form.getValues();
+    try {
+      const result = await testConnection.mutateAsync({ data: input });
+      setTestResult(result);
+      if (result.lastSuccessfulAt) setLastSuccessfulAt(result.lastSuccessfulAt);
+      setLog((l) => [{ at: result.testedAt, host: `${input.host}:${input.port}`, outcome: `${result.code}: ${result.message}` }, ...l].slice(0, 20));
+    } catch (error) {
+      // Display only messages defined by this API, never an arbitrary proxy/driver body.
+      const status = (error as { status?: number }).status;
+      const message = status === 401 ? 'Sign in before testing the database connection.'
+        : status === 403 ? 'Your account needs administrator access to test database connections.'
+        : status === 429 ? 'Please wait a few seconds before testing again.'
+        : 'The reporting service could not complete the test. Check your connection or try again shortly.';
+      setRequestError(message);
+      setLog((l) => [{ at: new Date().toISOString(), host: `${input.host}:${input.port}`, outcome: message }, ...l].slice(0, 20));
+    }
   };
 
   const savePrefs = form.handleSubmit(
@@ -110,18 +142,21 @@ export default function Settings() {
 
   return (
     <div>
-      <PageHeader eyebrow="12 · Administration" title="Settings" description="Define the read-only connection to the WMS PostgreSQL database and how reports behave. This is a demonstration: no live connection exists and none can be made from the browser." />
+      <PageHeader eyebrow="12 · Administration" title="Settings" description="Test the WMS PostgreSQL connection through the reporting server. Reports still use labeled sample data until approved reporting views are mapped." />
+      <div className="mb-4 flex items-center gap-3 text-sm">
+        {isSignedIn ? <><UserButton /><span>Signed in. Database tests require an administrator account.</span></> : <Link href="/sign-in" className="text-primary underline">Sign in to test the database connection</Link>}
+      </div>
 
       <div className="rise mb-5 grid md:grid-cols-[auto_1fr_auto] items-center gap-4 rounded-md border bg-card px-5 py-4" data-testid="status-connection">
         <div className="flex items-center gap-3">
           <div className="relative h-10 w-10 rounded-md bg-muted grid place-items-center"><Database className="h-5 w-5 text-muted-foreground" /><CircleSlash className="h-3.5 w-3.5 absolute -right-1 -bottom-1 text-muted-foreground bg-card rounded-full" /></div>
           <div>
             <div className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Connection status</div>
-            <div className="font-display text-lg font-bold">Disconnected · demo mode</div>
+            <div className="font-display text-lg font-bold">{testConnection.isPending ? 'Testing connection…' : requestError ? 'Test could not complete' : testResult && testResult !== 'invalid' ? testResult.status === 'connected' ? 'Connection test passed' : 'Connection test failed' : 'Not tested'}</div>
           </div>
         </div>
         <dl className="grid sm:grid-cols-3 gap-3 text-[12.5px]">
-          <div><dt className="text-[10px] font-mono uppercase text-muted-foreground">Last successful connection</dt><dd data-testid="text-last-success">Never. No live connection has been made.</dd></div>
+          <div><dt className="text-[10px] font-mono uppercase text-muted-foreground">Last successful test this session</dt><dd data-testid="text-last-success">{lastSuccessfulAt ? new Date(lastSuccessfulAt).toLocaleString() : 'No successful test this session'}</dd></div>
           <div><dt className="text-[10px] font-mono uppercase text-muted-foreground">Data source</dt><dd>Generated sample data in the browser</dd></div>
           <div><dt className="text-[10px] font-mono uppercase text-muted-foreground">Access mode</dt><dd>Read-only reporting (SELECT only)</dd></div>
         </dl>
@@ -141,6 +176,7 @@ export default function Settings() {
             <Section icon={Server} title="PostgreSQL connection definition">
               <Form {...form}>
                 <form onSubmit={(e) => { e.preventDefault(); void savePrefs(); }} className="space-y-5" autoComplete="off" noValidate>
+                  <fieldset disabled={testConnection.isPending} className="space-y-5">
                   <div className="grid sm:grid-cols-[1fr_140px] gap-4">
                     <FormField control={form.control} name="host" render={({ field }) => (
                       <FormItem><FormLabel>Database host / server address</FormLabel><FormControl><Input placeholder="wms-db.internal.example" className="font-mono" data-testid="input-host" {...field} /></FormControl><FormMessage /></FormItem>
@@ -162,9 +198,8 @@ export default function Settings() {
                       <FormItem><FormLabel>Reporting username</FormLabel><FormControl><Input placeholder="wms_reporting_ro" className="font-mono" autoComplete="off" data-testid="input-username" {...field} /></FormControl><FormDescription>Dedicated read-only role.</FormDescription><FormMessage /></FormItem>
                     )} />
                     <div className="space-y-2">
-                      <label htmlFor="pg-password" className="text-sm font-medium flex items-center gap-1.5">Password <Lock className="h-3 w-3 text-muted-foreground" /></label>
-                      <Input id="pg-password" type="password" value={password} onChange={(e) => { setPassword(e.target.value); setPwError(null); }} autoComplete="new-password" spellCheck={false} data-testid="input-password" aria-describedby="pw-help" aria-invalid={!!pwError} />
-                      {pwError ? <p className="text-[0.8rem] font-medium text-destructive">{pwError}</p> : <p id="pw-help" className="text-[0.8rem] text-muted-foreground">Masked, held only on this screen, cleared when you leave or test. Never saved or copied.</p>}
+                      <div className="text-sm font-medium flex items-center gap-1.5">Server-side password <Lock className="h-3 w-3 text-muted-foreground" /></div>
+                      <p className="text-[0.8rem] text-muted-foreground">An owner must configure the credentials and approve this exact host, port, database and username on the server. Use a matching <code>WMS_DATABASE_URL</code>, or <code>WMS_PGPASSWORD</code> with all four <code>WMS_APPROVED_*</code> settings listed below. The password is never entered or stored in this browser.</p>
                     </div>
                   </div>
 
@@ -174,9 +209,7 @@ export default function Settings() {
                       <FormControl>
                         <RadioGroup value={field.value} onValueChange={field.onChange} className="grid sm:grid-cols-3 gap-2">
                           {[
-                            { v: 'require', l: 'Require SSL', d: 'Encrypted; certificate not verified' },
-                            { v: 'verify-full', l: 'Verify certificate', d: 'Encrypted; verifies CA and hostname' },
-                            { v: 'disable', l: 'Disable SSL', d: 'Local or approved secure network only' },
+                            { v: 'verify-full', l: 'Verify certificate', d: 'Required: encrypted; verifies CA and hostname' },
                           ].map((o) => (
                             <label key={o.v} className={cn('flex gap-2.5 rounded-md border p-3 cursor-pointer transition-colors', field.value === o.v ? 'border-primary bg-primary/5' : 'hover:border-primary/40')}>
                               <RadioGroupItem value={o.v} className="mt-0.5" data-testid={`radio-ssl-${o.v}`} />
@@ -185,7 +218,7 @@ export default function Settings() {
                           ))}
                         </RadioGroup>
                       </FormControl>
-                      {field.value === 'disable' && <p className="text-[12px] text-[hsl(30_75%_30%)]">Credentials and results would travel unencrypted. Use only where the network is approved.</p>}
+                      <p className="text-[12px] text-muted-foreground">For a private certificate authority, configure <code>WMS_CA_CERT</code> in server Secrets. Certificate verification cannot be disabled.</p>
                       <FormMessage />
                     </FormItem>
                   )} />
@@ -205,22 +238,25 @@ export default function Settings() {
                     )} />
                   </div>
 
-                  {testResult === 'unavailable' && (
+                  {testResult && testResult !== 'invalid' && (
                     <div role="status" className="rounded-md border border-[hsl(42_70%_70%)] bg-[hsl(42_90%_94%)] p-4 text-[13px] text-[hsl(30_70%_22%)]" data-testid="status-test-result">
-                      <div className="font-semibold flex items-center gap-2"><Info className="h-4 w-4" /> Live connection testing is unavailable in this demo</div>
-                      <p className="mt-1">The definition is valid, but no connection was attempted. Browsers cannot open PostgreSQL connections, and this demo has no server-side reporting service to do it on your behalf. Status remains Disconnected. The password field has been cleared.</p>
+                      <div className="font-semibold flex items-center gap-2"><Info className="h-4 w-4" />{testResult.status === 'connected' ? 'Connection test passed' : 'Connection test failed'} · {testResult.code}</div>
+                      <p className="mt-1">{testResult.message}</p>
+                      <p className="mt-1 text-xs">Tested {new Date(testResult.testedAt).toLocaleString()}. This test does not save a connection or switch reports to live data.</p>
                     </div>
                   )}
                   {testResult === 'invalid' && (
                     <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-[13px] text-destructive">Fix the highlighted fields before testing.</div>
                   )}
+                  {requestError && <div role="alert" className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{requestError}</div>}
 
                   <div className="flex flex-wrap gap-2 pt-1">
-                    <button type="button" onClick={onTest} className="h-9 px-4 rounded-md bg-primary text-primary-foreground text-[13px] font-medium inline-flex items-center gap-2 hover:opacity-90 active:scale-[.98] transition" data-testid="button-test-connection"><PlugZap className="h-4 w-4" /> Test connection</button>
+                    <button type="button" onClick={onTest} disabled={!isSignedIn || testConnection.isPending} className="h-9 px-4 rounded-md bg-primary text-primary-foreground text-[13px] font-medium inline-flex items-center gap-2 hover:opacity-90 active:scale-[.98] transition disabled:opacity-50" data-testid="button-test-connection"><PlugZap className="h-4 w-4" /> {testConnection.isPending ? 'Testing…' : 'Test connection'}</button>
                     <button type="button" onClick={copyConfig} className="h-9 px-4 rounded-md border bg-background text-[13px] font-medium inline-flex items-center gap-2 hover:border-primary/50 transition" data-testid="button-copy-config"><Copy className="h-4 w-4" /> Copy configuration</button>
                     <button type="submit" className="h-9 px-4 rounded-md border bg-background text-[13px] font-medium inline-flex items-center gap-2 hover:border-primary/50 transition" data-testid="button-save-prefs"><Save className="h-4 w-4" /> Save report preferences</button>
                   </div>
                   <p className="text-[11.5px] text-muted-foreground">Copy configuration excludes username and password. Save stores only refresh interval and query timeout in this browser.</p>
+                  </fieldset>
                 </form>
               </Form>
             </Section>
@@ -228,13 +264,13 @@ export default function Settings() {
             <div className="space-y-4">
               <Section icon={ShieldCheck} title="What live setup requires">
                 <ol className="space-y-3 text-[12.5px]">
-                  <li><span className="font-semibold">1. A server-side reporting service.</span> Queries run on a server you control, never from the browser.</li>
+                  <li><span className="font-semibold">1. Server-side connection testing is available.</span> The test uses verified TLS and a bounded pool, checks role permissions and schema access, and closes the connection. It reads metadata only.</li>
                   <li><span className="font-semibold">2. Secrets held server-side.</span> Store credentials in environment variables or a secrets manager, not in browser code or source control:
-                    <pre className="mt-1.5 rounded bg-muted p-2.5 font-mono text-[11px] leading-relaxed overflow-x-auto">WMS_PGHOST{'\n'}WMS_PGPORT{'\n'}WMS_PGDATABASE{'\n'}WMS_PGSCHEMA{'\n'}WMS_PGUSER{'\n'}WMS_PGPASSWORD{'\n'}WMS_PGSSLMODE</pre>
+                    <pre className="mt-1.5 rounded bg-muted p-2.5 font-mono text-[11px] leading-relaxed overflow-x-auto">WMS_DATABASE_URL (approved PostgreSQL URL){'\n'}or WMS_PGPASSWORD with all of:{'\n'}WMS_APPROVED_HOST{'\n'}WMS_APPROVED_PORT{'\n'}WMS_APPROVED_DATABASE{'\n'}WMS_APPROVED_USERNAME{'\n'}WMS_CA_CERT (private CA only)</pre>
                   </li>
                   <li><span className="font-semibold">3. A least-privilege role.</span> SELECT only on approved reporting tables and views.</li>
                   <li><span className="font-semibold">4. Protect the live WMS.</span> Connection pooling, statement timeouts and suitable indexes; a read replica if reporting load grows.</li>
-                  <li><span className="font-semibold">5. Safe errors.</span> Users see a generic failure; connection strings and raw SQL errors stay in the server log.</li>
+                  <li><span className="font-semibold">5. Safe errors.</span> Users see actionable, sanitized messages. Passwords, connection strings and raw SQL errors are never logged.</li>
                 </ol>
               </Section>
               <Section icon={Database} title="Example read-only role">
@@ -281,11 +317,11 @@ ALTER ROLE wms_reporting_ro
           <Section icon={Users} title="User roles" aside={<Pill tone="good">Server enforced</Pill>}>
             <p className="text-[12.5px] text-muted-foreground mb-3">Managed sign-in verifies identity. The API checks the current, server-owned account role for every request. New accounts have no access until the application owner assigns a role.</p>
             <table className="w-full text-[12.5px]"><tbody className="divide-y">
-              {[['Administrator', 'Reporting plus settings and configuration access'], ['Supervisor', 'Reporting access; no settings or configuration access'], ['Unassigned', 'No reporting or settings access']].map(([r, d]) => <tr key={r}><td className="py-2 font-medium pr-4">{r}</td><td className="text-muted-foreground">{d}</td></tr>)}
+              {[['Platform administrator', 'Client, role and user access management plus settings'], ['Client reporting role', 'Selected reports and optional own-report development, for assigned sites'], ['Unassigned', 'No reporting access until approved for a client and role']].map(([r, d]) => <tr key={r}><td className="py-2 font-medium pr-4">{r}</td><td className="text-muted-foreground">{d}</td></tr>)}
             </tbody></table>
           </Section>
           <Section icon={KeyRound} title="Access permissions">
-            <p className="text-[12.5px] text-muted-foreground">Reporting requires a Supervisor or Administrator role. Settings and configuration endpoints require Administrator. Site-specific permissions and separate export rights are not implemented. Role assignment is an owner-operated server-side command, not an editable browser field. Schedules, alerts, and live reporting remain unavailable.</p>
+            <p className="text-[12.5px] text-muted-foreground">Manage clients, reporting roles, approved login emails and assigned sites in <Link href="/user-access" className="underline text-primary">User access</Link>. Permissions are checked on the server. Sites must be imported from WMS; until then, users may be approved as pending but cannot run reports. Schedules, alerts, and live reporting remain unavailable.</p>
           </Section>
           <Section icon={CalendarClock} title="Report scheduling" aside={<Unavailable />}>
             <p className="text-[12.5px] text-muted-foreground">Scheduled delivery (for example, a 06:00 daily dashboard summary to site managers) needs a server-side scheduler and mail service. Use the CSV buttons on each report for ad-hoc exports in the meantime.</p>

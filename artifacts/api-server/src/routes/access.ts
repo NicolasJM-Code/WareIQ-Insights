@@ -1,14 +1,190 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
+import { randomUUID } from "node:crypto";
+import { and, eq, ne, sql } from "drizzle-orm";
+import { db, clientsTable, sitesTable, rolesTable, membersTable, ownReportsTable } from "@workspace/db";
+import {
+  GetAccessSessionResponse, GetAccessAdminResponse,
+  SaveAccessClientBody, SaveAccessClientResponse, SaveAccessRoleBody, SaveAccessRoleResponse,
+  SaveAccessUserBody, SaveAccessUserResponse, DeleteAccessEntryParams,
+  SaveAccessOwnReportBody, SaveAccessOwnReportResponse, ListAccessOwnReportsResponse,
+  DeleteAccessOwnReportParams, RunAccessReportParams, RunAccessReportBody, RunAccessReportResponse,
+} from "@workspace/api-zod";
+import { getAuth } from "@clerk/express";
+import { AccessError, accessFor, requireAccessAdmin, requireMemberAccess } from "../lib/reporting-access";
+import { accessReports, allowedSection, sectionDatasets } from "../lib/access-catalog";
 import { GetAuthSessionResponse, GetSettingsAccessResponse } from "@workspace/api-zod";
+import { requireIdentity, requireAdministrator } from "../middlewares/access";
 
 const router: IRouter = Router();
-
-router.get("/auth/session", (_req, res) => {
+router.get("/auth/session", requireIdentity, (_req, res) => {
   res.json(GetAuthSessionResponse.parse(res.locals.access));
 });
-
-router.get("/settings/access", (_req, res) => {
+router.get("/settings/access", requireIdentity, requireAdministrator, (_req, res) => {
   res.json(GetSettingsAccessResponse.parse({ canAdminister: true }));
 });
+const handler = (fn: (req: Request, res: Response) => Promise<void>) =>
+  async (req: Request, res: Response): Promise<void> => {
+    res.setHeader("Cache-Control", "no-store");
+    try { await fn(req, res); }
+    catch (error) {
+      if (error instanceof AccessError) { res.status(error.status).json({ error: error.message }); return; }
+      const code = (error as { cause?: { code?: string }; code?: string })?.cause?.code ?? (error as { code?: string })?.code;
+      if (code === "23505") { res.status(409).json({ error: "This entry already exists. Use a unique name or email." }); return; }
+      if (code === "23503") { res.status(409).json({ error: "This entry is still assigned to other records. Reassign them first." }); return; }
+      // Never log SQL, request bodies, identity details, or database error text.
+      req.log.error({ event: "access_request_failed" }, "Access request failed");
+      res.status(503).json({ error: "Access settings are temporarily unavailable. Please retry." });
+    }
+  };
+function parsed<T>(schema: { safeParse: (value: unknown) => { success: true; data: T } | { success: false } }, value: unknown): T {
+  const result = schema.safeParse(value);
+  if (!result.success) throw new AccessError(400, "Check all required fields and selections.");
+  return result.data;
+}
+
+router.get("/access/me", handler(async (req, res) => {
+  if (!getAuth(req).userId) {
+    res.json(GetAccessSessionResponse.parse({ status: "signed_out", platformAdmin: false, canCreateOwnReports: false,
+      clientId: null, clientName: null, reportIds: [], sites: [] })); return;
+  }
+  res.json(GetAccessSessionResponse.parse((await accessFor(req)).session));
+}));
+router.get("/access/admin", handler(async (req, res) => {
+  await requireAccessAdmin(req);
+  const [clients, sites, roles, users] = await Promise.all([
+    db.select().from(clientsTable).orderBy(clientsTable.name),
+    db.select().from(sitesTable).orderBy(sitesTable.name),
+    db.select().from(rolesTable).orderBy(rolesTable.name),
+    db.select().from(membersTable).orderBy(membersTable.name),
+  ]);
+  res.json(GetAccessAdminResponse.parse({ clients, sites, roles, users, reports: accessReports }));
+}));
+router.post("/access/clients", handler(async (req, res) => {
+  await requireAccessAdmin(req);
+  const input = parsed(SaveAccessClientBody.strict(), req.body);
+  const values = { name: input.name.trim(), active: input.active };
+  if (!values.name) throw new AccessError(400, "Client name is required.");
+  const [result] = input.id
+    ? await db.update(clientsTable).set(values).where(eq(clientsTable.id, input.id)).returning()
+    : await db.insert(clientsTable).values({ id: randomUUID(), ...values }).returning();
+  if (!result) throw new AccessError(404, "Client not found.");
+  res.json(SaveAccessClientResponse.parse(result));
+}));
+router.post("/access/roles", handler(async (req, res) => {
+  await requireAccessAdmin(req);
+  const input = parsed(SaveAccessRoleBody.strict(), req.body);
+  const ids = new Set(accessReports.map((r) => r.id));
+  if (input.reportIds.some((id) => !ids.has(id)) || new Set(input.reportIds).size !== input.reportIds.length)
+    throw new AccessError(400, "Select only known report names, without duplicates.");
+  if (!input.name.trim()) throw new AccessError(400, "Role name is required.");
+  const [client] = await db.select().from(clientsTable).where(eq(clientsTable.id, input.clientId));
+  if (!client) throw new AccessError(400, "Choose an existing client.");
+  const values = { clientId: input.clientId, name: input.name.trim(), reportIds: input.reportIds,
+    canCreateOwnReports: input.canCreateOwnReports };
+  // A role's client cannot be changed while it may be assigned to users.
+  const [result] = input.id
+    ? await db.update(rolesTable).set(values).where(and(eq(rolesTable.id, input.id), eq(rolesTable.clientId, input.clientId))).returning()
+    : await db.insert(rolesTable).values({ id: randomUUID(), ...values }).returning();
+  if (!result) throw new AccessError(404, "Role not found for this client. Create a new role to use a different client.");
+  res.json(SaveAccessRoleResponse.parse(result));
+}));
+router.post("/access/users", handler(async (req, res) => {
+  await requireAccessAdmin(req);
+  const input = parsed(SaveAccessUserBody.strict(), req.body);
+  const [role] = await db.select().from(rolesTable).where(and(eq(rolesTable.id, input.roleId), eq(rolesTable.clientId, input.clientId)));
+  if (!role) throw new AccessError(400, "Choose a role belonging to this client.");
+  const sites = await db.select().from(sitesTable).where(and(eq(sitesTable.clientId, input.clientId), eq(sitesTable.active, true)));
+  if (new Set(input.siteIds).size !== input.siteIds.length || input.siteIds.some((id) => !sites.some((site) => site.id === id)))
+    throw new AccessError(400, "All sites must be active sites belonging to the selected client.");
+  if ((input.siteIds.length > 0 && !input.primarySiteId) ||
+      (input.primarySiteId !== null && !input.siteIds.includes(input.primarySiteId)))
+    throw new AccessError(400, "Choose a primary site from this user's selected sites.");
+  const { id, ...data } = input;
+  const values = { ...data, email: data.email.trim().toLowerCase(), name: data.name.trim() };
+  if (!values.name) throw new AccessError(400, "User name is required.");
+  const [result] = id
+    ? await db.update(membersTable).set(values).where(eq(membersTable.id, id)).returning()
+    : await db.insert(membersTable).values({ id: randomUUID(), ...values }).returning();
+  if (!result) throw new AccessError(404, "User access record not found.");
+  res.json(SaveAccessUserResponse.parse(result));
+}));
+router.delete(["/access/clients/:id", "/access/roles/:id", "/access/users/:id"], handler(async (req, res) => {
+  await requireAccessAdmin(req);
+  const { entity, id } = parsed(DeleteAccessEntryParams, { ...req.params, entity: req.path.split("/")[2] });
+  const table = entity === "clients" ? clientsTable : entity === "roles" ? rolesTable : membersTable;
+  const deleted = await db.delete(table).where(eq(table.id, id)).returning({ id: table.id });
+  if (!deleted.length) throw new AccessError(404, "Entry not found.");
+  res.sendStatus(204);
+}));
+
+async function ownAccess(req: Request) {
+  const access = await accessFor(req);
+  requireMemberAccess(access);
+  if (!access.session.canCreateOwnReports) throw new AccessError(403, "Your role does not allow creating or managing own reports.");
+  return access;
+}
+router.get("/access/own-reports", handler(async (req, res) => {
+  const access = await ownAccess(req);
+  const rows = await db.select().from(ownReportsTable).where(and(
+    eq(ownReportsTable.ownerId, access.actor.userId), eq(ownReportsTable.clientId, access.member!.clientId)));
+  const reports = rows.filter((row) => allowedSection(access.session.reportIds, row.definition.section)).map((row) => ({
+    id: row.id, ...row.definition, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
+  }));
+  res.json(ListAccessOwnReportsResponse.parse(reports));
+}));
+router.post("/access/own-reports", handler(async (req, res) => {
+  const access = await ownAccess(req);
+  const input = parsed(SaveAccessOwnReportBody.strict(), req.body);
+  if (!allowedSection(access.session.reportIds, input.section)) throw new AccessError(403, "Your role does not grant access to this reporting section.");
+  const allowed = sectionDatasets[input.section]?.[input.dataset];
+  if (!allowed || input.fields.some((field) => !allowed.includes(field)) || new Set(input.fields).size !== input.fields.length)
+    throw new AccessError(400, "Use only fields from the selected dataset within this section.");
+  if (!input.name.trim()) throw new AccessError(400, "Report name is required.");
+  if (input.sourceDefault && !access.session.reportIds.includes(input.sourceDefault))
+    throw new AccessError(403, "You do not have access to the source report.");
+  const { id, ...definition } = input;
+  const clientId = access.member!.clientId;
+  const ownerId = access.actor.userId;
+  const duplicates = await db.select({ id: ownReportsTable.id }).from(ownReportsTable).where(and(
+    eq(ownReportsTable.ownerId, ownerId), eq(ownReportsTable.clientId, clientId),
+    sql`${ownReportsTable.definition}->>'section' = ${definition.section}`,
+    sql`lower(${ownReportsTable.definition}->>'name') = ${definition.name.trim().toLowerCase()}`,
+    ...(id ? [ne(ownReportsTable.id, id)] : []),
+  ));
+  if (duplicates.length) throw new AccessError(409, "Another own report in this section uses this name.");
+  definition.name = definition.name.trim();
+  const [row] = id
+    ? await db.update(ownReportsTable).set({ definition, updatedAt: new Date() }).where(and(
+      eq(ownReportsTable.id, id), eq(ownReportsTable.ownerId, ownerId), eq(ownReportsTable.clientId, clientId))).returning()
+    : await db.insert(ownReportsTable).values({ id: randomUUID(), ownerId, clientId, definition }).returning();
+  if (!row) throw new AccessError(404, "Own report not found in your account.");
+  res.json(SaveAccessOwnReportResponse.parse({ id: row.id, ...row.definition, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() }));
+}));
+router.delete("/access/own-reports/:id", handler(async (req, res) => {
+  const access = await ownAccess(req);
+  const { id } = parsed(DeleteAccessOwnReportParams, req.params);
+  const [row] = await db.select().from(ownReportsTable).where(and(eq(ownReportsTable.id, id),
+    eq(ownReportsTable.ownerId, access.actor.userId), eq(ownReportsTable.clientId, access.member!.clientId)));
+  if (!row) throw new AccessError(404, "Own report not found.");
+  if (!allowedSection(access.session.reportIds, row.definition.section)) throw new AccessError(403, "This section is no longer permitted.");
+  await db.delete(ownReportsTable).where(eq(ownReportsTable.id, row.id));
+  res.sendStatus(204);
+}));
+router.post("/access/reports/:id/run", handler(async (req, res) => {
+  const access = await accessFor(req);
+  requireMemberAccess(access);
+  const { id } = parsed(RunAccessReportParams, req.params);
+  const { siteId } = parsed(RunAccessReportBody.strict(), req.body);
+  if (!access.session.sites.some((site) => site.id === siteId))
+    throw new AccessError(403, "This site is not assigned to you.");
+  if (!access.session.reportIds.includes(id)) {
+    const [own] = await db.select().from(ownReportsTable).where(and(eq(ownReportsTable.id, id),
+      eq(ownReportsTable.ownerId, access.actor.userId), eq(ownReportsTable.clientId, access.member!.clientId)));
+    if (!own || !access.session.canCreateOwnReports || !allowedSection(access.session.reportIds, own.definition.section))
+      throw new AccessError(403, "Your role does not grant access to this report.");
+  }
+  // No operational reads before the WMS source mapping has been approved.
+  res.json(RunAccessReportResponse.parse({ status: "not_connected", message: "Access is authorised, but this report cannot run until the WMS database and approved report source mapping are connected." }));
+}));
 
 export default router;

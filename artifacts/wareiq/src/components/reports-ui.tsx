@@ -5,6 +5,7 @@ import { SECTIONS, sectionForPath, type CatalogCtx, type Section } from '@/lib/r
 import { useOwnReportsState } from '@/lib/own-reports-store';
 import { useReport } from '@/lib/report-context';
 import { cn } from '@/lib/utils';
+import { useAccess } from '@/lib/use-access';
 
 export function useCatalogCtx(): CatalogCtx {
   const { prefs } = useReport();
@@ -34,12 +35,14 @@ export function SectionTabs() {
   const [loc] = useLocation();
   const s = sectionForPath(loc);
   const { reports } = useOwnReportsState();
+  const access = useAccess();
   if (!s) return null;
+  if (!access.data || !s.defaults.some((r) => access.data.reportIds.includes(r.id))) return null;
   const act = activeSub(s, loc);
   const own = reports.filter((r) => r.section === s.id).length;
   return (
     <div className="mb-5 -mt-1 flex items-center gap-1 border-b overflow-x-auto" role="tablist" aria-label={`${s.label} views`}>
-      {sectionLinks(s).map((l) => {
+      {sectionLinks(s).filter((l) => l.key !== 'own' || access.data.canCreateOwnReports).map((l) => {
         const on = act === l.key;
         const Icon = l.icon;
         return (
@@ -47,7 +50,7 @@ export function SectionTabs() {
             className={cn('relative -mb-px inline-flex items-center gap-1.5 whitespace-nowrap px-3 py-2 text-[13px] border-b-2 transition-colors',
               on ? 'border-primary text-foreground font-medium' : 'border-transparent text-muted-foreground hover:text-foreground')}>
             <Icon className="h-3.5 w-3.5" />{l.label}
-            {l.key === 'reports' && <span className="font-mono text-[10px] text-muted-foreground tnum">{s.defaults.length}</span>}
+            {l.key === 'reports' && <span className="font-mono text-[10px] text-muted-foreground tnum">{s.defaults.filter((r) => access.data.reportIds.includes(r.id)).length}</span>}
             {l.key === 'own' && own > 0 && <span className="font-mono text-[10px] rounded-sm bg-accent px-1 text-accent-foreground tnum">{own}</span>}
           </Link>
         );
@@ -61,7 +64,7 @@ export function BrowserOnlyNote({ className }: { className?: string }) {
   return (
     <div className={cn('flex items-start gap-2.5 rounded-md border border-dashed border-accent-foreground/30 bg-accent/50 px-3 py-2 text-[12px] text-accent-foreground', className)} data-testid="text-browser-only">
       <HardDrive className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-      <p><strong className="font-semibold">Saved in this browser only.</strong> Own reports store report definitions (name, dataset, columns) in this browser profile. They are not tied to an account, are not private to you, and are not synced. Results always run against generated sample data.</p>
+      <p><strong className="font-semibold">Saved to your account.</strong> Report definitions are private to your login and client, and require your role's permission. Previous browser-only definitions remain untouched and are not automatically imported. Live results require the WMS connection and assigned sites.</p>
     </div>
   );
 }
