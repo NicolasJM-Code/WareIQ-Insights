@@ -68,7 +68,8 @@ beforeEach(() => {
     const method = init?.method ?? "GET";
     if (path === "/api/access/me" && method === "GET") {
       return json({ status: "active", platformAdmin: false, canCreateOwnReports: true,
-        clientId: "isolated-client", clientName: "Test client", reportIds: ["inbound-1"], sites: [] });
+        ownReportSections: ["inbound"], clientId: "isolated-client", clientName: "Test client",
+        reportIds: ["inbound-1"], sites: [] });
     }
     if (path === endpoint && method === "GET") {
       return listFailure ? json({ error: "Unavailable" }, 503) : json([...saved.values()]);

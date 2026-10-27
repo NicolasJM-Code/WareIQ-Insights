@@ -169,11 +169,10 @@ export function ClientDialog({ open, onOpenChange, client, onSave, onUploadLogo,
   );
 }
 
-export function RoleDialog({ open, onOpenChange, role, dir, defaultClientId, onSave }: { open: boolean; onOpenChange: (o: boolean) => void; role: AccessRole | null; dir: AccessDirectory; defaultClientId: string; onSave: SaveFn<{ id?: string; clientId: string; name: string; reportIds: string[]; canCreateOwnReports: boolean }> }) {
+export function RoleDialog({ open, onOpenChange, role, dir, defaultClientId, onSave }: { open: boolean; onOpenChange: (o: boolean) => void; role: AccessRole | null; dir: AccessDirectory; defaultClientId: string; onSave: SaveFn<{ id?: string; clientId: string; name: string; reportIds: string[]; canCreateOwnReports: boolean; ownReportSections: string[] }> }) {
   const [clientId, setClientId] = useState(role?.clientId ?? defaultClientId);
   const [name, setName] = useState(role?.name ?? '');
   const [reportIds, setReportIds] = useState<string[]>(role?.reportIds ?? []);
-  const [own, setOwn] = useState(role?.canCreateOwnReports ?? false);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const groups = useMemo(() => {
@@ -184,13 +183,22 @@ export function RoleDialog({ open, onOpenChange, role, dir, defaultClientId, onS
     }
     return [...m.entries()];
   }, [dir.reports]);
+  const legacyOwnSections = role?.canCreateOwnReports
+    ? groups.filter(([, group]) => group.items.some((report) => role.reportIds.includes(report.id))).map(([section]) => section)
+    : [];
+  const [ownReportSections, setOwnReportSections] = useState<string[]>(
+    role?.ownReportSections?.length ? role.ownReportSections : legacyOwnSections,
+  );
   const toggle = (id: string) => setReportIds((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
   const toggleGroup = (ids: string[], on: boolean) => setReportIds((p) => (on ? [...new Set([...p, ...ids])] : p.filter((x) => !ids.includes(x))));
+  const toggleOwn = (section: string, on: boolean) => setOwnReportSections((current) =>
+    on ? [...new Set([...current, section])] : current.filter((item) => item !== section));
   const submit = async () => {
     if (!clientId) return setErr('Choose the client this role belongs to.');
     if (!name.trim()) return setErr('Role name is required.');
     setBusy(true); setErr(null);
-    try { await onSave({ id: role?.id, clientId, name: name.trim(), reportIds, canCreateOwnReports: own }); onOpenChange(false); }
+    try { await onSave({ id: role?.id, clientId, name: name.trim(), reportIds,
+      canCreateOwnReports: ownReportSections.length > 0, ownReportSections }); onOpenChange(false); }
     catch (e) { setErr(errorMessage(e)); } finally { setBusy(false); }
   };
   return (
@@ -198,7 +206,7 @@ export function RoleDialog({ open, onOpenChange, role, dir, defaultClientId, onS
       <DialogContent className="max-h-[90dvh] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-display">{role ? 'Edit role' : 'New role'}</DialogTitle>
-          <DialogDescription>Pick exactly which standard reports this role can open. Own-report creation is granted separately.</DialogDescription>
+          <DialogDescription>Choose standard reports and whether this role can create own reports in each section.</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2">
@@ -231,16 +239,17 @@ export function RoleDialog({ open, onOpenChange, role, dir, defaultClientId, onS
                           </label>
                         ))}
                       </div>
+                      <div className="mt-3 flex items-center justify-between rounded-md border border-accent-foreground/20 bg-accent/40 p-3">
+                        <span className="text-sm"><b>Own reports</b><br /><span className="text-muted-foreground">Allow this role to create and manage own reports in {g.name}.</span></span>
+                        <Switch data-testid={`switch-role-own-${sec}`} aria-label={`Allow own reports in ${g.name}`}
+                          checked={ownReportSections.includes(sec)} onCheckedChange={(on) => toggleOwn(sec, on)} />
+                      </div>
                     </div>
                   );
                 })}
               </div>
             )}
           </div>
-          <label className="flex items-center justify-between rounded-md border border-accent-foreground/20 bg-accent/40 p-3">
-            <span className="text-sm"><b>Can create own reports</b><br /><span className="text-muted-foreground">Lets members build private reports from permitted datasets.</span></span>
-            <Switch data-testid="switch-role-own" checked={own} onCheckedChange={setOwn} />
-          </label>
           <FormError message={err} />
         </div>
         <DialogFooter>

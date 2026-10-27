@@ -140,6 +140,7 @@ export const GetAccessSessionResponse = zod.object({
   "status": zod.enum(['signed_out', 'unassigned', 'disabled', 'pending_sites', 'active']),
   "platformAdmin": zod.boolean(),
   "canCreateOwnReports": zod.boolean(),
+  "ownReportSections": zod.array(zod.string()),
   "clientId": zod.string().nullable(),
   "clientName": zod.string().nullable(),
   "clientCompanyNumber": zod.string().nullable(),
@@ -213,7 +214,8 @@ export const GetAccessAdminResponse = zod.object({
   "clientId": zod.string(),
   "name": zod.string(),
   "reportIds": zod.array(zod.string()),
-  "canCreateOwnReports": zod.boolean()
+  "canCreateOwnReports": zod.boolean(),
+  "ownReportSections": zod.array(zod.string())
 })),
   "users": zod.array(zod.object({
   "id": zod.string(),
@@ -442,7 +444,8 @@ export const SaveAccessRoleBody = zod.object({
   "clientId": zod.string(),
   "name": zod.string().min(1).max(saveAccessRoleBodyNameMax),
   "reportIds": zod.array(zod.string()).max(saveAccessRoleBodyReportIdsMax),
-  "canCreateOwnReports": zod.boolean()
+  "canCreateOwnReports": zod.boolean(),
+  "ownReportSections": zod.array(zod.string())
 })
 
 export const SaveAccessRoleResponse = zod.object({
@@ -451,7 +454,8 @@ export const SaveAccessRoleResponse = zod.object({
   "clientId": zod.string(),
   "name": zod.string(),
   "reportIds": zod.array(zod.string()),
-  "canCreateOwnReports": zod.boolean()
+  "canCreateOwnReports": zod.boolean(),
+  "ownReportSections": zod.array(zod.string())
 })
 
 

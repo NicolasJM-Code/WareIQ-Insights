@@ -42,6 +42,7 @@ import { SECTIONS } from "../src/lib/report-catalog";
 function access(admin = true, status: AccessSession["status"] = "active"): AccessSession {
   return {
     status, platformAdmin: admin, canCreateOwnReports: status === "active",
+    ownReportSections: status === "active" ? ["inbound"] : [],
     clientId: "client_isolated", clientName: "Isolated client",
     clientCompanyNumber: null, clientAddressLine1: null, clientAddressLine2: null,
     clientCity: null, clientRegion: null, clientPostalCode: null,

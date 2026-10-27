@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { accessReports, allowedSection, sectionDatasets } from "./access-catalog";
+import { accessReports, allowedSection, ownReportSectionsForRole, sectionDatasets } from "./access-catalog";
 
 const root = resolve(process.cwd(), "../..");
 test("permission names and IDs match the approved name-only report catalogue", () => {
@@ -38,4 +38,16 @@ test("a section grant cannot be forged with a report-ID prefix or unknown report
   assert.equal(allowedSection(["inbound-1"], "inventory"), false);
   assert.equal(allowedSection(["inventory-injected"], "inventory"), false);
   assert.equal(allowedSection([], "inbound"), false);
+});
+test("own-report section grants are independent and legacy grants remain scoped", () => {
+  assert.deepEqual(ownReportSectionsForRole({
+    canCreateOwnReports: true, ownReportSections: ["inbound", "not-a-section"],
+    reportIds: ["inbound-1", "inventory-1"],
+  }), ["inbound"]);
+  assert.deepEqual(ownReportSectionsForRole({
+    canCreateOwnReports: true, ownReportSections: [], reportIds: ["inbound-1", "inventory-1"],
+  }), ["inbound", "inventory"]);
+  assert.deepEqual(ownReportSectionsForRole({
+    canCreateOwnReports: false, ownReportSections: [], reportIds: ["inbound-1"],
+  }), []);
 });

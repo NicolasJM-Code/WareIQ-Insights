@@ -653,16 +653,17 @@ components:
         active: { type: boolean }
     AccessRoleInput:
       type: object
-      required: [clientId, name, reportIds, canCreateOwnReports]
+      required: [clientId, name, reportIds, canCreateOwnReports, ownReportSections]
       properties:
         id: { type: string }
         clientId: { type: string }
         name: { type: string, minLength: 1, maxLength: 80 }
         reportIds: { type: array, uniqueItems: true, items: { type: string }, maxItems: 200 }
         canCreateOwnReports: { type: boolean }
+        ownReportSections: { type: array, uniqueItems: true, items: { type: string } }
     AccessRole:
       type: object
-      required: [id, clientId, name, reportIds, canCreateOwnReports]
+      required: [id, clientId, name, reportIds, canCreateOwnReports, ownReportSections]
       properties:
         notification: { type: string, enum: [queued, failed, not_needed] }
         id: { type: string }
@@ -670,6 +671,7 @@ components:
         name: { type: string }
         reportIds: { type: array, items: { type: string } }
         canCreateOwnReports: { type: boolean }
+        ownReportSections: { type: array, items: { type: string } }
     AccessUserInput:
       type: object
       required: [email, name, clientId, roleId, siteIds, primarySiteId, active]
@@ -739,11 +741,12 @@ components:
         status: { type: string, enum: [queued] }
     AccessSession:
       type: object
-      required: [status, platformAdmin, canCreateOwnReports, reportIds, sites, clientId, clientName, clientCompanyNumber, clientAddressLine1, clientAddressLine2, clientCity, clientRegion, clientPostalCode, clientCountry, clientLogoUrl]
+      required: [status, platformAdmin, canCreateOwnReports, ownReportSections, reportIds, sites, clientId, clientName, clientCompanyNumber, clientAddressLine1, clientAddressLine2, clientCity, clientRegion, clientPostalCode, clientCountry, clientLogoUrl]
       properties:
         status: { type: string, enum: [signed_out, unassigned, disabled, pending_sites, active] }
         platformAdmin: { type: boolean }
         canCreateOwnReports: { type: boolean }
+        ownReportSections: { type: array, items: { type: string } }
         clientId: { type: [string, "null"] }
         clientName: { type: [string, "null"] }
         clientCompanyNumber: { type: [string, "null"] }

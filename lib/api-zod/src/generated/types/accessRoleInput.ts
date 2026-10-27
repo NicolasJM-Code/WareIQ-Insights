@@ -17,4 +17,5 @@ export interface AccessRoleInput {
   /** @maxItems 200 */
   reportIds: string[];
   canCreateOwnReports: boolean;
+  ownReportSections: string[];
 }

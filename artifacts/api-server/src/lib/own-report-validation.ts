@@ -1,11 +1,11 @@
-import { allowedSection, sectionDatasets } from "./access-catalog";
+import { sectionDatasets } from "./access-catalog";
 
 /** Shared by ordinary saves and legacy imports; the browser is never authoritative. */
 export function reportDefinitionError(input: {
   section: string; dataset: string; fields: string[]; name: string; sourceDefault?: string;
-}, reportIds: string[]): { status: number; message: string } | undefined {
-  if (!allowedSection(reportIds, input.section))
-    return { status: 403, message: "Your role does not grant access to this reporting section." };
+}, reportIds: string[], ownReportSections: string[] = []): { status: number; message: string } | undefined {
+  if (!ownReportSections.includes(input.section))
+    return { status: 403, message: "Your role does not allow own reports in this section." };
   // Own-property checks also reject object-prototype names in untrusted input.
   const datasets = Object.hasOwn(sectionDatasets, input.section) ? sectionDatasets[input.section] : undefined;
   const fields = datasets && Object.hasOwn(datasets, input.dataset) ? datasets[input.dataset] : undefined;

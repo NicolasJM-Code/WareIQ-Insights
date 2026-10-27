@@ -20,7 +20,7 @@ import {
   assertClientLogoFile, cleanupClientLogoBestEffort, getClientLogoFile,
   isClientLogoPath, requestClientLogoUpload,
 } from "../lib/client-logo-storage";
-import { accessReports, allowedSection } from "../lib/access-catalog";
+import { accessReports, accessSectionIds, ownReportSectionsForRole } from "../lib/access-catalog";
 import { reportDefinitionError } from "../lib/own-report-validation";
 import { GetAuthSessionResponse, GetSettingsAccessResponse } from "@workspace/api-zod";
 import { requireIdentity, requireAdministrator } from "../middlewares/access";
@@ -66,6 +66,7 @@ const routeClientId = (req: Request) => {
 router.get("/access/me", handler(async (req, res) => {
   if (!getAuth(req).userId) {
     res.json(GetAccessSessionResponse.parse({ status: "signed_out", platformAdmin: false, canCreateOwnReports: false,
+      ownReportSections: [],
       clientId: null, clientName: null, clientCompanyNumber: null, clientAddressLine1: null,
       clientAddressLine2: null, clientCity: null, clientRegion: null, clientPostalCode: null,
       clientCountry: null, clientLogoUrl: null, reportIds: [], sites: [] })); return;
@@ -99,7 +100,12 @@ router.get("/access/admin", handler(async (req, res) => {
     notificationSummary = { status: "unavailable", queued: 0, retrying: 0, accepted: 0, failed: 0 };
   }
   res.json(GetAccessAdminResponse.parse({
-    clients, sites, roles, users, reports: accessReports, notificationSummary, failedNotifications,
+    clients, sites,
+    roles: roles.map((role) => {
+      const ownReportSections = ownReportSectionsForRole(role);
+      return { ...role, ownReportSections, canCreateOwnReports: ownReportSections.length > 0 };
+    }),
+    users, reports: accessReports, notificationSummary, failedNotifications,
   }));
 }));
 router.post("/access/notifications/:notificationId/retry", handler(async (req, res) => {
@@ -252,11 +258,14 @@ router.post("/access/roles", handler(async (req, res) => {
   const ids = new Set(accessReports.map((r) => r.id));
   if (input.reportIds.some((id) => !ids.has(id)) || new Set(input.reportIds).size !== input.reportIds.length)
     throw new AccessError(400, "Select only known report names, without duplicates.");
+  if (input.ownReportSections.some((section) => !accessSectionIds.includes(section as typeof accessSectionIds[number]))
+    || new Set(input.ownReportSections).size !== input.ownReportSections.length)
+    throw new AccessError(400, "Choose valid, unique sections for own reports.");
   if (!input.name.trim()) throw new AccessError(400, "Role name is required.");
   const [client] = await db.select().from(clientsTable).where(eq(clientsTable.id, input.clientId));
   if (!client) throw new AccessError(400, "Choose an existing client.");
   const values = { clientId: input.clientId, name: input.name.trim(), reportIds: input.reportIds,
-    canCreateOwnReports: input.canCreateOwnReports };
+    canCreateOwnReports: input.ownReportSections.length > 0, ownReportSections: input.ownReportSections };
   // A role's client cannot be changed while it may be assigned to users.
   const result = await db.transaction(async (tx) => {
     const [before] = input.id ? await tx.select().from(rolesTable).where(and(
@@ -266,6 +275,7 @@ router.post("/access/roles", handler(async (req, res) => {
       ? await tx.update(rolesTable).set(values).where(eq(rolesTable.id, input.id)).returning()
       : await tx.insert(rolesTable).values({ id: randomUUID(), ...values }).returning();
     const changed = before && (before.name !== values.name || before.canCreateOwnReports !== values.canCreateOwnReports ||
+      JSON.stringify([...(before.ownReportSections ?? [])].sort()) !== JSON.stringify([...values.ownReportSections].sort()) ||
       JSON.stringify([...before.reportIds].sort()) !== JSON.stringify([...values.reportIds].sort()));
     const members = changed ? await tx.select().from(membersTable).where(and(
       eq(membersTable.roleId, saved!.id), eq(membersTable.active, true))) : [];
@@ -323,14 +333,14 @@ router.delete(["/access/clients/:id", "/access/roles/:id", "/access/users/:id"],
 async function ownAccess(req: Request) {
   const access = await accessFor(req);
   requireMemberAccess(access);
-  if (!access.session.canCreateOwnReports) throw new AccessError(403, "Your role does not allow creating or managing own reports.");
+  if (!access.session.ownReportSections.length) throw new AccessError(403, "Your role does not allow creating or managing own reports.");
   return access;
 }
 router.get("/access/own-reports", handler(async (req, res) => {
   const access = await ownAccess(req);
   const rows = await db.select().from(ownReportsTable).where(and(
     eq(ownReportsTable.ownerId, access.actor.userId), eq(ownReportsTable.clientId, access.member!.clientId)));
-  const reports = rows.filter((row) => allowedSection(access.session.reportIds, row.definition.section)).map((row) => ({
+  const reports = rows.filter((row) => access.session.ownReportSections.includes(row.definition.section)).map((row) => ({
     id: row.id, ...row.definition, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
   }));
   res.json(ListAccessOwnReportsResponse.parse(reports));
@@ -338,7 +348,7 @@ router.get("/access/own-reports", handler(async (req, res) => {
 router.post("/access/own-reports", handler(async (req, res) => {
   const access = await ownAccess(req);
   const input = parsed(SaveAccessOwnReportBody.strict(), req.body);
-  const invalid = reportDefinitionError(input, access.session.reportIds);
+  const invalid = reportDefinitionError(input, access.session.reportIds, access.session.ownReportSections);
   if (invalid) throw new AccessError(invalid.status, invalid.message);
   const { id, ...definition } = input;
   const clientId = access.member!.clientId;
@@ -370,7 +380,7 @@ router.post("/access/own-reports/import", handler(async (req, res) => {
     // Reject supplied ownership, legacy IDs, timestamps, or other hidden properties.
     const definition = parsed(SaveAccessOwnReportBody.omit({ id: true }).strict(),
       (req.body as { reports: unknown[] }).reports[index]);
-    const invalid = reportDefinitionError(definition, access.session.reportIds);
+    const invalid = reportDefinitionError(definition, access.session.reportIds, access.session.ownReportSections);
     if (invalid) throw new AccessError(invalid.status, invalid.message);
     definition.name = definition.name.trim();
     const key = JSON.stringify([definition.section, definition.name.toLowerCase()]);
@@ -395,7 +405,7 @@ router.delete("/access/own-reports/:id", handler(async (req, res) => {
   const [row] = await db.select().from(ownReportsTable).where(and(eq(ownReportsTable.id, id),
     eq(ownReportsTable.ownerId, access.actor.userId), eq(ownReportsTable.clientId, access.member!.clientId)));
   if (!row) throw new AccessError(404, "Own report not found.");
-  if (!allowedSection(access.session.reportIds, row.definition.section)) throw new AccessError(403, "This section is no longer permitted.");
+  if (!access.session.ownReportSections.includes(row.definition.section)) throw new AccessError(403, "This section is no longer permitted.");
   await db.delete(ownReportsTable).where(eq(ownReportsTable.id, row.id));
   res.sendStatus(204);
 }));
@@ -409,7 +419,7 @@ router.post("/access/reports/:id/run", handler(async (req, res) => {
   if (!access.session.reportIds.includes(id)) {
     const [own] = await db.select().from(ownReportsTable).where(and(eq(ownReportsTable.id, id),
       eq(ownReportsTable.ownerId, access.actor.userId), eq(ownReportsTable.clientId, access.member!.clientId)));
-    if (!own || !access.session.canCreateOwnReports || !allowedSection(access.session.reportIds, own.definition.section))
+    if (!own || !access.session.ownReportSections.includes(own.definition.section))
       throw new AccessError(403, "Your role does not grant access to this report.");
   }
   // No operational reads before the WMS source mapping has been approved.

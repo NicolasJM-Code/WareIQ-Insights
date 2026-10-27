@@ -18,7 +18,7 @@ export function LegacyReportImport({ section, reports, ready }: { section: Secti
   const { user } = useUser();
   const access = useAccess();
   const session = access.data;
-  if (!user || !session?.clientId || !session.canCreateOwnReports ||
+  if (!user || !session?.clientId || !session.ownReportSections.includes(section.id) ||
       !section.defaults.some((r) => session.reportIds.includes(r.id))) return null;
   // A change of account/client discards selections and ownership confirmation.
   return <ImportForAccount key={`${user.id}:${session.clientId}`} section={section} reports={reports} ready={ready}

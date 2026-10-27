@@ -14,8 +14,24 @@ const sections = [
   ["exceptions", "Exceptions and Operational Reporting", "Overdue Task Report|Failed WMS Transactions|Inventory Discrepancies|Orders on Hold|Blocked Stock|Expired Stock Exceptions|Near-Expiry Stock Exceptions|Negative Stock Exceptions|Unallocated Orders|Missed Dispatch Cut-offs|Receiving Discrepancies|Picking and Loading Errors|Unprocessed Transactions|Operational Exception Summary"],
   ["settings", "Settings and Administration", "Database Connection Status|Database Connection History|Reporting Refresh Status|Report Execution History|User Access and Permissions|User Activity Audit Log|Configuration Change Log|Scheduled Reports|Report Export History|System Error Log|KPI Target Configuration|Data Quality and Validation Report"],
 ] as const;
+export const accessSectionIds = sections.map(([section]) => section);
 export const accessReports = sections.flatMap(([section, sectionName, names]) =>
   names.split("|").map((name, i) => ({ id: `${section}-${i + 1}`, name, section, sectionName })));
+export function ownReportSectionsForRole(role: {
+  ownReportSections?: string[] | null;
+  canCreateOwnReports: boolean;
+  reportIds: string[];
+}) {
+  const stored = Array.isArray(role.ownReportSections)
+    ? role.ownReportSections.filter((section) => accessSectionIds.includes(section as typeof accessSectionIds[number]))
+    : [];
+  if (stored.length || !role.canCreateOwnReports) return stored;
+  // Older roles only have the legacy boolean. Preserve their existing grant,
+  // limited to sections their standard-report IDs already authorize.
+  return [...new Set(accessReports
+    .filter((report) => role.reportIds.includes(report.id))
+    .map((report) => report.section))];
+}
 
 export const sectionDatasets: Record<string, Record<string, string[]>> = {
   inbound: { receipts: ["id", "po", "supplier", "wh", "date", "dock", "lines", "expected", "received", "variance", "dockToStockMin", "status", "receiver"] },

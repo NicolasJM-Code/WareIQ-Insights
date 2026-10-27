@@ -77,7 +77,7 @@ export async function deleteReport(id: string): Promise<SaveResult> {
 export function useOwnReportsState() {
   const { user } = useUser();
   const access = useAccess();
-  const enabled = !!user && !!access.data?.canCreateOwnReports;
+  const enabled = !!user && !!access.data?.ownReportSections.length;
   const query = useListAccessOwnReports({ query: {
     queryKey: [...getListAccessOwnReportsQueryKey(), user?.id, access.data?.clientId],
     enabled, staleTime: 0, refetchInterval: 15000, retry: false,

@@ -98,10 +98,13 @@ async function signIn(userId: string) {
 async function freezeRefresh(context: BrowserContext) {
   // Keep the authentic cookie but stop Clerk refreshing it or learning about
   // revocation. The application's real /access/me polling must fail closed.
+  let blockedRenewals = 0;
   await context.route("**/*", route => {
     const url = new URL(route.request().url());
+    if (url.origin !== origin && /\/client\/sessions\/[^/]+\/tokens(?:\/|$)/.test(url.pathname)) blockedRenewals++;
     return url.origin === origin ? route.continue() : route.abort();
   });
+  return () => blockedRenewals;
 }
 
 async function cookieControl(page: Page) {
@@ -153,7 +156,67 @@ async function locked(page: Page, recheck: ReturnType<typeof watchRevalidation>,
   expect(reached).toBe(before);
 }
 
-it("authenticates real browser cookies then locks reporting on expiry and immediate revocation", async () => {
+async function sessionCookie(context: BrowserContext) {
+  // Observe only. Never ask getToken/skipCache to manufacture a renewal.
+  const cookie = (await context.cookies(origin)).find(c => c.name === "__session");
+  if (!cookie?.value) throw new Error("Missing session cookie");
+  const claims = JSON.parse(Buffer.from(cookie.value.split(".")[1], "base64url").toString("utf8"));
+  if (!Number.isFinite(claims.exp) || !Number.isFinite(claims.iat) || typeof claims.sid !== "string")
+    throw new Error("Invalid session cookie claims");
+  return { exp: claims.exp as number, iat: claims.iat as number, sid: claims.sid as string };
+}
+
+async function pastExpiry(exp: number) {
+  const wait = exp * 1000 - Date.now() + 6_000;
+  if (!Number.isFinite(wait) || wait < 0 || wait > 130_000) throw new Error("Unexpected token lifetime");
+  await new Promise(done => setTimeout(done, wait));
+}
+
+async function renewal(userId: string) {
+  phase = "renewal browser-authenticated positive control";
+  const signedIn = await signIn(userId);
+  const { context, page } = signedIn;
+  try {
+    const first = await sessionCookie(context);
+    expect(first.sid).toBe(signedIn.sessionId);
+    phase = "genuine SDK renewal beyond initial cookie expiry";
+    // Keep this same document open and let Clerk's ordinary timer renew.
+    // No reload, focus simulation, token injection or manual token refresh.
+    await pastExpiry(first.exp);
+    const renewed = await sessionCookie(context);
+    expect(renewed.sid).toBe(first.sid);
+    expect(renewed.iat).toBeGreaterThan(first.iat);
+    expect(renewed.exp).toBeGreaterThan(first.exp);
+    expect(renewed.exp * 1000).toBeGreaterThan(Date.now());
+    phase = "post-renewal real access polling";
+    const response = await watchRevalidation(page);
+    expect(response.status()).toBe(200);
+    const access = await response.json();
+    expect(access.status === "active" && access.platformAdmin === true && access.reportIds.length > 0).toBe(true);
+    await cookieControl(page);
+
+    phase = "post-renewal blocked refresh positive control";
+    const blockedRenewals = await freezeRefresh(context);
+    await cookieControl(page);
+    // Snapshot after blocking: a renewal just before the block must not make
+    // the denial assertion run against the wrong token's expiry.
+    const last = await sessionCookie(context);
+    expect(last.sid).toBe(first.sid);
+    phase = "failed SDK renewal and natural cookie expiry";
+    await pastExpiry(last.exp);
+    const recheck = watchRevalidation(page);
+    await locked(page, recheck, "failed renewal");
+    expect(blockedRenewals()).toBeGreaterThan(0);
+    console.info("Genuine SDK cookie renewal preserved reporting; failed renewal locked open-page guards.");
+  } finally {
+    await context.close();
+  }
+}
+
+const renewalRun = process.env.CLERK_BROWSER_SCENARIO === "renewal";
+it(renewalRun
+  ? "renews real browser cookies while reporting stays open, then locks on failed renewal"
+  : "authenticates real browser cookies then locks reporting on expiry and immediate revocation", async () => {
   // Fail without network or account creation unless explicitly enabled.
   preflight();
   await safe(phase, async () => {
@@ -185,6 +248,7 @@ it("authenticates real browser cookies then locks reporting on expiry and immedi
     origin = `http://127.0.0.1:${address.port}`;
     phase = "disposable fixture creation";
     const userId = await createFixture();
+    if (renewalRun) { await renewal(userId); return; }
     phase = "expiry browser-authenticated positive control";
     const expired = await signIn(userId);
     await freezeRefresh(expired.context);

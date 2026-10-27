@@ -14,4 +14,5 @@ export interface AccessRole {
   name: string;
   reportIds: string[];
   canCreateOwnReports: boolean;
+  ownReportSections: string[];
 }

@@ -12,6 +12,7 @@ export interface AccessSession {
   status: AccessSessionStatus;
   platformAdmin: boolean;
   canCreateOwnReports: boolean;
+  ownReportSections: string[];
   /** @nullable */
   clientId: string | null;
   /** @nullable */

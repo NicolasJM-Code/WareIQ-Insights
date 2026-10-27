@@ -60,7 +60,9 @@ function NavList({ onNavigate }: { onNavigate?: () => void }) {
               if (access.data?.platformAdmin) return true;
               if (it.href === '/' || it.href === '/dashboard') return true;
               const section = SECTIONS.find((s) => s.overview === it.href);
-              return !!section && section.id !== 'settings' && section.defaults.some((r) => access.data?.reportIds.includes(r.id));
+              return !!section && section.id !== 'settings' && (
+                section.defaults.some((r) => access.data?.reportIds.includes(r.id))
+                || access.data?.ownReportSections.includes(section.id));
             }).map((it) => {
               const sec = SECTIONS.find((x) => (x.overview === '/' ? '/dashboard' : x.overview) === it.href);
               const inSection = !!sec && current?.id === sec.id;
@@ -98,7 +100,7 @@ function NavList({ onNavigate }: { onNavigate?: () => void }) {
                   </div>
                   {sec && expanded && (
                     <ul id={`subnav-${sec.id}`} className="ml-[17px] mt-0.5 mb-1 border-l border-sidebar-border pl-2 space-y-px">
-                      {sectionLinks(sec).filter((l) => l.key !== 'overview' && (l.key !== 'own' || access.data?.canCreateOwnReports)).map((l) => {
+                      {sectionLinks(sec).filter((l) => l.key !== 'overview' && (l.key !== 'own' || access.data?.ownReportSections.includes(sec.id))).map((l) => {
                         const on = inSection && activeSub(sec, loc) === l.key;
                         return (
                           <li key={l.key}>

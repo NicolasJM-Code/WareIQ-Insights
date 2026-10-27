@@ -10,6 +10,7 @@ const state = vi.hoisted(() => ({
       clientId: "client-a",
       clientName: "Client A",
       canCreateOwnReports: true,
+      ownReportSections: ["inbound"],
       reportIds: ["inbound-1"],
     },
   },
@@ -82,6 +83,7 @@ beforeEach(() => {
       clientId: "client-a",
       clientName: "Client A",
       canCreateOwnReports: true,
+      ownReportSections: ["inbound"],
       reportIds: ["inbound-1"],
     },
   };

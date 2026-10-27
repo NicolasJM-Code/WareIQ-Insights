@@ -37,12 +37,13 @@ export function SectionTabs() {
   const { reports } = useOwnReportsState();
   const access = useAccess();
   if (!s) return null;
-  if (!access.data || !s.defaults.some((r) => access.data.reportIds.includes(r.id))) return null;
+  if (!access.data || (!s.defaults.some((r) => access.data.reportIds.includes(r.id))
+    && !access.data.ownReportSections.includes(s.id))) return null;
   const act = activeSub(s, loc);
   const own = reports.filter((r) => r.section === s.id).length;
   return (
     <div className="mb-5 -mt-1 flex items-center gap-1 border-b overflow-x-auto" role="tablist" aria-label={`${s.label} views`}>
-      {sectionLinks(s).filter((l) => l.key !== 'own' || access.data.canCreateOwnReports).map((l) => {
+      {sectionLinks(s).filter((l) => l.key !== 'own' || access.data.ownReportSections.includes(s.id)).map((l) => {
         const on = act === l.key;
         const Icon = l.icon;
         return (

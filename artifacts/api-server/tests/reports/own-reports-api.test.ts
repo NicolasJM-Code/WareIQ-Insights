@@ -78,7 +78,7 @@ beforeEach(async () => {
     TRUNCATE wareiq_own_reports, wareiq_members, wareiq_sites, wareiq_roles, wareiq_clients;
     INSERT INTO wareiq_clients VALUES ('client-a', 'Synthetic A', true), ('client-b', 'Synthetic B', true);
     INSERT INTO wareiq_sites VALUES ('site-a', 'client-a', 'test', 'Synthetic site', true);
-    INSERT INTO wareiq_roles VALUES ('role-a', 'client-a', 'Builder', ARRAY['inbound-1'], true);
+    INSERT INTO wareiq_roles VALUES ('role-a', 'client-a', 'Builder', ARRAY['inbound-1'], true, ARRAY['inbound']);
     INSERT INTO wareiq_members VALUES ('member-a', 'reporter@example.test', 'Synthetic reporter',
       'client-a', 'role-a', ARRAY['site-a'], 'site-a', true);
   `);
@@ -269,7 +269,7 @@ describe("account report persistence through the API", () => {
   }, 15_000);
 
   it("allows the same name in two sections but rejects case-insensitive duplicates in each", async () => {
-    await pool.query("UPDATE wareiq_roles SET report_ids = ARRAY['inbound-1', 'inventory-1']");
+    await pool.query("UPDATE wareiq_roles SET report_ids = ARRAY['inbound-1', 'inventory-1'], own_report_sections = ARRAY['inbound', 'inventory']");
     const inbound = { ...definition, name: "Shared report" };
     const inventory = { ...definition, section: "inventory", dataset: "stock", fields: ["sku", "name"], name: "Shared report" };
 
@@ -287,7 +287,7 @@ describe("account report persistence through the API", () => {
   });
 
   it("moves a report to another authorized section when its name is available", async () => {
-    await pool.query("UPDATE wareiq_roles SET report_ids = ARRAY['inbound-1', 'inventory-1']");
+    await pool.query("UPDATE wareiq_roles SET report_ids = ARRAY['inbound-1', 'inventory-1'], own_report_sections = ARRAY['inbound', 'inventory']");
     const moved = await save({
       ...definition, id: "original", section: "inventory", dataset: "stock", fields: ["sku", "name"],
     });
@@ -300,8 +300,27 @@ describe("account report persistence through the API", () => {
       .toMatchObject({ section: "inventory", name: definition.name });
   });
 
+  it("applies own-report grants per section, independent of standard report access", async () => {
+    await pool.query("UPDATE wareiq_roles SET report_ids = ARRAY['inbound-1', 'inventory-1'], own_report_sections = ARRAY['inbound']");
+    await db.insert(ownReportsTable).values({
+      id: "inventory-own", ownerId: "owner-a", clientId: "client-a",
+      definition: { section: "inventory", name: "Private stock", description: "", dataset: "stock", fields: ["sku"] },
+    });
+    const listed = await request(app).get(path);
+    expect(listed.status).toBe(200);
+    expect(listed.body.map((report: { id: string }) => report.id)).not.toContain("inventory-own");
+
+    const before = await snapshot();
+    await expectError(await save({
+      ...definition, section: "inventory", dataset: "stock", fields: ["sku"], name: "New stock report",
+    }), 403, before);
+    await expectError(await request(app).delete(`${path}/inventory-own`), 403, before);
+    const run = await request(app).post("/api/access/reports/inventory-own/run").send({ siteId: "site-a" });
+    expect(run.status).toBe(403);
+  });
+
   it("rejects a move into a section with a case-insensitive name collision without changing the report", async () => {
-    await pool.query("UPDATE wareiq_roles SET report_ids = ARRAY['inbound-1', 'inventory-1']");
+    await pool.query("UPDATE wareiq_roles SET report_ids = ARRAY['inbound-1', 'inventory-1'], own_report_sections = ARRAY['inbound', 'inventory']");
     await db.insert(ownReportsTable).values({
       id: "inventory-collision", ownerId: "owner-a", clientId: "client-a",
       definition: { ...definition, section: "inventory", dataset: "stock", fields: ["sku", "name"], name: "oRiGiNaL" },
@@ -320,8 +339,8 @@ describe("account report persistence through the API", () => {
   });
 
   it.each(["permission", "section", "disabled", "signed-out"])("denies mutations after %s access is lost", async (change) => {
-    if (change === "permission") await pool.query("UPDATE wareiq_roles SET can_create_own_reports = false");
-    if (change === "section") await pool.query("UPDATE wareiq_roles SET report_ids = ARRAY['inventory-1']");
+    if (change === "permission") await pool.query("UPDATE wareiq_roles SET can_create_own_reports = false, own_report_sections = ARRAY[]::text[]");
+    if (change === "section") await pool.query("UPDATE wareiq_roles SET report_ids = ARRAY['inventory-1'], own_report_sections = ARRAY['inventory']");
     if (change === "disabled") await pool.query("UPDATE wareiq_members SET active = false");
     if (change === "signed-out") identity.userId = null;
     const before = await snapshot();

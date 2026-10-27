@@ -38,6 +38,7 @@ export const rolesTable = pgTable("wareiq_roles", {
   name: text("name").notNull(),
   reportIds: text("report_ids").array().notNull().default([]),
   canCreateOwnReports: boolean("can_create_own_reports").notNull().default(false),
+  ownReportSections: text("own_report_sections").array().notNull().default([]),
 }, (table) => [uniqueIndex("wareiq_role_name_unique").on(table.clientId, sql`lower(${table.name})`)]);
 export const membersTable = pgTable("wareiq_members", {
   id: text("id").primaryKey(),

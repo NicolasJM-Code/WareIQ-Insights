@@ -8,6 +8,11 @@ An opt-in authorization browser harness should have its own Vite dependency cach
 
 **How to apply:** When changing browser authorization checks, preserve the separate optimization cache and harmless report-catalog boundary. Keep the production auth provider, hooks and guards real.
 
+For renewal checks, observe SDK-written cookies passively and prove access after the original token expires; do not call token-refresh methods during the observation.
+
+**Why:** A test-triggered refresh can hide a broken automatic renewal timer. A denial-only expiry test cannot establish that a valid open session stays authorized.
+
+**How to apply:** Use the same open document and session, require advancing cookie issuance/expiry, then require a fresh server access response. After blocking renewal, use the latest cookie's expiry rather than the initial one.
 ## Verified email versus fresh-browser verification
 
 A backend-created, verified email can still encounter Clerk's client-trust email challenge in a new browser. Do not disable the challenge or replace the screen with a sign-in ticket to make a hosted-screen check pass.

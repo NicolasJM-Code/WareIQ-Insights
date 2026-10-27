@@ -74,6 +74,7 @@ export function OwnReportsIndex({ sectionId }: { sectionId: SectionId }) {
   const s = getSection(sectionId)!;
   useDocTitle(`${s.label} own reports`);
   const [, go] = useLocation();
+  const access = useAccess();
   const st = useOwnReportsState();
   const mine = useMemo(() => st.reports.filter((r) => r.section === s.id).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), [st.reports, s.id]);
   const [del, setDel] = useState<OwnReport | null>(null);
@@ -100,7 +101,8 @@ export function OwnReportsIndex({ sectionId }: { sectionId: SectionId }) {
             <div className="text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground mb-2">Section fields</div>
             <p className="text-[13px] text-muted-foreground">Choose your own fields to build a custom report. Default reports are listed by name only and will be developed later.</p>
             <ul className="space-y-1">
-              {s.defaults.filter((d) => d.dataset && d.fields.length > 0).map((d) => (
+              {s.defaults.filter((d) => d.dataset && d.fields.length > 0
+                && access.data?.reportIds.includes(d.id)).map((d) => (
                 <li key={d.id}>
                   <Link href={`${s.base}/own-reports/new?from=${d.id}`} className="flex items-center gap-2 rounded px-2 py-1.5 text-[13px] hover:bg-accent/40 transition-colors" data-testid={`link-start-from-${d.id}`}>
                     <Copy className="h-3.5 w-3.5 text-muted-foreground" />{d.title}<span className="ml-auto font-mono text-[10px] text-muted-foreground">{d.fields.length} cols</span>

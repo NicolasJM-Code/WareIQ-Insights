@@ -113,7 +113,7 @@ function Directory({ dir }: { dir: AccessDirectory }) {
     addressLine1: c.addressLine1, addressLine2: c.addressLine2,
     city: c.city, region: c.region, postalCode: c.postalCode, country: c.country, active,
   });
-  const doSaveRole = async (v: { id?: string; clientId: string; name: string; reportIds: string[]; canCreateOwnReports: boolean }) => {
+  const doSaveRole = async (v: { id?: string; clientId: string; name: string; reportIds: string[]; canCreateOwnReports: boolean; ownReportSections: string[] }) => {
     const saved = await saveRole.mutateAsync({ data: v });
     await refresh();
     toast({ title: 'Role saved', description: notificationDescription(saved.notification) });
@@ -322,7 +322,13 @@ function Directory({ dir }: { dir: AccessDirectory }) {
                     <span className="tnum font-mono text-xs">{r.reportIds.length} reports</span>
                     <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{r.reportIds.slice(0, 6).map(reportName).join(', ')}{r.reportIds.length > 6 ? ' …' : ''}</p>
                   </td>
-                  <td className="px-4 py-3 text-xs">{r.canCreateOwnReports ? <span className="rounded-sm bg-accent px-1.5 py-0.5 font-mono uppercase text-accent-foreground">Allowed</span> : <span className="text-muted-foreground">No</span>}</td>
+                  <td className="px-4 py-3 text-xs">{(r.ownReportSections?.length ?? (r.canCreateOwnReports ? 1 : 0)) > 0
+                    ? <span className="rounded-sm bg-accent px-1.5 py-0.5 text-accent-foreground">
+                        {(r.ownReportSections?.length ? r.ownReportSections : ['Allowed'])
+                          .map((section) => dir.reports.find((report) => report.section === section)?.sectionName ?? section)
+                          .join(', ')}
+                      </span>
+                    : <span className="text-muted-foreground">No</span>}</td>
                   <Actions>
                     <IconBtn id={`button-edit-role-${r.id}`} label="Edit" onClick={() => setRoleDlg((d) => ({ open: true, item: r, k: d.k + 1 }))}><Pencil className="h-4 w-4" /></IconBtn>
                     <IconBtn id={`button-delete-role-${r.id}`} label="Delete" danger onClick={() => { setDelErr(null); setPendingDel({ entity: 'roles', id: r.id, label: r.name }); }}><Trash2 className="h-4 w-4" /></IconBtn>

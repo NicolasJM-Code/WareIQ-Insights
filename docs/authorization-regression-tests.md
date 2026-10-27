@@ -256,6 +256,45 @@ fail closed with a sanitized 503. Health checks remain public. Approvals are not
 cached: this adds a Clerk API read per authenticated request and deliberately
 trades provider availability/latency for prompt revocation.
 
+## Opt-in browser session renewal check
+
+```sh
+CLERK_BROWSER_TESTS=isolated-development-only \
+CLERK_BROWSER_EXECUTABLE="$(command -v chromium)" \
+pnpm test:auth:browser:renewal
+```
+
+This is a separate live run, not part of `test:auth:browser`, the ordinary
+offline suite, the authorization workflow, or a build. It uses the same
+Development-only preflight and private cleanup journal described above and
+creates a **new** disposable account for this run. Allow about three minutes
+for two genuine short-lived cookie lifetimes plus access polling.
+
+After ticket sign-in and a cookie-authenticated reload control, it keeps the
+same reporting document open with Clerk networking enabled. It passively
+observes the SDK-written `__session` cookie: the session ID must stay the
+same, issuance and expiry must advance, and the new cookie must remain valid
+after the first cookie's expiry plus clock-skew allowance. It does not call
+`getToken` to trigger renewal, inject cookies, alter clocks, reload the page,
+or replace the access API during this observation.
+
+A fresh real `/api/access/me` polling response must still grant reporting,
+the reporting and administrator markers must remain visible, and same-origin
+cookie-only requests must still reach the harmless protected handler.
+The runner then blocks external SDK traffic, proves access still works,
+observes at least one blocked session-token renewal attempt, and waits past
+the **latest** cookie's expiry. The real hook's next access recheck must lock
+both guards and permissions; reporting, settings and own-report APIs must
+deny access without reaching protected handlers. A non-renewing SDK therefore
+cannot pass only because it correctly locks on expiry.
+
+The database boundary, harmless catalog and sensitive-output suppression are
+unchanged. No report data is loaded. The generated account is ownership-checked
+and deleted after success or failure, using the same `afterAll` cleanup.
+On a process kill or provider cleanup failure, retain the private journal and
+use the browser cleanup recovery command above against the same Development
+instance. Recovery creates no account and opens no browser.
+
 ## Opt-in hosted sign-in screen check
 
 ```sh
@@ -350,6 +389,58 @@ intent journal without changing any account and reports that the exact-email
 lookup found no account. Successful deletion of a verified fixture is also
 reported explicitly. These messages contain no provider response details,
 credentials, or tokens. A provider lookup failure, multiple
+matches, or any ownership mismatch fails closed and retains the journal; do not
+edit it to target another account. If an account was already deleted, confirm
+its absence in the same Development instance before manually removing an
+ID-scoped journal. If provider deletion succeeds but journal removal fails, the
+runner explicitly reports that the account **was deleted** and tells you to
+confirm absence and remove the journal manually, not rerun recovery.
+
+If creation fails before returning an ID (for example, a timed-out response),
+the account's existence is unknown. The prewritten intent journal remains
+available; explicitly run the recovery command above against the same
+Development instance. Recovery checks the exact generated email and private
+marker and never creates a replacement account. An abrupt kill after the
+provider creates the account but before the ID is journaled is handled the same
+way. If exact-email recovery confirms there is no account, it removes the
+orphaned intent record so a later, separate test run can proceed. Never
+bulk-delete or target customer accounts.
+
+No live provider tests are reachable from `vitest.config.ts`; their separate
+config is `vitest.provider.config.ts`. The offline tests import only the shared
+`provider-tests/harness.ts`, which has no Clerk/app imports and cannot make
+provider calls without an explicitly supplied client. Both suites' TypeScript
+is checked by the existing
+`pnpm test:auth:typecheck` command without running live checks.
+### Generated-account cleanup (provider check)
+
+The runner keeps JWTs only in memory. Before contacting Clerk to create an
+account, it writes a mode-0600, git-ignored intent journal under
+`.cache/clerk-provider/<uuid>.json` containing only the generated email and
+private run marker. After Clerk returns an ID, the runner atomically replaces
+the intent with an ID-scoped record containing the generated user ID, email and
+run marker. The journal path is printed, but provider error details, tokens and
+credentials are not. A shared lifecycle helper uses `finally` to delete only
+the verified generated account (and its sessions) after application setup,
+journal update or assertion failures, then removes the journal. A failure is
+always nonzero, even if cleanup succeeds.
+
+If a process is killed or Clerk is unavailable during teardown, retain the
+journal and rerun **against the same Development instance**:
+
+```sh
+CLERK_PROVIDER_TESTS=isolated-development-only \
+CLERK_PROVIDER_CLEANUP_MANIFEST=.cache/clerk-provider/<uuid>.json \
+pnpm test:auth:provider
+```
+
+Recovery mode does not create accounts or run access checks. For an ID-scoped
+record, it fetches only that ID and verifies the private run marker and sole
+generated email before deletion. For an intent record, it asks Clerk for users
+matching only the exact generated email, requires exactly one result, and
+verifies that result's private run marker and sole email before saving its ID
+and proceeding with ID-scoped cleanup. If no account matches, it removes the
+intent journal without changing any account. A provider lookup failure, multiple
 matches, or any ownership mismatch fails closed and retains the journal; do not
 edit it to target another account. If an account was already deleted, confirm
 its absence in the same Development instance before manually removing an

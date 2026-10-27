@@ -4,27 +4,28 @@ import { reportDefinitionError } from "./own-report-validation";
 import { ImportAccessOwnReportsBody, SaveAccessOwnReportBody } from "@workspace/api-zod";
 
 const definition = { section: "inbound", name: "My receipts", dataset: "receipts", fields: ["id", "supplier"], description: "" };
-test("an authorized legacy definition passes the same checks as an ordinary save", () => {
-  assert.equal(reportDefinitionError(definition, ["inbound-1"]), undefined);
+test("an own report passes when its section is enabled for the role", () => {
+  assert.equal(reportDefinitionError(definition, ["inbound-1"], ["inbound"]), undefined);
 });
 test("unauthorized and forged section grants are rejected", () => {
   for (const grants of [[], ["inventory-1"], ["inbound-injected"]]) {
-    assert.equal(reportDefinitionError(definition, grants)?.status, 403);
+    assert.equal(reportDefinitionError(definition, grants, [])?.status, 403);
   }
+  assert.equal(reportDefinitionError(definition, ["inbound-1"], ["inventory"])?.status, 403);
 });
 test("unknown, cross-section and prototype datasets are rejected", () => {
   for (const dataset of ["stock", "missing", "__proto__", "constructor", "toString"]) {
-    assert.equal(reportDefinitionError({ ...definition, dataset }, ["inbound-1"])?.status, 400);
+    assert.equal(reportDefinitionError({ ...definition, dataset }, ["inbound-1"], ["inbound"])?.status, 400);
   }
 });
 test("unknown, empty and repeated columns are rejected, not silently dropped", () => {
   for (const fields of [[], ["secret"], ["id", "secret"], ["id", "id"]]) {
-    assert.equal(reportDefinitionError({ ...definition, fields }, ["inbound-1"])?.status, 400);
+    assert.equal(reportDefinitionError({ ...definition, fields }, ["inbound-1"], ["inbound"])?.status, 400);
   }
 });
 test("source report permissions and blank names are checked", () => {
-  assert.equal(reportDefinitionError({ ...definition, sourceDefault: "inventory-1" }, ["inbound-1"])?.status, 403);
-  assert.equal(reportDefinitionError({ ...definition, name: "  " }, ["inbound-1"])?.status, 400);
+  assert.equal(reportDefinitionError({ ...definition, sourceDefault: "inventory-1" }, ["inbound-1"], ["inbound"])?.status, 403);
+  assert.equal(reportDefinitionError({ ...definition, name: "  " }, ["inbound-1"], ["inbound"])?.status, 400);
 });
 test("imports require explicit confirmation and a bounded non-empty selection", () => {
   const input = { expectedOwnerId: "user-a", expectedClientId: "client-a", confirmedOwnership: true, reports: [definition] };

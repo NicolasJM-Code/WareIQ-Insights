@@ -3,7 +3,7 @@ import type { Request } from "express";
 import { and, eq } from "drizzle-orm";
 import { db, clientsTable, membersTable, rolesTable, sitesTable } from "@workspace/db";
 import type { AccessSession } from "@workspace/api-zod";
-import { accessReports } from "./access-catalog";
+import { accessReports, accessSectionIds, ownReportSectionsForRole } from "./access-catalog";
 
 export class AccessError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -50,7 +50,12 @@ export async function accessFor(req: Request) {
     clientCountry: client?.country ?? null,
     clientLogoUrl: client?.logoPath ? `/api/access/clients/${client.id}/logo` : null,
     reportIds: actor.platformAdmin ? accessReports.map((r) => r.id) : enabled ? role!.reportIds : [],
-    canCreateOwnReports: enabled && (actor.platformAdmin || !!role?.canCreateOwnReports),
+    ownReportSections: enabled
+      ? actor.platformAdmin ? [...accessSectionIds] : role ? ownReportSectionsForRole(role) : []
+      : [],
+    canCreateOwnReports: enabled && (actor.platformAdmin || !!ownReportSectionsForRole(role ?? {
+      canCreateOwnReports: false, reportIds: [],
+    }).length),
     sites: enabled ? sites : [],
   };
   return { actor, member, role, client, session };

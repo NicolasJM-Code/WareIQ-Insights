@@ -307,6 +307,7 @@ export interface AccessRoleInput {
   /** @maxItems 200 */
   reportIds: string[];
   canCreateOwnReports: boolean;
+  ownReportSections: string[];
 }
 
 export type AccessRoleNotification = typeof AccessRoleNotification[keyof typeof AccessRoleNotification];
@@ -325,6 +326,7 @@ export interface AccessRole {
   name: string;
   reportIds: string[];
   canCreateOwnReports: boolean;
+  ownReportSections: string[];
 }
 
 export interface AccessUserInput {
@@ -448,6 +450,7 @@ export interface AccessSession {
   status: AccessSessionStatus;
   platformAdmin: boolean;
   canCreateOwnReports: boolean;
+  ownReportSections: string[];
   /** @nullable */
   clientId: string | null;
   /** @nullable */
