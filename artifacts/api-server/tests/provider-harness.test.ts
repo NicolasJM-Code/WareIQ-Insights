@@ -207,6 +207,46 @@ describe("offline provider harness safety", () => {
     expect(await readdir(directory)).toEqual([]);
   });
 
+  it("serializes recovery attempts and retains the journal for a safe retry", async () => {
+    const env = await seed();
+    let signalLookupStarted!: () => void;
+    const lookupStarted = new Promise<void>((resolve) => { signalLookupStarted = resolve; });
+    let releaseLookup!: () => void;
+    const lookupGate = new Promise<void>((resolve) => { releaseLookup = resolve; });
+    users.getUser.mockImplementationOnce(async () => {
+      signalLookupStarted();
+      await lookupGate;
+      return user;
+    });
+    users.deleteUser.mockRejectedValueOnce(outage());
+
+    const firstAttempt = runProviderCheck(env, dependencies(), check);
+    await lookupStarted;
+
+    const secondAttemptError = await failure(runProviderCheck(env, dependencies(), check));
+    expect(secondAttemptError).toContain("Recovery already in progress");
+    expect(secondAttemptError).toContain("no provider calls made");
+    await retained(env.CLERK_PROVIDER_CLEANUP_MANIFEST);
+    expect(users.getUser).toHaveBeenCalledOnce();
+    expect(users.deleteUser).not.toHaveBeenCalled();
+    expect(users.getUserList).not.toHaveBeenCalled();
+    expect(users.createUser).not.toHaveBeenCalled();
+
+    releaseLookup();
+    const firstAttemptError = await failure(firstAttempt);
+    expect(firstAttemptError).toContain("Cleanup failed or ownership check refused deletion");
+    expect(users.getUser).toHaveBeenCalledOnce();
+    expect(users.deleteUser).toHaveBeenCalledExactlyOnceWith(saved.userId);
+    await retained(env.CLERK_PROVIDER_CLEANUP_MANIFEST);
+
+    await runProviderCheck(env, dependencies(), check);
+    expect(users.getUser).toHaveBeenCalledTimes(2);
+    expect(users.deleteUser).toHaveBeenCalledTimes(2);
+    expect(users.createUser).not.toHaveBeenCalled();
+    expect(check).not.toHaveBeenCalled();
+    expect(await readdir(directory)).toEqual([]);
+  });
+
   it("recovers an interrupted creation by exact email and marker without creating an account", async () => {
     const path = join(directory, "interrupted.json");
     const intent = { state: "intent", runId: saved.runId, email: saved.email };
@@ -425,7 +465,13 @@ describe("offline provider harness safety", () => {
 
   it.each(["normal run", "recovery"])("reports deletion accurately when journal unlink fails in %s", async (mode) => {
     const env = mode === "recovery" ? await seed() : safeEnv;
-    const journal = { ...journalIO, unlink: vi.fn<typeof journalIO.unlink>().mockRejectedValue(outage()) };
+    const journal = {
+      ...journalIO,
+      unlink: vi.fn<typeof journalIO.unlink>().mockImplementation(async (path) => {
+        if (mode === "recovery" && String(path).endsWith(".recovery.lock")) return journalIO.unlink(path);
+        throw outage();
+      }),
+    };
     const message = await failure(runProviderCheck(env, { ...dependencies(), journal }, check));
     expect(message).toContain("account was deleted");
     expect(message).toContain("manually remove");

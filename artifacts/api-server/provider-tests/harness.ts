@@ -86,6 +86,8 @@ export async function runProviderCheck(
   const recovery = env.CLERK_PROVIDER_CLEANUP_MANIFEST;
   let manifest: Manifest | undefined;
   let journalWritten = false;
+  let recoveryLockPath: string | undefined;
+  let recoveryLockAcquired = false;
   const runId = randomUUID();
   const path = recovery
     ? resolve(recovery)
@@ -122,6 +124,20 @@ export async function runProviderCheck(
 
   try {
     if (recovery) {
+      recoveryLockPath = `${path}.recovery.lock`;
+      try {
+        await journal.writeFile(
+          recoveryLockPath,
+          JSON.stringify({ pid: process.pid, token: randomUUID() }),
+          { mode: 0o600, flag: "wx" },
+        );
+        recoveryLockAcquired = true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+          throw new Error(`Recovery already in progress or a prior recovery lock remains at ${recoveryLockPath}; no provider calls made and the journal at ${path} was retained. Retry only after verifying no recovery is running; do not remove the lock while one may be active.`);
+        }
+        throw new Error(`Could not acquire the recovery lock at ${recoveryLockPath}; no provider calls made and the journal at ${path} was retained.`);
+      }
       let record: RecoveryRecord;
       try { record = parseRecoveryRecord(await journal.readFile(path, "utf8")); }
       catch {
@@ -186,7 +202,20 @@ export async function runProviderCheck(
     info(`Disposable account cleanup manifest: ${path}`);
     await check(manifest);
   } finally {
-    await cleanup();
+    let cleanupError: unknown;
+    try { await cleanup(); } catch (error) { cleanupError = error; }
+    let lockReleaseFailed = false;
+    if (recoveryLockAcquired && recoveryLockPath) {
+      try { await journal.unlink(recoveryLockPath); }
+      catch { lockReleaseFailed = true; }
+    }
+    if (cleanupError && lockReleaseFailed) {
+      throw new Error(`${String(cleanupError)} Recovery lock could not be removed; verify no recovery is running before manually removing ${recoveryLockPath}.`);
+    }
+    if (cleanupError) throw cleanupError;
+    if (lockReleaseFailed) {
+      throw new Error(`Recovery finished, but its lock could not be removed. Verify no recovery is running before manually removing ${recoveryLockPath}.`);
+    }
   }
 }
 
