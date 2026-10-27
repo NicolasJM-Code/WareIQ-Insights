@@ -118,3 +118,19 @@ it('never shows one session’s cached history while a different session loads',
   await waitFor(() => expect(screen.queryByText('user_audit_actor')).not.toBeInTheDocument());
   expect(screen.getByRole('status')).toHaveTextContent('Loading access history');
 });
+
+it('renders readiness from history and hides stale readiness when refresh fails', async () => {
+  state.load.mockResolvedValue({
+    entries: [], nextCursor: null, captureReadiness: {
+      configuration: 'configured', signing: 'configured', routing: 'configured', keyMode: 'configured',
+      environment: 'development', delivery: 'unknown', lastVerifiedDeliveryAt: null,
+      lastDeliveryFailureAt: null, failureScope: 'current_process',
+    },
+  });
+  mount();
+  await screen.findByText(/Delivery health unknown/);
+  state.load.mockRejectedValue(new Error('offline'));
+  fireEvent.click(screen.getByText('Refresh history'));
+  await screen.findByText(/Capture readiness unavailable/);
+  expect(screen.queryByTestId('capture-readiness')).not.toBeInTheDocument();
+});

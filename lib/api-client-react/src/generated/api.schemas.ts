@@ -95,6 +95,84 @@ export interface AccessHistoryEntry {
   reason: string;
 }
 
+export type CaptureReadinessConfiguration = typeof CaptureReadinessConfiguration[keyof typeof CaptureReadinessConfiguration];
+
+
+export const CaptureReadinessConfiguration = {
+  configured: 'configured',
+  not_configured: 'not_configured',
+} as const;
+
+export type CaptureReadinessSigning = typeof CaptureReadinessSigning[keyof typeof CaptureReadinessSigning];
+
+
+export const CaptureReadinessSigning = {
+  configured: 'configured',
+  not_configured: 'not_configured',
+} as const;
+
+export type CaptureReadinessRouting = typeof CaptureReadinessRouting[keyof typeof CaptureReadinessRouting];
+
+
+export const CaptureReadinessRouting = {
+  configured: 'configured',
+  not_configured: 'not_configured',
+} as const;
+
+export type CaptureReadinessKeyMode = typeof CaptureReadinessKeyMode[keyof typeof CaptureReadinessKeyMode];
+
+
+export const CaptureReadinessKeyMode = {
+  configured: 'configured',
+  not_configured: 'not_configured',
+} as const;
+
+/**
+ * @nullable
+ */
+export type CaptureReadinessEnvironment = typeof CaptureReadinessEnvironment[keyof typeof CaptureReadinessEnvironment] | null;
+
+
+export const CaptureReadinessEnvironment = {
+  development: 'development',
+  production: 'production',
+} as const;
+
+export type CaptureReadinessDelivery = typeof CaptureReadinessDelivery[keyof typeof CaptureReadinessDelivery];
+
+
+export const CaptureReadinessDelivery = {
+  not_configured: 'not_configured',
+  unknown: 'unknown',
+  verified_delivery: 'verified_delivery',
+  delivery_problem: 'delivery_problem',
+} as const;
+
+export type CaptureReadinessFailureScope = typeof CaptureReadinessFailureScope[keyof typeof CaptureReadinessFailureScope];
+
+
+export const CaptureReadinessFailureScope = {
+  current_process: 'current_process',
+} as const;
+
+/**
+ * Administrator-only local setup and historical persisted signed-delivery evidence; never proof of an active provider subscription. Failures are authenticated storage failures observed in this process only.
+ */
+export interface CaptureReadiness {
+  configuration: CaptureReadinessConfiguration;
+  signing: CaptureReadinessSigning;
+  routing: CaptureReadinessRouting;
+  keyMode: CaptureReadinessKeyMode;
+  /** @nullable */
+  environment: CaptureReadinessEnvironment;
+  delivery: CaptureReadinessDelivery;
+  /** @nullable */
+  lastVerifiedDeliveryAt: string | null;
+  /** @nullable */
+  lastDeliveryFailureAt: string | null;
+  failureScope: CaptureReadinessFailureScope;
+}
+
 /**
  * @nullable
  */
@@ -104,6 +182,7 @@ export type AccessHistoryPageNextCursor = {
 } | null;
 
 export interface AccessHistoryPage {
+  captureReadiness: CaptureReadiness;
   entries: AccessHistoryEntry[];
   /** @nullable */
   nextCursor: AccessHistoryPageNextCursor;

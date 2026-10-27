@@ -110,7 +110,7 @@ Provider references checked for this implementation:
 This project uses Replit-managed Clerk with separate Development and Production
 instances; management access was authorized when checked. Replit-managed internal
 webhook infrastructure does not establish that this application's evidence
-endpoint is subscribed. Readiness inspection found **no** application signing
+endpoint is subscribed. The original readiness inspection found **no** application signing
 secret, pinned instance ID, or environment setting in **either Development or
 Production**. No delivery was attested or configured by this code change, and no
 deployment or provider mutation was made. Until setup is completed, the endpoint
@@ -190,6 +190,45 @@ succeeded. Prefer the approved command for recoveries requiring operator
 attestation. Absence of an observation is not proof that no external edit occurred.
 
 ## Schema and checks
+
+### Administrator capture-readiness status
+
+Every history page includes `captureReadiness`, under the same verified
+administrator guard and private/no-store policy as the history itself. The
+Settings history panel refreshes it with the records (including older pages).
+It exposes only allowlisted states, the routed environment, and timestamps:
+never signing material, key values, instance IDs or provider payloads.
+
+- **Not configured:** signing, routing (environment and pinned instance format),
+  or Clerk key mode is missing/invalid. These checks are shared with ingestion.
+  They check local configuration only, not public reachability or a subscription.
+- **Configured, delivery unknown:** local checks pass but there is no persisted
+  signed role observation for this exact environment and instance. Send a signed
+  `user.updated` test delivery with an allowlisted role using the owner setup
+  instructions above. No event-age threshold is applied; quiet accounts do not
+  imply a failed subscription.
+- **Verified delivery evidence:** at least one matching signed role observation
+  was committed. The last persisted observation uses its server receipt time,
+  not the provider event time. This is durable historical evidence, independent
+  of pagination and process restarts, **not** a current subscription-health
+  assertion. It can predate a signing-key rotation or endpoint routing change.
+  A duplicate acknowledged by the writer proves a successful storage round trip
+  but does not update the original observation's receipt timestamp.
+- **Delivery problem:** this process received a signed, matching-instance,
+  valid role observation but its database write failed. This overrides historical
+  success until a later valid observation (including a retry) is successfully
+  saved by this process. Bad signatures, malformed or ignored events, and
+  wrong-instance traffic cannot create or clear this signal.
+
+Failure timestamps are **current-process only** and reset on restart; they are
+not shared across replicas. Provider-side delivery failures, disabled or wrongly
+subscribed endpoints, and requests that never reach the application remain
+unknown. This feature neither polls provider subscription state nor claims full
+external coverage. Owners should check provider delivery diagnostics and retry
+after fixing application database availability when a delivery problem appears.
+If history cannot refresh, the UI hides stale readiness rather than presenting
+an old status as current. None of these states changes authorization or writes
+synthetic role history.
 
 The Drizzle application schema includes `access_change_history`. Apply the
 existing development schema push (`pnpm --filter @workspace/db run push`) after

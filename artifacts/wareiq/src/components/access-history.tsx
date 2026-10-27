@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useAuth } from '@clerk/react';
 import { useQuery } from '@tanstack/react-query';
 import { getListAccessHistoryQueryKey, listAccessHistory, type ListAccessHistoryParams } from '@workspace/api-client-react';
+import { CaptureReadinessNotice } from './capture-readiness';
 import { RefreshCw, ScrollText } from 'lucide-react';
 import { Pill } from '@/components/report-kit';
 
@@ -47,6 +48,8 @@ export function AccessHistory() {
       <div className="space-y-3 p-5">
         <p className="text-[12px] text-muted-foreground">Application-database records of platform role attempts made through Settings and the approved recovery command, including policy denials. Account IDs identify authenticated Settings actors; operator: IDs identify terminal operators by their declared non-personal identifier, not a verified app administrator. Signed provider observations, when event capture is configured, show external role evidence with an unknown actor; they can also reflect Settings or command updates and do not prove a dashboard edit. No email addresses or arbitrary provider metadata are retained. Reporting membership changes, settings, exports and earlier activity are not included.</p>
         <p className="text-[12px] text-muted-foreground">Unconfirmed means the attempt may still be running or its outcome could not be saved. It does not prove a role changed. Check the current account list before retrying. Old and confirmed roles are shown only when known; denied requests from non-administrators omit target details.</p>
+        {history.isError ? <p className="text-[12px]">Capture readiness unavailable. Refresh history to check it again.</p>
+          : history.data?.captureReadiness ? <CaptureReadinessNotice readiness={history.data.captureReadiness} /> : null}
         {history.isPending ? <p role="status" className="text-[13px]">Loading access history…</p> : history.isError ? (
           <div role="alert" className="text-[13px] text-destructive">
             Access history could not be refreshed. {history.data ? 'The last loaded records are shown below.' : 'No records could be loaded.'}

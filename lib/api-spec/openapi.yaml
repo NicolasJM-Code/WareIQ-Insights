@@ -493,10 +493,26 @@ components:
         providerOccurredAt: { type: [string, "null"] }
         outcome: { type: string, enum: [succeeded, unchanged, denied, failed, unconfirmed, observed] }
         reason: { type: string }
+    CaptureReadiness:
+      type: object
+      description: Administrator-only local setup and historical persisted signed-delivery evidence; never proof of an active provider subscription. Failures are authenticated storage failures observed in this process only.
+      required: [configuration, signing, routing, keyMode, environment, delivery, lastVerifiedDeliveryAt, lastDeliveryFailureAt, failureScope]
+      properties:
+        configuration: { type: string, enum: [configured, not_configured] }
+        signing: { type: string, enum: [configured, not_configured] }
+        routing: { type: string, enum: [configured, not_configured] }
+        keyMode: { type: string, enum: [configured, not_configured] }
+        environment: { type: [string, "null"], enum: [development, production, null] }
+        delivery: { type: string, enum: [not_configured, unknown, verified_delivery, delivery_problem] }
+        lastVerifiedDeliveryAt: { type: [string, "null"] }
+        lastDeliveryFailureAt: { type: [string, "null"] }
+        failureScope: { type: string, enum: [current_process] }
     AccessHistoryPage:
       type: object
-      required: [entries, nextCursor]
+      required: [entries, nextCursor, captureReadiness]
       properties:
+        captureReadiness:
+          $ref: "#/components/schemas/CaptureReadiness"
         entries:
           type: array
           items:

@@ -7,8 +7,10 @@
  */
 import type { AccessHistoryEntry } from './accessHistoryEntry';
 import type { AccessHistoryPageNextCursor } from './accessHistoryPageNextCursor';
+import type { CaptureReadiness } from './captureReadiness';
 
 export interface AccessHistoryPage {
+  captureReadiness: CaptureReadiness;
   entries: AccessHistoryEntry[];
   /** @nullable */
   nextCursor: AccessHistoryPageNextCursor;

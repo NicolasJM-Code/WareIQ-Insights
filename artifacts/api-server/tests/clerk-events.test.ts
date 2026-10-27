@@ -7,6 +7,7 @@ const store = vi.hoisted(() => ({ record: vi.fn(), warn: vi.fn() }));
 vi.mock("@workspace/db/access-audit", () => ({ recordProviderRoleObservation: store.record }));
 // The signature verifier is deliberately REAL, not mocked.
 import router from "../src/routes/clerk-events";
+import { captureConfiguration, captureReadiness, noteCaptureDelivery } from "../src/lib/capture-readiness";
 
 const app = express();
 app.use((req, _res, next) => { req.log = { warn: store.warn } as unknown as typeof req.log; next(); });
@@ -39,6 +40,7 @@ beforeEach(() => {
   vi.stubEnv("CLERK_WEBHOOK_INSTANCE_ID", "ins_test");
   vi.stubEnv("CLERK_WEBHOOK_SIGNING_SECRET", secret);
   vi.stubEnv("CLERK_SECRET_KEY", "sk_test_isolated");
+  noteCaptureDelivery(captureConfiguration(), true);
   store.record.mockResolvedValue(undefined);
 });
 afterEach(() => vi.unstubAllEnvs());
@@ -119,4 +121,16 @@ it("returns a retryable failure on storage errors without logging provider detai
   expect(store.warn).toHaveBeenCalledExactlyOnceWith(
     { code: "provider_evidence_write_failed" }, "Provider role evidence could not be saved",
   );
+  expect(captureReadiness(captureConfiguration(), null).delivery).toBe("delivery_problem");
+  // Forged, wrong-instance, ignored or malformed deliveries cannot clear a
+  // genuine failure, nor count as successful role capture.
+  await send(body(), { signature: "v1,forged" });
+  await send({ ...body(), instance_id: "ins_other" });
+  await send({ ...body(), type: "user.created" });
+  await send(body("unknown"));
+  await send({ ...body(), data: {} });
+  expect(captureReadiness(captureConfiguration(), null).delivery).toBe("delivery_problem");
+  store.record.mockResolvedValue(undefined);
+  expect((await send(body())).status).toBe(204);
+  expect(captureReadiness(captureConfiguration(), null).delivery).toBe("unknown");
 });

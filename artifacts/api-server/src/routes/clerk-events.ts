@@ -1,6 +1,7 @@
 import { Router, raw, type ErrorRequestHandler, type IRouter } from "express";
 import { verifyWebhook } from "@clerk/express/webhooks";
 import { recordProviderRoleObservation } from "@workspace/db/access-audit";
+import { captureConfiguration, noteCaptureDelivery } from "../lib/capture-readiness";
 
 const router: IRouter = Router();
 
@@ -8,14 +9,9 @@ const router: IRouter = Router();
 // middleware and JSON parsing. Its authentication is the raw-body signature.
 router.post("/webhooks/clerk/:environment", raw({ type: "application/json", limit: "256kb" }), async (req, res) => {
   res.setHeader("Cache-Control", "private, no-store");
-  const environment = process.env.CLERK_WEBHOOK_ENVIRONMENT;
-  const instanceId = process.env.CLERK_WEBHOOK_INSTANCE_ID;
-  const signingSecret = process.env.CLERK_WEBHOOK_SIGNING_SECRET;
-  const keyPrefix = environment === "production" ? "sk_live_" : "sk_test_";
-  if (!["development", "production"].includes(environment ?? "")
-    || !/^ins_[A-Za-z0-9]+$/.test(instanceId ?? "")
-    || !signingSecret?.startsWith("whsec_")
-    || !process.env.CLERK_SECRET_KEY?.startsWith(keyPrefix)) {
+  const configuration = captureConfiguration();
+  const { environment, instanceId, signingSecret } = configuration;
+  if (!configuration.configured) {
     res.status(503).json({ error: "Provider event capture is not configured." });
     return;
   }
@@ -70,8 +66,10 @@ router.post("/webhooks/clerk/:environment", raw({ type: "application/json", limi
       occurredAt: new Date(event.timestamp), targetId: data.id,
       role: role == null ? "unassigned" : role,
     });
+    noteCaptureDelivery(configuration, true);
     res.sendStatus(204);
   } catch {
+    noteCaptureDelivery(configuration, false);
     req.log.warn({ code: "provider_evidence_write_failed" }, "Provider role evidence could not be saved");
     // Do not acknowledge on storage failure: allow the provider to retry.
     res.status(503).json({ error: "Provider role evidence could not be saved." });

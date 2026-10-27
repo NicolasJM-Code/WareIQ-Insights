@@ -64,7 +64,11 @@ beforeEach(() => {
     ? user(id, audit.actorRole, audit.verified, audit.banned) : user(id, "unassigned"));
   audit.updateUserMetadata.mockImplementation(async (id: string, body: { publicMetadata: { role: string } }) => user(id, body.publicMetadata.role));
   audit.getUserList.mockResolvedValue({ data: [user("user_actor", "admin")], totalCount: 1 });
-  audit.page.mockResolvedValue({ entries: [], nextCursor: null });
+  audit.page.mockResolvedValue({ entries: [], nextCursor: null, captureReadiness: {
+    configuration: "configured", signing: "configured", routing: "configured", keyMode: "configured",
+    environment: "development", delivery: "unknown", lastVerifiedDeliveryAt: null,
+    lastDeliveryFailureAt: null, failureScope: "current_process",
+  } });
 });
 
 describe("durable role change outcomes", () => {
@@ -145,6 +149,29 @@ describe("durable role change outcomes", () => {
 });
 
 describe("administrator-only history API", () => {
+  it("returns safe readiness only to verified administrators and never caches it", async () => {
+    const result = await request(app).get("/api/admin/access-history");
+    expect(result.status).toBe(200);
+    expect(result.headers["cache-control"]).toBe("private, no-store");
+    expect(result.body.captureReadiness).toMatchObject({ configuration: "configured", delivery: "unknown" });
+    expect(JSON.stringify(result.body)).not.toMatch(/whsec|signingSecret|CLERK_SECRET_KEY/);
+  });
+  it.each(["supervisor", "unassigned"])("hides readiness from %s accounts", async (role) => {
+    audit.actorRole = role;
+    const result = await request(app).get("/api/admin/access-history");
+    expect(result.status).toBe(403);
+    expect(result.body).not.toHaveProperty("captureReadiness");
+    expect(audit.page).not.toHaveBeenCalled();
+  });
+  it.each(["unverified", "banned", "provider unavailable"])("hides readiness when identity is %s", async (condition) => {
+    if (condition === "unverified") audit.verified = false;
+    if (condition === "banned") audit.banned = true;
+    if (condition === "provider unavailable") audit.getUser.mockRejectedValue(new Error("offline"));
+    const result = await request(app).get("/api/admin/access-history");
+    expect([403, 503]).toContain(result.status);
+    expect(result.body).not.toHaveProperty("captureReadiness");
+    expect(audit.page).not.toHaveBeenCalled();
+  });
   it("rejects signed-out history requests and does not create anonymous records", async () => {
     audit.actorId = "";
     expect((await request(app).get("/api/admin/access-history")).status).toBe(401);

@@ -37,3 +37,15 @@ operator or a before/after role diff, and deliveries can arrive out of order.
 
 **How to apply:** Present webhook evidence as unknown-actor observations, even
 when the snapshot matches an app request. Keep original attempts unchanged.
+
+External capture readiness must keep local setup, historical delivery evidence,
+and current subscription health distinct. A quiet event stream is not evidence
+of a broken subscription.
+
+**Why:** Role updates have no expected delivery frequency; configured values
+cannot attest public routing or provider subscriptions, and old signed evidence
+can predate routing or signing-key changes.
+
+**How to apply:** Use explicit unknown/not-configured states and label saved
+observations as historical evidence, not a currently healthy subscription.
+Always disclose the process/restart limits of locally observed delivery failures.
