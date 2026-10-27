@@ -8,13 +8,16 @@ pnpm test:auth:typecheck
 ```
 
 `test:reports` is a separate, one-shot Vitest command. It reuses the committed
-authorization suite's blank credential environment, frontend aliases and jsdom
-setup without including these tests in `test:auth`. No app server is needed.
+authorization suite's blank credential environment and runs separate frontend
+(jsdom) and API (Node) projects without including these tests in `test:auth`.
+No app server is needed. API tests require PostgreSQL's `initdb` and `pg_ctl`
+on PATH, run as a non-root user; these are available in the Replit workspace.
+Missing binaries fail explicitly rather than skipping persistence coverage.
 
 ## Safety and scope
 
-- Only Vitest's ephemeral jsdom localStorage is seeded or cleared. Tests do not
-  connect to the preview browser, Clerk, any database or WMS.
+- Frontend tests seed or clear only Vitest's ephemeral jsdom localStorage. They
+  do not connect to the preview browser, Clerk, any database or WMS.
 - The real store, access/query hooks and generated API transport run against a
   strict fetch stub. Report responses come from a per-test in-memory map.
   Unknown requests fail; no network request can reach customer data.
@@ -51,6 +54,39 @@ but readable formats remain intact. This avoids restoring normal browser
 writes or inferring legacy ownership from a shared browser.
 
 Server-side persistence/validation and shared-browser import confirmation are
-separate from this store-level suite. The existing source-local
+separate from the client store assertions. The existing source-local
 `legacy-report-import.test.ts` uses Node's test runner; this Vitest suite does not
 collect it or run it under a second runner.
+
+## API persistence regressions
+
+`artifacts/api-server/tests/reports/own-reports-api.test.ts` mounts the real access
+router, validators, membership checks and Drizzle queries. Only Clerk identity
+is simulated with a verified synthetic address. This is a route-level suite,
+not a replacement for the central authentication and same-origin guard suite.
+
+The database helper starts a fresh PostgreSQL cluster in a generated temporary
+directory with **no TCP listener**, connects over that directory's Unix socket,
+and stops and removes it on completion. It never reads database credentials or
+accepts a caller-provided connection or cleanup path. No shared application
+database, customer account or WMS connection is used. The minimal SQL fixture
+mirrors the access tables needed by these routes, including report timestamps,
+the client foreign key and the case-insensitive per-owner/client/section unique
+index; keep it aligned with `lib/db/src/schema/access.ts`.
+
+Coverage includes:
+
+- Successful create/edit/delete, server-derived ownership, trimmed names,
+  preserved creation timestamps, ordered fields and fresh GET readback.
+- Validation and duplicate-name errors preserving every stored row, including
+  timestamps, the original definition and neighbouring accounts' reports.
+- Owner/client-scoped edit and delete, missing reports, forged server-owned
+  properties, and loss of section, role, account or sign-in access.
+- Real database failures **after** INSERT, UPDATE and DELETE, injected through
+  PostgreSQL triggers. Side effects on a second report roll back too; each
+  failure returns a sanitized 503, remains readable and supports a later retry.
+- Actual unique-index violations after the API's duplicate preflight on create
+  and edit, returning explicit 409 errors without retaining partial changes.
+
+The API regressions are explicitly excluded from the authorization-only
+command, while remaining included in the API test TypeScript check.

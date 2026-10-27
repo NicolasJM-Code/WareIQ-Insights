@@ -7,9 +7,26 @@ export default defineConfig({
   esbuild: { jsx: "automatic" },
   resolve: wareiqResolve,
   test: {
-    name: "wareiq-reports",
-    environment: "jsdom",
-    include: ["artifacts/wareiq/tests/reports/**/*.test.ts"],
-    env,
+    projects: [
+      {
+        esbuild: { jsx: "automatic" },
+        resolve: wareiqResolve,
+        test: {
+          name: "wareiq-reports",
+          environment: "jsdom",
+          include: ["artifacts/wareiq/tests/reports/**/*.test.ts"],
+          env,
+        },
+      },
+      {
+        test: {
+          name: "api-reports",
+          environment: "node",
+          include: ["artifacts/api-server/tests/reports/**/*.test.ts"],
+          env,
+          hookTimeout: 30_000,
+        },
+      },
+    ],
   },
 });

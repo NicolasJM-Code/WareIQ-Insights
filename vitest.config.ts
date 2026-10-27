@@ -27,6 +27,7 @@ export default defineConfig({
           name: "api-authorization",
           environment: "node",
           include: ["artifacts/api-server/tests/**/*.test.ts"],
+          exclude: ["artifacts/api-server/tests/reports/**"],
           env,
         },
       },
