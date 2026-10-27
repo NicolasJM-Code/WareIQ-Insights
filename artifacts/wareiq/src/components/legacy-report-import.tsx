@@ -3,7 +3,13 @@ import { useUser } from '@clerk/react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { btn } from '@/components/reports-ui';
 import { getDataset, type Section } from '@/lib/report-catalog';
-import { clearCorruptLegacyReports, readLegacyReports, type LegacyPreview } from '@/lib/legacy-report-import';
+import {
+  clearCorruptLegacyReports,
+  isLegacyReportSourceUnchanged,
+  readLegacyReportSnapshot,
+  type LegacyPreview,
+  type LegacyReportSnapshot,
+} from '@/lib/legacy-report-import';
 import { importLegacyReports, NAME_MAX, type OwnReport } from '@/lib/own-reports-store';
 import { safeAnalyticsSection, trackEvent } from '@/lib/analytics';
 import { useAccess } from '@/lib/use-access';
@@ -25,6 +31,7 @@ function ImportForAccount({ section, reports, ready, ownerId, accountLabel, clie
   clientId: string; clientName: string; reportIds: string[];
 }) {
   const [preview, setPreview] = useState<LegacyPreview | null>(null);
+  const sourceSnapshot = useRef<LegacyReportSnapshot | null>(null);
   const [selected, setSelected] = useState<number[]>([]);
   const [names, setNames] = useState<Record<number, string>>({});
   const [confirmed, setConfirmed] = useState(false);
@@ -35,6 +42,12 @@ function ImportForAccount({ section, reports, ready, ownerId, accountLabel, clie
   const [cleanupNotice, setCleanupNotice] = useState('');
   const inFlight = useRef(false);
   const cancellationTracked = useRef(false);
+  function refreshPreview() {
+    const snapshot = readLegacyReportSnapshot();
+    sourceSnapshot.current = snapshot;
+    setPreview(snapshot.preview);
+    return snapshot.preview;
+  }
   const candidates = preview?.candidates.filter((r) => r.input.section === section.id) ?? [];
   const picked = candidates.filter((r) => selected.includes(r.index));
   const nameFor = (r: typeof candidates[number]) => (names[r.index] ?? r.input.name).trim();
@@ -68,8 +81,7 @@ function ImportForAccount({ section, reports, ready, ownerId, accountLabel, clie
       setSelected([]); setNames({}); setConfirmed(false); setDone(false); setError('');
       setConfirmCleanup(false); setCleanupNotice('');
       cancellationTracked.current = false;
-      const nextPreview = readLegacyReports();
-      setPreview(nextPreview);
+      const nextPreview = refreshPreview();
       const safeSection = safeAnalyticsSection(section.id);
       trackEvent('legacy_report_import_preview', {
         ...(safeSection ? { section: safeSection } : {}),
@@ -113,11 +125,11 @@ function ImportForAccount({ section, reports, ready, ownerId, accountLabel, clie
               data-testid="button-clear-corrupt-reports" onClick={() => {
                 const result = clearCorruptLegacyReports(preview.corruptRaw!, confirmCleanup);
                 if (result.ok) {
-                  setPreview(readLegacyReports()); setConfirmCleanup(false); setError('');
+                  refreshPreview(); setConfirmCleanup(false); setError('');
                   setCleanupNotice('Unreadable browser reports were deleted from this browser.');
                 } else {
                   setError(result.error ?? 'Browser reports were not deleted.');
-                  setConfirmCleanup(false); setPreview(readLegacyReports());
+                  setConfirmCleanup(false); refreshPreview();
                 }
               }}>Delete unreadable browser reports</button>
           </>}
@@ -168,6 +180,18 @@ function ImportForAccount({ section, reports, ready, ownerId, accountLabel, clie
               ...(safeSection ? { section: safeSection } : {}),
               selected_count: picked.length,
             });
+            const snapshot = sourceSnapshot.current;
+            if (!snapshot || !isLegacyReportSourceUnchanged(snapshot)) {
+              const freshSnapshot = readLegacyReportSnapshot();
+              sourceSnapshot.current = freshSnapshot;
+              setPreview(freshSnapshot.preview);
+              setSelected([]);
+              setNames({});
+              setConfirmed(false);
+              setDone(false);
+              setError('Browser reports changed or could not be rechecked. Review the refreshed preview and confirm ownership again before importing.');
+              return;
+            }
             inFlight.current = true; setBusy(true); setError('');
             try {
               const result = await importLegacyReports({ expectedOwnerId: ownerId, expectedClientId: clientId, confirmedOwnership: true,

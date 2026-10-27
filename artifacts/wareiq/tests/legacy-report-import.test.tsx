@@ -190,6 +190,28 @@ describe("legacy report import consent", () => {
     expect(removeItem).not.toHaveBeenCalled();
   });
 
+  it("refreshes the preview and requires new confirmation when another tab changes browser reports", async () => {
+    mount();
+    await openImportDialog();
+
+    fireEvent.click(screen.getByTestId("checkbox-legacy-0"));
+    fireEvent.change(screen.getByTestId("input-import-name-0"), { target: { value: "My receiving report" } });
+    fireEvent.click(screen.getByTestId("checkbox-confirm-legacy-ownership"));
+
+    const changedReports = [
+      { ...originalReports[0], name: "Changed in another tab" },
+      originalReports[1],
+    ];
+    window.localStorage.setItem(LEGACY_REPORTS_KEY, JSON.stringify({ version: 1, reports: changedReports }));
+    fireEvent.click(screen.getByTestId("button-confirm-legacy-import"));
+
+    expect(state.importLegacyReports).not.toHaveBeenCalled();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Browser reports changed");
+    expect(screen.getByText("Changed in another tab")).toBeInTheDocument();
+    expect(screen.getByTestId("checkbox-legacy-0")).not.toBeChecked();
+    expect(screen.getByTestId("checkbox-confirm-legacy-ownership")).not.toBeChecked();
+  });
+
   it.each(["account", "client"] as const)("clears selection and ownership confirmation after a %s change", async (changedIdentity) => {
     const { rerender } = mount();
     await openImportDialog();
