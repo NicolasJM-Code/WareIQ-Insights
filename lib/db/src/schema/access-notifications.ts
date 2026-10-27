@@ -2,6 +2,8 @@ import { pgTable, text, timestamp, integer, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 
 // Application data only. Never store report rows, warehouse codes or credentials.
+// Sent and cancelled records are eligible for deletion after 90 days; pending and
+// failed records remain available to delivery retry and administrator recovery.
 export const accessNotificationsTable = pgTable("wareiq_access_notifications", {
   id: text("id").primaryKey(),
   recipient: text("recipient").notNull(),

@@ -24,7 +24,7 @@ vi.mock("../src/lib/role-lock", () => ({ withRoleLock: async (fn: () => Promise<
 vi.mock("../src/lib/logger", () => ({ logger: { warn: mocks.warn } }));
 
 import {
-  deliverAccessNotifications, getAccessNotificationSummary, listConfirmedFailedAccessNotifications,
+  cleanupCompletedAccessNotifications, deliverAccessNotifications, getAccessNotificationSummary, listConfirmedFailedAccessNotifications,
   queueAccessNotifications, retryAllowed, retryConfirmedFailedAccessNotification,
   preparePlatformNotification, confirmPlatformNotification,
 } from "../src/lib/access-notifications";
@@ -137,6 +137,20 @@ describe("durable delivery and duplicate protection", () => {
     const statement = mocks.summaryQuery.mock.calls[0][0] as string;
     expect(statement).toContain("count(*) FILTER");
     expect(statement).not.toMatch(/recipient|role_name|provider/i);
+  });
+  it("deletes only old terminal notices in a bounded, repeatable batch", async () => {
+    mocks.poolQuery.mockResolvedValueOnce({ rows: [{ deleted: "7" }] });
+    await expect(cleanupCompletedAccessNotifications()).resolves.toBe(7);
+
+    const [statement, params] = mocks.poolQuery.mock.calls[0]!;
+    expect(statement).toContain("state IN ('sent', 'cancelled')");
+    expect(statement).toContain("created_at < now()");
+    expect(statement).toContain("LIMIT $2");
+    expect(statement).toContain("FOR UPDATE SKIP LOCKED");
+    expect(statement).toContain("DELETE FROM wareiq_access_notifications");
+    expect(params).toEqual([90, 500]);
+    expect(statement).not.toMatch(/state\s+IN\s*\([^)]*pending/i);
+    expect(statement).not.toMatch(/state\s+IN\s*\([^)]*failed/i);
   });
   it("commits an attempt before sending and uses a stable provider idempotency key across retries", async () => {
     await deliverAccessNotifications();

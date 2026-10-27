@@ -20,6 +20,11 @@ export type AccessNotificationSummary = {
   failed: number;
 };
 
+// Keep completed outbox history for 90 days. Each run removes at most 500 rows.
+const COMPLETED_NOTIFICATION_RETENTION_DAYS = 90;
+const COMPLETED_NOTIFICATION_CLEANUP_BATCH_SIZE = 500;
+const COMPLETED_NOTIFICATION_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
 export async function getAccessNotificationSummary(): Promise<AccessNotificationSummary> {
   const { rows } = await pool.query<{
     queued: number | string;
@@ -40,6 +45,29 @@ export async function getAccessNotificationSummary(): Promise<AccessNotification
     accepted: Number(summary.accepted),
     failed: Number(summary.failed),
   };
+}
+
+export async function cleanupCompletedAccessNotifications(): Promise<number> {
+  const { rows } = await pool.query<{ deleted: number | string }>(`
+    WITH expired AS (
+      SELECT id
+      FROM wareiq_access_notifications
+      WHERE state IN ('sent', 'cancelled')
+        AND created_at < now() - ($1 * interval '1 day')
+      ORDER BY created_at
+      LIMIT $2
+      FOR UPDATE SKIP LOCKED
+    ),
+    deleted AS (
+      DELETE FROM wareiq_access_notifications
+      WHERE id IN (SELECT id FROM expired)
+      RETURNING 1
+    )
+    SELECT count(*)::int AS deleted FROM deleted
+  `, [COMPLETED_NOTIFICATION_RETENTION_DAYS, COMPLETED_NOTIFICATION_CLEANUP_BATCH_SIZE]);
+  const result = rows[0];
+  if (!result) throw new Error("Notification cleanup unavailable");
+  return Number(result.deleted);
 }
 
 // A savepoint isolates queue failures from the access change's transaction.
@@ -232,6 +260,7 @@ export async function deliverAccessNotifications(): Promise<void> {
 
 export function startAccessNotifications() {
   let running = false;
+  let cleanupRunning = false;
   const tick = async () => {
     if (running) return;
     running = true;
@@ -239,7 +268,20 @@ export function startAccessNotifications() {
     catch { logger.warn({ event: "access_notification_worker_failed" }, "Access email processing unavailable"); }
     finally { running = false; }
   };
+  const cleanup = async () => {
+    if (cleanupRunning) return;
+    cleanupRunning = true;
+    try { await cleanupCompletedAccessNotifications(); }
+    catch {
+      logger.warn({ event: "access_notification_cleanup_failed" }, "Completed access email cleanup unavailable");
+    } finally {
+      cleanupRunning = false;
+    }
+  };
   const timer = setInterval(() => void tick(), 5000);
+  const cleanupTimer = setInterval(() => void cleanup(), COMPLETED_NOTIFICATION_CLEANUP_INTERVAL_MS);
   timer.unref();
+  cleanupTimer.unref();
   void tick();
+  void cleanup();
 }
