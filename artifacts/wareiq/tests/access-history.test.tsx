@@ -66,6 +66,16 @@ it('shows an error and retry, rather than a fabricated empty history', async () 
   fireEvent.click(screen.getByText('Retry history'));
   await screen.findByText('No platform role attempts recorded yet.');
 });
+it('shows declared command operators without presenting them as verified app administrators', async () => {
+  state.load.mockResolvedValue({ entries: [{
+    ...entry, actorId: 'operator:ops-alias', outcome: 'denied', reason: 'command_target_ineligible',
+  }], nextCursor: null });
+  mount();
+  await screen.findByText('operator:ops-alias');
+  expect(screen.getByText(/not a verified app administrator/)).toBeInTheDocument();
+  expect(screen.getByText(/Recovery command requires one verified/)).toBeInTheDocument();
+  expect(screen.getByText(/direct Clerk edits and other tools are not included/)).toBeInTheDocument();
+});
 it('uses server cursors for older pages and resets to the newest page on refresh', async () => {
   const cursor = { beforeTime: entry.createdAt, beforeId: entry.id };
   state.load.mockImplementation(async (params) => ({

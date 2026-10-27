@@ -1,19 +1,8 @@
 import { AccessConflict, changeRole } from "./role-management";
 import type { AppRole } from "./access-policy";
 
-export type AuditOutcome = "succeeded" | "unchanged" | "denied" | "failed" | "unconfirmed";
-export type AuditStart = {
-  actorId: string;
-  targetId: string | null;
-  requestedRole: AppRole | null;
-  outcome?: AuditOutcome;
-  reason?: string;
-};
-export interface AccessAuditStore {
-  start: (entry: AuditStart) => Promise<string>;
-  previous: (id: string, role: AppRole) => Promise<void>;
-  finish: (id: string, outcome: AuditOutcome, reason: string, resultingRole?: AppRole) => Promise<void>;
-}
+import type { AccessAuditStore } from "@workspace/db/access-audit-types";
+export type { AccessAuditStore, AuditOutcome, AuditStart } from "@workspace/db/access-audit-types";
 
 // The intent is committed independently BEFORE contacting Clerk. The role lock's
 // transaction must never roll back this evidence if the provider call fails.

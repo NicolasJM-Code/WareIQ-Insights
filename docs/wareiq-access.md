@@ -14,16 +14,24 @@ The former global `supervisor` role does not bypass these client/site assignment
 3. From the trusted workspace terminal, run:
 
    ```sh
-   pnpm --filter @workspace/scripts wareiq:role --email <verified-email> --role admin --confirm-ownership
+   pnpm --filter @workspace/scripts wareiq:role --email <verified-email> --role admin --operator-id <stable-non-personal-id> --confirm-ownership
    ```
 
    Use User access to approve or disable reporting users and change their roles.
    After bootstrap, use Settings → Users & administration for platform role changes.
-   The command remains a trusted emergency recovery override; do not run it or
-   edit Clerk metadata concurrently with web role administration.
+   The command remains a trusted emergency recovery override and now shares
+   Settings' application-database role lock. Never edit Clerk metadata concurrently
+   with application role administration; dashboard writes do not take that lock.
    Use `unassigned` here to remove platform administrator rights. Removing those
    rights does not delete any separately approved client membership; disable that
    membership as well when all reporting access must be revoked.
+   The command requires the target environment's application `DATABASE_URL`
+   and writes access history before contacting Clerk. Choose a stable, non-personal
+   operator alias (3–64 lowercase letters/digits/underscores/hyphens, starting with
+   a letter), not an email, name, secret, or Clerk user ID. The terminal operator
+   attests this identifier; it is not proof of an authenticated app administrator.
+   Keep the alias-to-operator mapping in the owner's separate trusted operations
+   records. See `docs/access-change-history.md` for evidence and uncertainty limits.
    The command preserves unrelated metadata and skips unchanged grants. It is
    an explicit manual action, never a startup seed that could restore revoked
    privileges. Do not pass secret keys on the command line.

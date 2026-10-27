@@ -20,6 +20,7 @@ const reasons: Record<string, string> = {
   already_assigned: 'The requested role was already assigned',
   role_confirmed: 'Provider confirmed the requested role',
   policy_denied: 'Access policy denied this change',
+  command_target_ineligible: 'Recovery command requires one verified, unrestricted target account',
 };
 
 export function AccessHistory() {
@@ -43,7 +44,7 @@ export function AccessHistory() {
         </button>
       </header>
       <div className="space-y-3 p-5">
-        <p className="text-[12px] text-muted-foreground">Application-database records of platform role attempts made through Settings, including policy denials. Account IDs identify the actor and target without retaining email addresses or provider metadata. Reporting membership changes, settings, exports and changes made directly in Clerk or by command-line tools are not included. Earlier activity is not backfilled.</p>
+        <p className="text-[12px] text-muted-foreground">Application-database records of platform role attempts made through Settings and the approved recovery command, including policy denials. Account IDs identify authenticated Settings actors; operator: IDs identify terminal operators by their declared non-personal identifier, not a verified app administrator. No email addresses or provider metadata are retained. Reporting membership changes, settings, exports, direct Clerk edits and other tools are not included. Earlier activity is not backfilled.</p>
         <p className="text-[12px] text-muted-foreground">Unconfirmed means the attempt may still be running or its outcome could not be saved. It does not prove a role changed. Check the current account list before retrying. Old and confirmed roles are shown only when known; denied requests from non-administrators omit target details.</p>
         {history.isPending ? <p role="status" className="text-[13px]">Loading access history…</p> : history.isError ? (
           <div role="alert" className="text-[13px] text-destructive">

@@ -5,6 +5,8 @@ export const accessHistoryTable = pgTable("access_change_history", {
   id: uuid("id").primaryKey(),
   createdAt: timestamp("created_at", { withTimezone: true, precision: 3 }).notNull().defaultNow(),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
+  // user_* = authenticated Settings actor; operator:* = terminal-attested
+  // operator, not a verified Clerk identity. Never infer a dashboard actor.
   actorId: text("actor_id").notNull(),
   targetId: text("target_id"),
   previousRole: text("previous_role"),

@@ -1,26 +1,6 @@
-import { randomUUID } from "node:crypto";
 import { db, accessHistoryTable } from "@workspace/db";
 import { desc, eq, lt, or, and } from "drizzle-orm";
-import type { AccessAuditStore } from "./audited-role-change";
-
-export const accessAuditStore: AccessAuditStore = {
-  async start(entry) {
-    const id = randomUUID();
-    await db.insert(accessHistoryTable).values({
-      id, ...entry,
-      finishedAt: entry.outcome ? new Date() : null,
-    });
-    return id;
-  },
-  async previous(id, previousRole) {
-    await db.update(accessHistoryTable).set({ previousRole }).where(eq(accessHistoryTable.id, id));
-  },
-  async finish(id, outcome, reason, resultingRole) {
-    await db.update(accessHistoryTable).set({
-      outcome, reason, resultingRole: resultingRole ?? null, finishedAt: new Date(),
-    }).where(eq(accessHistoryTable.id, id));
-  },
-};
+export { accessAuditStore } from "@workspace/db/access-audit";
 
 // Stable keyset pagination: new changes cannot shift older pages.
 export async function accessHistoryPage(cursor?: { beforeTime: string; beforeId: string }) {

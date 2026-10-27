@@ -5,7 +5,9 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./schema": "./src/schema/index.ts"
+    "./schema": "./src/schema/index.ts",
+    "./access-audit": "./src/access-audit.ts",
+    "./access-audit-types": "./src/access-audit-types.ts"
   },
   "scripts": {
     "push": "drizzle-kit push --config ./drizzle.config.ts",

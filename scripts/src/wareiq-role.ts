@@ -1,32 +1,30 @@
-import { createClerkClient } from '@clerk/backend';
+import { createClerkClient } from "@clerk/backend";
+import { parseRoleCommand, runRoleCommand } from "./role-command";
 
 // Explicit owner-operated grant/revoke command; never called during startup.
-// The operator must verify ownership of the exact email before invoking this.
-const args = process.argv.slice(2);
-const option = (name: string) => args[args.indexOf(name) + 1];
-const email = args.includes('--email') ? option('--email')?.trim().toLowerCase() : undefined;
-const role = args.includes('--role') ? option('--role') : undefined;
-if (!email || !['admin', 'supervisor', 'unassigned'].includes(role ?? '') ||
-    !args.includes('--confirm-ownership')) {
-  throw new Error('Usage: pnpm --filter @workspace/scripts wareiq:role --email <verified-email> --role admin|supervisor|unassigned --confirm-ownership');
+// No raw provider/database errors or input values are printed.
+async function main() {
+  const key = process.env.CLERK_SECRET_KEY;
+  const input = parseRoleCommand(process.argv.slice(2), key?.startsWith("sk_live_") ?? false);
+  if (!key) throw new Error("Managed authentication is not configured.");
+  if (!process.env.DATABASE_URL) throw new Error("The application audit database must be configured.");
+  const { accessAuditStore, withRoleLock } = await import("@workspace/db/access-audit");
+  const { pool } = await import("@workspace/db");
+  try {
+    const result = await runRoleCommand(input, createClerkClient({ secretKey: key }).users, accessAuditStore, withRoleLock);
+    console.info(result.changed ? "WareIQ role confirmed. The next API request uses the new permissions."
+      : "The account already has this role; no provider update was needed.");
+    console.info(`Access history record: ${result.id}`);
+  } catch {
+    // Includes final persistence failure after a confirmed provider response.
+    console.error("Command did not complete. The role may have changed. Check platform access history and current permissions before retrying.");
+    process.exitCode = 1;
+  } finally {
+    await pool.end();
+  }
 }
-const key = process.env.CLERK_SECRET_KEY;
-if (!key) throw new Error('Managed authentication is not configured.');
-if (key.startsWith('sk_live_') && !args.includes('--confirm-production')) {
-  throw new Error('Production changes also require --confirm-production in the target production environment.');
-}
-const client = createClerkClient({ secretKey: key });
-const matches = await client.users.getUserList({ emailAddress: [email] });
-const users = matches.data.filter((u) => u.emailAddresses.some((e) =>
-  e.emailAddress.toLowerCase() === email && e.verification?.status === 'verified'));
-if (users.length !== 1) {
-  throw new Error('Exactly one existing account with a verified matching email is required. Sign up and verify the email first.');
-}
-const user = users[0];
-if (user.banned || user.locked) throw new Error('Cannot grant access to a locked or banned account.');
-if (user.publicMetadata.role === role) {
-  console.info('The account already has this role; nothing changed.');
-} else {
-  await client.users.updateUserMetadata(user.id, { publicMetadata: { role } });
-  console.info(`WareIQ role updated to ${role}. The next API request uses the new permissions.`);
-}
+
+main().catch(() => {
+  console.error("Command could not start. Require --email, --role, --operator-id and --confirm-ownership; live environments also require --confirm-production. Check managed authentication and the application audit database. No credentials should be passed on the command line.");
+  process.exitCode = 1;
+});

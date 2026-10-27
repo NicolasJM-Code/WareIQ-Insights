@@ -12,5 +12,8 @@
     "@clerk/backend": "^3.26.2",
     "@types/node": "catalog:",
     "tsx": "catalog:"
+  },
+  "dependencies": {
+    "@workspace/db": "workspace:*"
   }
 }
