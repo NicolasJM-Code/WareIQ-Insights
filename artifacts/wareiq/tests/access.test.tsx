@@ -43,6 +43,9 @@ function access(admin = true, status: AccessSession["status"] = "active"): Acces
   return {
     status, platformAdmin: admin, canCreateOwnReports: status === "active",
     clientId: "client_isolated", clientName: "Isolated client",
+    clientCompanyNumber: null, clientAddressLine1: null, clientAddressLine2: null,
+    clientCity: null, clientRegion: null, clientPostalCode: null, clientCountry: null,
+    clientLogoUrl: null,
     reportIds: [SECTIONS[0].defaults[0].id], sites: [],
   };
 }

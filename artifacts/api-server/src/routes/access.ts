@@ -15,7 +15,10 @@ import {
 } from "@workspace/api-zod";
 import { getAuth } from "@clerk/express";
 import { AccessError, accessFor, requireAccessAdmin, requireMemberAccess } from "../lib/reporting-access";
-import { assertClientLogoFile, getClientLogoFile, isClientLogoPath, requestClientLogoUpload } from "../lib/client-logo-storage";
+import {
+  assertClientLogoFile, cleanupClientLogoBestEffort, getClientLogoFile,
+  isClientLogoPath, requestClientLogoUpload,
+} from "../lib/client-logo-storage";
 import { accessReports, allowedSection } from "../lib/access-catalog";
 import { reportDefinitionError } from "../lib/own-report-validation";
 import { GetAuthSessionResponse, GetSettingsAccessResponse } from "@workspace/api-zod";
@@ -119,10 +122,27 @@ router.put("/access/clients/:clientId/logo", handler(async (req, res) => {
     try { await assertClientLogoFile(clientId, input.objectPath); }
     catch { throw new AccessError(400, "The uploaded logo could not be verified. Please upload it again."); }
   }
-  const [result] = await db.update(clientsTable).set({ logoPath: input.objectPath })
-    .where(eq(clientsTable.id, clientId)).returning();
-  if (!result) throw new AccessError(404, "Client not found.");
-  res.json(SaveAccessClientLogoResponse.parse(result));
+  const saved = await db.transaction(async (tx) => {
+    const [current] = await tx.select({ logoPath: clientsTable.logoPath }).from(clientsTable)
+      .where(eq(clientsTable.id, clientId)).for("update");
+    if (!current) return null;
+    const [result] = await tx.update(clientsTable).set({ logoPath: input.objectPath })
+      .where(eq(clientsTable.id, clientId)).returning();
+    if (!result) return null;
+    return { previousPath: current.logoPath, result };
+  });
+  if (!saved) throw new AccessError(404, "Client not found.");
+  if (saved.previousPath && saved.previousPath !== input.objectPath) {
+    await cleanupClientLogoBestEffort(clientId, saved.previousPath, async (objectPath) => {
+      const [reference] = await db.select({ id: clientsTable.id }).from(clientsTable)
+        .where(eq(clientsTable.logoPath, objectPath)).limit(1);
+      return Boolean(reference);
+    }, () => req.log.warn(
+      { event: "client_logo_cleanup_failed" },
+      "Unable to remove an unused client logo",
+    ));
+  }
+  res.json(SaveAccessClientLogoResponse.parse(saved.result));
 }));
 router.get("/access/clients/:clientId/logo", handler(async (req, res) => {
   const access = await accessFor(req);

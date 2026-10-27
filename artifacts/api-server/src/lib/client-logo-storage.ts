@@ -72,6 +72,38 @@ export async function getClientLogoFile(clientId: string, objectPath: string): P
   return storage.bucket(bucketName).file(objectName);
 }
 
+export async function deleteClientLogoObject(clientId: string, objectPath: string) {
+  const file = await getClientLogoFile(clientId, objectPath);
+  await file.delete({ ignoreNotFound: true });
+}
+
+export async function deleteClientLogoIfUnreferenced(
+  clientId: string,
+  objectPath: string,
+  hasReferences: (objectPath: string) => Promise<boolean>,
+  deleteObject: (clientId: string, objectPath: string) => Promise<void> = deleteClientLogoObject,
+) {
+  if (!isClientLogoPath(clientId, objectPath)) return false;
+  if (await hasReferences(objectPath)) return false;
+  await deleteObject(clientId, objectPath);
+  return true;
+}
+
+export async function cleanupClientLogoBestEffort(
+  clientId: string,
+  objectPath: string,
+  hasReferences: (objectPath: string) => Promise<boolean>,
+  reportFailure: () => void,
+  deleteObject: (clientId: string, objectPath: string) => Promise<void> = deleteClientLogoObject,
+) {
+  try {
+    return await deleteClientLogoIfUnreferenced(clientId, objectPath, hasReferences, deleteObject);
+  } catch {
+    reportFailure();
+    return false;
+  }
+}
+
 export async function assertClientLogoFile(clientId: string, objectPath: string) {
   const file = await getClientLogoFile(clientId, objectPath);
   const [metadata] = await file.getMetadata();
