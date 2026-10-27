@@ -17,6 +17,7 @@ import {
 // Never read DATABASE_URL or WMS settings. No TCP listener, customer database,
 // shared development database, or caller-selected cleanup target is possible.
 const directory = mkdtempSync(join(tmpdir(), "wareiq-report-pg-"));
+export const socketDirectory = directory;
 const data = join(directory, "data");
 const postgresEnv = {
   PATH: process.env.PATH,
@@ -27,7 +28,7 @@ const postgresEnv = {
 const run = (command: string, args: string[]) =>
   execFileSync(command, args, { env: postgresEnv, stdio: "pipe", timeout: 20_000 });
 export const pool = new Pool({
-  host: directory, port: 5432, user: "report_test", database: "postgres",
+  host: socketDirectory, port: 5432, user: "report_test", database: "postgres",
   password: "", max: 2, connectionTimeoutMillis: 2_000,
 });
 export const db = drizzle(pool);

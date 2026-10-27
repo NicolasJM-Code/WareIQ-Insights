@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
-import { db, pool, startDatabase, stopDatabase } from "./database";
+import { db, pool, socketDirectory, startDatabase, stopDatabase } from "./database";
 import { ownReportsTable } from "@workspace/db/schema";
 
 const identity = vi.hoisted(() => ({ userId: "owner-a" as string | null, error: vi.fn() }));
@@ -68,6 +68,18 @@ beforeEach(async () => {
 });
 
 describe("account report persistence through the API", () => {
+  it("keeps the private PostgreSQL fixture off TCP and uses its temporary socket", async () => {
+    const [tcpSettings, socketSettings] = await Promise.all([
+      pool.query<{ listen_addresses: string }>("SHOW listen_addresses"),
+      pool.query<{ unix_socket_directories: string }>("SHOW unix_socket_directories"),
+    ]);
+
+    expect(tcpSettings.rows[0].listen_addresses).toBe("");
+    expect(socketSettings.rows[0].unix_socket_directories.split(",").map((path) => path.trim()))
+      .toContain(socketDirectory);
+    expect(pool.options.host).toBe(socketDirectory);
+  });
+
   it("creates, edits and deletes only the requested account row, with a fresh GET after each write", async () => {
     const before = await snapshot();
     const created = await save({ ...definition, name: "  New report  " });
