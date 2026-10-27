@@ -33,7 +33,21 @@ vi.mock("@workspace/db", async () => {
   const schema = await import("@workspace/db/schema");
   return {
     ...schema,
-    db: { select: fixtures.select, update: fixtures.update },
+    db: {
+      select: fixtures.select,
+      update: fixtures.update,
+      transaction: (callback: (tx: {
+        select: () => { from: (table: unknown) => { where: () => { for: () => Promise<unknown[]> } } };
+        update: typeof fixtures.update;
+      }) => Promise<unknown>) => callback({
+        select: () => ({
+          from: (table: unknown) => ({
+            where: () => ({ for: async () => queryRows(table) }),
+          }),
+        }),
+        update: fixtures.update,
+      }),
+    },
   };
 });
 

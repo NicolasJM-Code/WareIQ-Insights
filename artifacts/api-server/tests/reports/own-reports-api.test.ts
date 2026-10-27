@@ -29,12 +29,19 @@ app.use((req, _res, next) => {
 });
 app.use("/api", accessRouter);
 const path = "/api/access/own-reports";
+const importPath = `${path}/import`;
 const definition = {
   section: "inbound", dataset: "receipts", fields: ["id", "supplier"],
   name: "Original", description: "Keep this definition",
 };
 const snapshot = async () => (await pool.query("SELECT * FROM wareiq_own_reports ORDER BY id")).rows;
 const save = (body: unknown) => request(app).post(path).send(body as object);
+const importReports = (reports: unknown[]) => request(app).post(importPath).send({
+  expectedOwnerId: "owner-a",
+  expectedClientId: "client-a",
+  confirmedOwnership: true,
+  reports,
+});
 
 async function expectError(response: request.Response, status: number, before: unknown) {
   expect(response.status).toBe(status);
@@ -147,6 +154,23 @@ describe("account report persistence through the API", () => {
     expect(reports.body.map((row: { id: string }) => row.id).sort()).toEqual([created.body.id, "neighbour"].sort());
     expect((await snapshot()).filter((row) => row.id !== created.body.id))
       .toEqual(before.filter((row) => row.id !== "original"));
+  });
+
+  it("rejects an entire import batch when one report conflicts, then accepts a valid batch", async () => {
+    const before = await snapshot();
+    const firstReport = { ...definition, name: "New before conflict" };
+    const conflictingReport = { ...definition, name: "original" };
+
+    await expectError(await importReports([firstReport, conflictingReport]), 409, before);
+
+    const validReports = [firstReport, { ...definition, name: "New after conflict" }];
+    const imported = await importReports(validReports);
+    expect(imported.status).toBe(200);
+    expect(imported.body).toHaveLength(2);
+    expect(imported.body.map(({ name }: { name: string }) => name))
+      .toEqual(["New before conflict", "New after conflict"]);
+    expect((await snapshot()).filter((row) => row.owner_id === "owner-a" && row.client_id === "client-a"))
+      .toHaveLength(4);
   });
 
   it.each([
