@@ -1,6 +1,14 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
-import { db, pool, startDatabase, stopDatabase } from "./database";
+import {
+  assertFixtureIsolation,
+  configureReportFixtureSuite,
+  db,
+  pool,
+  startDatabase,
+  stopDatabase,
+  waitForPeerFixture,
+} from "./database";
 import { ownReportsTable } from "@workspace/db/schema";
 
 vi.mock("@clerk/express", () => ({
@@ -60,7 +68,11 @@ function mutation(
   return req;
 }
 
-beforeAll(() => startDatabase());
+configureReportFixtureSuite("own-reports-origin");
+beforeAll(async () => {
+  await startDatabase();
+  await waitForPeerFixture();
+});
 afterAll(stopDatabase);
 beforeEach(async () => {
   await pool.query(`
@@ -80,6 +92,10 @@ beforeEach(async () => {
 });
 
 describe("full-app origin protection for saved reports", () => {
+  it("keeps its PostgreSQL fixture private from the API suite", async () => {
+    await assertFixtureIsolation();
+  });
+
   const rejectedRequests = [
     ["absent Origin", {}],
     ["foreign Origin", { origin: "https://foreign.test" }],

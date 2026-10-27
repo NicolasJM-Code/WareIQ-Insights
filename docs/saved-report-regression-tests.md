@@ -74,6 +74,11 @@ mirrors the access tables needed by these routes, including report timestamps,
 the client foreign key and the case-insensitive per-owner/client/section unique
 index; keep it aligned with `lib/db/src/schema/access.ts`.
 
+The API and origin suites run in parallel. Each publishes its temporary socket
+and PostgreSQL cluster identity to a per-run registry, waits for the other suite,
+and checks that the other fixture's sentinel row is neither visible nor
+modifiable through its own connection.
+
 Coverage includes:
 
 - Successful create/edit/delete, server-derived ownership, trimmed names,

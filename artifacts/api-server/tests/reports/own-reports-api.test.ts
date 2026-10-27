@@ -1,7 +1,16 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
-import { db, pool, socketDirectory, startDatabase, stopDatabase } from "./database";
+import {
+  assertFixtureIsolation,
+  configureReportFixtureSuite,
+  db,
+  pool,
+  socketDirectory,
+  startDatabase,
+  stopDatabase,
+  waitForPeerFixture,
+} from "./database";
 import { clientsTable, ownReportsTable, rolesTable, sitesTable } from "@workspace/db/schema";
 
 const identity = vi.hoisted(() => ({ userId: "owner-a" as string | null, error: vi.fn() }));
@@ -51,7 +60,11 @@ async function expectError(response: request.Response, status: number, before: u
   expect(await snapshot()).toEqual(before);
 }
 
-beforeAll(() => startDatabase());
+configureReportFixtureSuite("own-reports-api");
+beforeAll(async () => {
+  await startDatabase();
+  await waitForPeerFixture();
+});
 afterAll(stopDatabase);
 beforeEach(async () => {
   identity.userId = "owner-a";
@@ -78,6 +91,10 @@ beforeEach(async () => {
 });
 
 describe("account report persistence through the API", () => {
+  it("keeps its PostgreSQL fixture private from the origin suite", async () => {
+    await assertFixtureIsolation();
+  });
+
   it("keeps the private PostgreSQL fixture off TCP and uses its temporary socket", async () => {
     const [tcpSettings, socketSettings] = await Promise.all([
       pool.query<{ listen_addresses: string }>("SHOW listen_addresses"),

@@ -1,7 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { SQL } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
@@ -18,6 +20,17 @@ import {
 // shared development database, or caller-selected cleanup target is possible.
 const directory = mkdtempSync(join(tmpdir(), "wareiq-report-pg-"));
 export const socketDirectory = directory;
+function getRegistryDirectory(): string {
+  const value = process.env.WAREIQ_REPORT_TEST_REGISTRY;
+  if (!value) throw new Error("Report test isolation registry must be configured");
+  return value;
+}
+const registryDirectory = getRegistryDirectory();
+let suiteId: string | undefined;
+const fixtureId = randomUUID();
+let registrationPath: string | undefined;
+let peerSuiteId: string | undefined;
+let peerRegistrationPath: string | undefined;
 const data = join(directory, "data");
 const postgresEnv = {
   PATH: process.env.PATH,
@@ -34,6 +47,13 @@ export const pool = new Pool({
 export const db = drizzle(pool);
 let started = false;
 let stopped = false;
+
+export function configureReportFixtureSuite(value: "own-reports-api" | "own-reports-origin") {
+  suiteId = value;
+  peerSuiteId = value === "own-reports-api" ? "own-reports-origin" : "own-reports-api";
+  registrationPath = join(registryDirectory, `${suiteId}.json`);
+  peerRegistrationPath = join(registryDirectory, `${peerSuiteId}.json`);
+}
 
 const quoteIdentifier = (value: string) => `"${value.replaceAll('"', '""')}"`;
 const dialect = new PgDialect();
@@ -160,6 +180,9 @@ export async function startDatabase(options: { afterStart?: () => void | Promise
       `-F -k ${directory} -c listen_addresses=''`, "-w", "start"]);
     started = true;
     await options.afterStart?.();
+    if (!suiteId || !registrationPath) {
+      throw new Error("Report test fixture suite identity must be configured before schema setup");
+    }
     // Generate every table from the production schema so column, default,
     // foreign-key, check, and index changes cannot silently drift in tests.
     for (const table of [
@@ -171,9 +194,96 @@ export async function startDatabase(options: { afterStart?: () => void | Promise
     ]) {
       await pool.query(createTableFromDrizzleSchema(table));
     }
+    await pool.query(`
+      CREATE TABLE wareiq_report_fixture_isolation (
+        suite_id text PRIMARY KEY,
+        fixture_id text NOT NULL,
+        touched_by text
+      )
+    `);
+    await pool.query(
+      "INSERT INTO wareiq_report_fixture_isolation (suite_id, fixture_id) VALUES ($1, $2)",
+      [suiteId, fixtureId],
+    );
+    const { rows } = await pool.query<{ system_identifier: string }>(
+      "SELECT system_identifier::text FROM pg_control_system()",
+    );
+    writeFileSync(registrationPath, JSON.stringify({
+      suiteId,
+      fixtureId,
+      socketDirectory,
+      systemIdentifier: rows[0]?.system_identifier,
+    }), { mode: 0o600 });
   } catch (error) {
     await stopDatabase();
     throw error; // Missing PostgreSQL binaries are a failure, never a skipped test.
+  }
+}
+
+export async function waitForPeerFixture() {
+  if (!peerRegistrationPath || !peerSuiteId) {
+    throw new Error("Report test fixture suite identity must be configured before startup");
+  }
+  const deadline = Date.now() + 25_000;
+  while (!existsSync(peerRegistrationPath)) {
+    if (Date.now() >= deadline) {
+      throw new Error(`Report test fixture did not register: ${peerSuiteId}`);
+    }
+    await delay(25);
+  }
+}
+
+export async function assertFixtureIsolation() {
+  await waitForPeerFixture();
+  if (!peerRegistrationPath || !peerSuiteId || !suiteId) {
+    throw new Error("Report test fixture suite identity must be configured before startup");
+  }
+  const peer = JSON.parse(readFileSync(peerRegistrationPath, "utf8")) as {
+    suiteId: string;
+    fixtureId: string;
+    socketDirectory: string;
+    systemIdentifier: string;
+  };
+  const ownSystem = await pool.query<{ system_identifier: string }>(
+    "SELECT system_identifier::text FROM pg_control_system()",
+  );
+  const ownRows = await pool.query<{
+    suite_id: string;
+    fixture_id: string;
+    touched_by: string | null;
+  }>("SELECT suite_id, fixture_id, touched_by FROM wareiq_report_fixture_isolation");
+  const client = await pool.connect();
+  let peerMutationCount: number | null = null;
+  try {
+    await client.query("BEGIN");
+    const mutation = await client.query(
+      `UPDATE wareiq_report_fixture_isolation
+       SET touched_by = $1
+       WHERE suite_id <> $1
+       RETURNING suite_id`,
+      [suiteId],
+    );
+    peerMutationCount = mutation.rowCount;
+  } finally {
+    await client.query("ROLLBACK");
+    client.release();
+  }
+
+  if (peer.suiteId !== peerSuiteId || peer.fixtureId === fixtureId) {
+    throw new Error("Report test fixture registry contains an invalid peer identity");
+  }
+  if (peer.socketDirectory === socketDirectory) {
+    throw new Error("Report persistence suites share a PostgreSQL socket directory");
+  }
+  if (peer.systemIdentifier === ownSystem.rows[0]?.system_identifier) {
+    throw new Error("Report persistence suites share a PostgreSQL cluster");
+  }
+  if (peerMutationCount !== 0) {
+    throw new Error("A report persistence suite can alter another suite's fixture row");
+  }
+  if (ownRows.rows.length !== 1 || ownRows.rows[0].suite_id !== suiteId
+      || ownRows.rows[0].fixture_id !== fixtureId || ownRows.rows[0].touched_by !== null) {
+    throw new Error("A report persistence suite can observe another suite's fixture row");
   }
 }
 
