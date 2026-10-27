@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { NOW_MS, type WhCode } from './data';
 import { toast } from '@/hooks/use-toast';
+import { useAuth } from '@clerk/react';
 
 export type RefreshInterval = '1' | '5' | '15' | '30' | 'manual';
 export type RangeDays = 1 | 7 | 30 | 90;
@@ -17,9 +18,9 @@ export interface Prefs {
 const DEFAULT_PREFS: Prefs = { refreshInterval: '15', queryTimeoutSec: 30, defaultRange: 30, targetPickAccuracy: 99.2, targetFillRate: 97.5, targetDockToStockMin: 120 };
 const KEY = 'wareiq.report-prefs.v1';
 
-function loadPrefs(): Prefs {
+function loadPrefs(key: string): Prefs {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = localStorage.getItem(key);
     if (!raw) return DEFAULT_PREFS;
     const p = JSON.parse(raw) as Partial<Prefs>;
     return { ...DEFAULT_PREFS, ...p };
@@ -43,12 +44,15 @@ interface Ctx {
 const ReportCtx = createContext<Ctx | null>(null);
 
 export function ReportProvider({ children }: { children: ReactNode }) {
-  const [prefs, setPrefsState] = useState<Prefs>(loadPrefs);
+  const { userId } = useAuth();
+  const key = `${KEY}.${userId}`;
+  const [prefs, setPrefsState] = useState<Prefs>(() => loadPrefs(key));
   const [warehouse, setWarehouse] = useState<'ALL' | WhCode>('ALL');
   const [range, setRange] = useState<RangeDays>(prefs.defaultRange);
   const [refreshedAt, setRefreshedAt] = useState(() => new Date());
   const [refreshing, setRefreshing] = useState(false);
   const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
 
   const refresh = useCallback((silent = false) => {
     setRefreshing(true);
@@ -68,12 +72,12 @@ export function ReportProvider({ children }: { children: ReactNode }) {
 
   const setPrefs = useCallback((p: Prefs) => {
     setPrefsState(p);
-    localStorage.setItem(KEY, JSON.stringify(p));
-  }, []);
+    localStorage.setItem(key, JSON.stringify(p));
+  }, [key]);
   const resetPrefs = useCallback(() => {
-    localStorage.removeItem(KEY);
+    localStorage.removeItem(key);
     setPrefsState(DEFAULT_PREFS);
-  }, []);
+  }, [key]);
 
   const value = useMemo(() => ({ warehouse, setWarehouse, range, setRange, refreshedAt, refreshing, refresh, prefs, setPrefs, resetPrefs }), [warehouse, range, refreshedAt, refreshing, refresh, prefs, setPrefs, resetPrefs]);
   return <ReportCtx.Provider value={value}>{children}</ReportCtx.Provider>;

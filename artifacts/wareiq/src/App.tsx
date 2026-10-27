@@ -1,10 +1,13 @@
 import { type ReactNode } from 'react';
+import { Show } from '@clerk/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
-import { Route, Switch, useLocation, Router as WouterRouter } from 'wouter';
+import { Route, Switch, Redirect, useLocation, Router as WouterRouter } from 'wouter';
+import { AuthProvider, Landing, SignInPage, SignUpPage } from '@/components/auth-provider';
+import { ReportingAccess, AdministratorAccess } from '@/lib/access';
 import { AppShell } from '@/components/shell';
 import { ReportProvider } from '@/lib/report-context';
 import Dashboard from '@/pages/dashboard';
@@ -50,7 +53,7 @@ function Router() {
           <Route path="/stock-counts" component={StockCounts} />
           <Route path="/labour" component={Labour} />
           <Route path="/exceptions" component={Exceptions} />
-          <Route path="/settings" component={Settings} />
+          <Route path="/settings"><AdministratorAccess><Settings /></AdministratorAccess></Route>
           <Route component={NotFound} />
         </Switch>
       </RoutedErrorBoundary>
@@ -67,11 +70,16 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <ReportProvider>
-          <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
-            <Router />
-          </WouterRouter>
-        </ReportProvider>
+        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+          <AuthProvider>
+            <Switch>
+              <Route path="/"><Show when="signed-in"><Redirect to="/dashboard" /></Show><Show when="signed-out"><Landing /></Show></Route>
+              <Route path="/sign-in/*?" component={SignInPage} />
+              <Route path="/sign-up/*?" component={SignUpPage} />
+              <Route><ReportingAccess><ReportProvider><Router /></ReportProvider></ReportingAccess></Route>
+            </Switch>
+          </AuthProvider>
+        </WouterRouter>
         <Toaster />
       </TooltipProvider>
     </QueryClientProvider>

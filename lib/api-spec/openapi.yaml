@@ -11,6 +11,38 @@ tags:
   - name: health
     description: Health operations
 paths:
+  /auth/session:
+    get:
+      operationId: getAuthSession
+      summary: Get the verified user's application permissions
+      responses:
+        "200":
+          description: Authenticated identity and server-checked role
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthSession"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
+  /settings/access:
+    get:
+      operationId: getSettingsAccess
+      summary: Check administrator access without returning connection credentials
+      responses:
+        "200":
+          description: Administrator access confirmed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsAccess"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
   /healthz:
     get:
       operationId: healthCheck
@@ -25,7 +57,51 @@ paths:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
 components:
+  responses:
+    Unauthorized:
+      description: Sign-in required
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AccessError"
+    Forbidden:
+      description: The account does not have the required role
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AccessError"
+    AuthUnavailable:
+      description: Permissions could not be verified; access is denied
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AccessError"
   schemas:
+    AccessError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    AuthSession:
+      type: object
+      required: [userId, role, canReport, canAdminister]
+      properties:
+        userId:
+          type: string
+        role:
+          type: string
+          enum: [admin, supervisor, unassigned]
+        canReport:
+          type: boolean
+        canAdminister:
+          type: boolean
+    SettingsAccess:
+      type: object
+      required: [canAdminister]
+      properties:
+        canAdminister:
+          type: boolean
     HealthStatus:
       type: object
       properties:

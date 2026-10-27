@@ -13,9 +13,10 @@ import { time } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { SECTIONS, sectionForPath } from '@/lib/report-catalog';
 import { SectionTabs, activeSub, sectionLinks } from '@/components/reports-ui';
+import { useAccess, AccountSummary } from '@/lib/access';
 
 export const NAV = [
-  { group: 'Overview', items: [{ href: '/', label: 'Executive dashboard', icon: LayoutDashboard }] },
+  { group: 'Overview', items: [{ href: '/dashboard', label: 'Executive dashboard', icon: LayoutDashboard }] },
   {
     group: 'Stock flow',
     items: [
@@ -40,6 +41,7 @@ export const NAV = [
 ];
 
 function NavList({ onNavigate }: { onNavigate?: () => void }) {
+  const { canAdminister } = useAccess();
   const [loc] = useLocation();
   const current = sectionForPath(loc);
   const [open, setOpen] = useState<Set<string>>(() => new Set(current ? [current.id] : []));
@@ -48,12 +50,12 @@ function NavList({ onNavigate }: { onNavigate?: () => void }) {
   }, [current]);
   return (
     <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-5" aria-label="Main">
-      {NAV.map((g) => (
+      {NAV.filter((g) => g.group !== 'Administration' || canAdminister).map((g) => (
         <div key={g.group}>
           <div className="px-2 mb-1.5 text-[10px] font-mono uppercase tracking-[0.18em] text-sidebar-foreground/45">{g.group}</div>
           <ul className="space-y-0.5">
             {g.items.map((it) => {
-              const sec = SECTIONS.find((x) => x.overview === it.href);
+              const sec = SECTIONS.find((x) => (x.overview === '/' ? '/dashboard' : x.overview) === it.href);
               const inSection = !!sec && current?.id === sec.id;
               const active = loc === it.href || (sec ? inSection && activeSub(sec, loc) === 'overview' : false);
               const expanded = !!sec && open.has(sec.id);
@@ -130,8 +132,9 @@ function Brand() {
 }
 
 function SidebarFooter() {
+  const { canAdminister } = useAccess();
   return (
-    <Link href="/settings" className="m-3 rounded border border-sidebar-border p-3 text-[11px] text-sidebar-foreground/70 hover:border-sidebar-primary/50 transition-colors" data-testid="link-connection-status">
+    <Link href={canAdminister ? '/settings' : '/dashboard'} className="m-3 rounded border border-sidebar-border p-3 text-[11px] text-sidebar-foreground/70 hover:border-sidebar-primary/50 transition-colors" data-testid="link-connection-status">
       <div className="flex items-center gap-2 text-sidebar-accent-foreground font-medium text-xs">
         <Database className="h-3.5 w-3.5" /> WMS database
         <span className="ml-auto inline-flex items-center gap-1 font-mono text-[10px] uppercase text-sidebar-foreground/60">
@@ -193,6 +196,7 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
             className="h-8 w-8 grid place-items-center rounded-md border bg-card hover:border-primary/50 disabled:opacity-60 transition-colors">
             <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
           </button>
+          <AccountSummary />
         </div>
       </div>
       <div className="relative h-px overflow-hidden">

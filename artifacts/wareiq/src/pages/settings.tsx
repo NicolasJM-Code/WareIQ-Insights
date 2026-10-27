@@ -278,14 +278,14 @@ ALTER ROLE wms_reporting_ro
         </TabsContent>
 
         <TabsContent value="admin" className="grid gap-4 lg:grid-cols-2">
-          <Section icon={Users} title="User roles" aside={<Unavailable />}>
-            <p className="text-[12.5px] text-muted-foreground mb-3">Proposed roles once an identity provider and reporting service exist. Nothing here grants or checks access today; this demo has no sign-in.</p>
+          <Section icon={Users} title="User roles" aside={<Pill tone="good">Server enforced</Pill>}>
+            <p className="text-[12.5px] text-muted-foreground mb-3">Managed sign-in verifies identity. The API checks the current, server-owned account role for every request. New accounts have no access until the application owner assigns a role.</p>
             <table className="w-full text-[12.5px]"><tbody className="divide-y">
-              {[['Administrator', 'Manage connection, targets, schedules and users'], ['Manager', 'All reports and exports, all sites'], ['Supervisor', 'Reports for assigned sites'], ['Viewer', 'Dashboard and read-only reports']].map(([r, d]) => <tr key={r}><td className="py-2 font-medium pr-4">{r}</td><td className="text-muted-foreground">{d}</td></tr>)}
+              {[['Administrator', 'Reporting plus settings and configuration access'], ['Supervisor', 'Reporting access; no settings or configuration access'], ['Unassigned', 'No reporting or settings access']].map(([r, d]) => <tr key={r}><td className="py-2 font-medium pr-4">{r}</td><td className="text-muted-foreground">{d}</td></tr>)}
             </tbody></table>
           </Section>
-          <Section icon={KeyRound} title="Access permissions" aside={<Unavailable />}>
-            <p className="text-[12.5px] text-muted-foreground">Permission rules (by site, module and export rights) would be enforced on the server, not in the browser. Planned controls: site scoping per user, CSV export rights, traceability recall access, and settings administration.</p>
+          <Section icon={KeyRound} title="Access permissions">
+            <p className="text-[12.5px] text-muted-foreground">Reporting requires a Supervisor or Administrator role. Settings and configuration endpoints require Administrator. Site-specific permissions and separate export rights are not implemented. Role assignment is an owner-operated server-side command, not an editable browser field. Schedules, alerts, and live reporting remain unavailable.</p>
           </Section>
           <Section icon={CalendarClock} title="Report scheduling" aside={<Unavailable />}>
             <p className="text-[12.5px] text-muted-foreground">Scheduled delivery (for example, a 06:00 daily dashboard summary to site managers) needs a server-side scheduler and mail service. Use the CSV buttons on each report for ad-hoc exports in the meantime.</p>

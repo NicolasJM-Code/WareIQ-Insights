@@ -4,10 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "wareiq:role": "tsx ./src/wareiq-role.ts",
     "hello": "tsx ./src/hello.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
+    "@clerk/backend": "^3.26.2",
     "@types/node": "catalog:",
     "tsx": "catalog:"
   }

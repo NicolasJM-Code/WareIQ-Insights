@@ -1,10 +1,11 @@
 // Own report DEFINITIONS saved in this browser's localStorage (versioned).
 // Only names, dataset ids and field keys are stored: never operational rows,
-// never credentials. This is not tied to a signed-in user.
+// never credentials. Namespaced by the verified signed-in user.
 import { useSyncExternalStore } from 'react';
 import { SECTION_IDS, type SectionId } from './report-catalog';
 
 export const OWN_REPORTS_KEY = 'wareiq.own-reports';
+let storageKey: string | null = null;
 const VERSION = 1;
 
 export interface OwnReport { id: string; section: SectionId; name: string; description: string; dataset: string; fields: string[]; createdAt: string; updatedAt: string; sourceDefault?: string }
@@ -34,9 +35,10 @@ function validate(x: unknown): OwnReport | null {
 }
 
 function load(): State {
+  if (!storageKey) return { status: 'ok', reports: [], invalid: [] };
   let raw: string | null;
   try {
-    raw = localStorage.getItem(OWN_REPORTS_KEY);
+    raw = localStorage.getItem(storageKey);
   } catch {
     return { status: 'unavailable', reports: [], invalid: [], detail: 'Browser storage is blocked, so own reports cannot be read or saved.' };
   }
@@ -63,18 +65,27 @@ let state: State = typeof window === 'undefined' ? { status: 'ok', reports: [], 
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((l) => l());
 
+// Old unowned demo definitions are left untouched, never assigned to whoever
+// signs in first. Browser storage is not a security boundary for sensitive data.
+export function setOwnReportsUser(userId: string | null) {
+  storageKey = userId ? `${OWN_REPORTS_KEY}.${userId}` : null;
+  state = load();
+  emit();
+}
+
 if (typeof window !== 'undefined') {
   window.addEventListener('storage', (e) => {
-    if (e.key === OWN_REPORTS_KEY || e.key === null) { state = load(); emit(); }
+    if (e.key === storageKey || e.key === null) { state = load(); emit(); }
   });
 }
 
 function persist(next: OwnReport[]): SaveResult {
+  if (!storageKey) return { ok: false, error: 'Sign in before saving reports.' };
   if (state.status === 'corrupt') return { ok: false, error: 'Saved reports in this browser are unreadable. Resolve that first; nothing was saved.' };
   if (state.status === 'unavailable') return { ok: false, error: 'Browser storage is unavailable (private mode or blocked). Nothing was saved.' };
   try {
     // Invalid entries we could not parse are written back untouched, never silently dropped.
-    localStorage.setItem(OWN_REPORTS_KEY, JSON.stringify({ version: VERSION, reports: [...next, ...state.invalid] }));
+    localStorage.setItem(storageKey, JSON.stringify({ version: VERSION, reports: [...next, ...state.invalid] }));
   } catch (e) {
     const quota = e instanceof DOMException && (e.name === 'QuotaExceededError' || e.code === 22);
     return { ok: false, error: quota ? 'Browser storage is full. Nothing was saved; delete some reports or free space.' : 'The browser refused to write to storage. Nothing was saved.' };
@@ -111,7 +122,8 @@ export function deleteReport(id: string): SaveResult {
 /** Explicit, user-confirmed removal of unreadable stored data. */
 export function clearCorruptStore(): SaveResult {
   try {
-    localStorage.removeItem(OWN_REPORTS_KEY);
+    if (!storageKey) return { ok: false, error: 'Sign in before changing reports.' };
+    localStorage.removeItem(storageKey);
   } catch {
     return { ok: false, error: 'The browser refused to clear storage.' };
   }
