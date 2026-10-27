@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
 
 // Deliberately independent of Vite's preview plugins and all live credentials.
-const env = {
+export const env = {
   NODE_ENV: "test",
   CLERK_SECRET_KEY: "",
   CLERK_PUBLISHABLE_KEY: "",
@@ -10,6 +10,13 @@ const env = {
   WMS_DATABASE_URL: "",
   WMS_PGPASSWORD: "",
   DATABASE_URL: "",
+};
+
+export const wareiqResolve = {
+  alias: {
+    "@assets": fileURLToPath(new URL("./attached_assets", import.meta.url)),
+    "@": fileURLToPath(new URL("./artifacts/wareiq/src", import.meta.url)),
+  },
 };
 
 export default defineConfig({
@@ -25,12 +32,7 @@ export default defineConfig({
       },
       {
         esbuild: { jsx: "automatic" },
-        resolve: {
-          alias: {
-            "@assets": fileURLToPath(new URL("./attached_assets", import.meta.url)),
-            "@": fileURLToPath(new URL("./artifacts/wareiq/src", import.meta.url)),
-          },
-        },
+        resolve: wareiqResolve,
         test: {
           name: "wareiq-authorization",
           environment: "jsdom",

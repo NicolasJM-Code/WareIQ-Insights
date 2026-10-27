@@ -58,8 +58,11 @@ for (const path of [...reportPaths, ...adminPaths]) {
 function account(role: unknown = "admin", extra = {}) {
   return {
     publicMetadata: { role }, unsafeMetadata: {}, banned: false, locked: false,
-    emailAddresses: [{ id: "email_isolated", emailAddress: "isolated@example.com", verification: { status: "verified" } }],
-    primaryEmailAddressId: "email_isolated", ...extra,
+    // Positive authorization cases must have the verified primary address
+    // required by both the legacy guard and current membership routes.
+    emailAddresses: [{ id: "email_isolated_a", emailAddress: "isolated@example.test",
+      verification: { status: "verified" } }],
+    primaryEmailAddressId: "email_isolated_a", ...extra,
   };
 }
 function signIn(role: unknown = "admin", extra = {}) {

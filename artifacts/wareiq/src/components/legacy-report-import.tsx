@@ -3,7 +3,7 @@ import { useUser } from '@clerk/react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { btn } from '@/components/reports-ui';
 import { getDataset, type Section } from '@/lib/report-catalog';
-import { readLegacyReports, type LegacyPreview } from '@/lib/legacy-report-import';
+import { clearCorruptLegacyReports, readLegacyReports, type LegacyPreview } from '@/lib/legacy-report-import';
 import { importLegacyReports, NAME_MAX, type OwnReport } from '@/lib/own-reports-store';
 import { useAccess } from '@/lib/use-access';
 
@@ -30,6 +30,8 @@ function ImportForAccount({ section, reports, ready, ownerId, accountLabel, clie
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState('');
+  const [confirmCleanup, setConfirmCleanup] = useState(false);
+  const [cleanupNotice, setCleanupNotice] = useState('');
   const inFlight = useRef(false);
   const candidates = preview?.candidates.filter((r) => r.input.section === section.id) ?? [];
   const picked = candidates.filter((r) => selected.includes(r.index));
@@ -51,6 +53,7 @@ function ImportForAccount({ section, reports, ready, ownerId, accountLabel, clie
   return <>
     <button className={btn.ghost} disabled={!ready} data-testid="button-preview-legacy" onClick={() => {
       setSelected([]); setNames({}); setConfirmed(false); setDone(false); setError('');
+      setConfirmCleanup(false); setCleanupNotice('');
       setPreview(readLegacyReports());
     }}>Import browser reports</button>
     <Dialog open={preview !== null} onOpenChange={(open) => { if (!open && !inFlight.current) setPreview(null); }}>
@@ -65,6 +68,25 @@ function ImportForAccount({ section, reports, ready, ownerId, accountLabel, clie
         <p className="text-sm break-words">Destination: <strong>{accountLabel}</strong> · <strong>{clientName}</strong></p>
         {done ? <p role="status" data-testid="status-import-success">{picked.length} report{picked.length === 1 ? '' : 's'} imported into your account. Browser originals are unchanged.</p> : <>
           {preview?.error && <p role="alert" className="text-sm text-destructive">{preview.error}</p>}
+          {cleanupNotice && <p role="status" className="text-sm">{cleanupNotice}</p>}
+          {preview?.corruptRaw !== undefined && <>
+            <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" checked={confirmCleanup} disabled={busy}
+                onChange={(e) => setConfirmCleanup(e.target.checked)} data-testid="checkbox-confirm-corrupt-cleanup" />
+              I understand deleting these unreadable browser reports cannot be undone. Account reports will not be deleted.
+            </label>
+            <button type="button" className={btn.ghost} disabled={busy || !confirmCleanup}
+              data-testid="button-clear-corrupt-reports" onClick={() => {
+                const result = clearCorruptLegacyReports(preview.corruptRaw!, confirmCleanup);
+                if (result.ok) {
+                  setPreview(readLegacyReports()); setConfirmCleanup(false); setError('');
+                  setCleanupNotice('Unreadable browser reports were deleted from this browser.');
+                } else {
+                  setError(result.error ?? 'Browser reports were not deleted.');
+                  setConfirmCleanup(false); setPreview(readLegacyReports());
+                }
+              }}>Delete unreadable browser reports</button>
+          </>}
           {!!preview?.invalid && <p className="text-sm">{preview.invalid} malformed definition(s) cannot be imported and remain unchanged.</p>}
           {!!preview && preview.candidates.length > candidates.length &&
             <p className="text-sm text-muted-foreground">Only this section is shown. Review other sections from their Own reports pages.</p>}

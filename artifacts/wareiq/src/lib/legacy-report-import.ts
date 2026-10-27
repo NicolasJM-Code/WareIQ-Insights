@@ -2,7 +2,7 @@ import type { AccessLegacyReportInput } from '@workspace/api-client-react';
 
 export const LEGACY_REPORTS_KEY = 'wareiq.own-reports';
 export type LegacyCandidate = { index: number; input: AccessLegacyReportInput };
-export type LegacyPreview = { candidates: LegacyCandidate[]; invalid: number; error?: string };
+export type LegacyPreview = { candidates: LegacyCandidate[]; invalid: number; error?: string; corruptRaw?: string };
 
 /** Parse without changing, repairing or deleting the source. Identity is never inferred. */
 export function parseLegacyReports(raw: string | null): LegacyPreview {
@@ -36,11 +36,25 @@ export function parseLegacyReports(raw: string | null): LegacyPreview {
     });
     return { candidates, invalid };
   } catch {
-    return { ...empty, error: 'Browser reports could not be read. Originals are unchanged.' };
+    return { ...empty, error: 'Browser reports could not be read. Originals are unchanged.', corruptRaw: raw };
   }
 }
 
 export function readLegacyReports(): LegacyPreview {
   try { return parseLegacyReports(window.localStorage.getItem(LEGACY_REPORTS_KEY)); }
   catch { return { candidates: [], invalid: 0, error: 'Browser storage is blocked or unavailable. Originals are unchanged.' }; }
+}
+
+/** Discard only the exact unreadable snapshot that the user explicitly reviewed. */
+export function clearCorruptLegacyReports(expectedRaw: string, confirmed: boolean): { ok: boolean; error?: string } {
+  if (!confirmed || parseLegacyReports(expectedRaw).corruptRaw !== expectedRaw)
+    return { ok: false, error: 'Only confirmed, unreadable browser reports can be deleted.' };
+  try {
+    if (window.localStorage.getItem(LEGACY_REPORTS_KEY) !== expectedRaw)
+      return { ok: false, error: 'Browser reports changed since preview. Review them again before deleting.' };
+    window.localStorage.removeItem(LEGACY_REPORTS_KEY);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'Browser storage could not be cleared. Originals may still be present.' };
+  }
 }
