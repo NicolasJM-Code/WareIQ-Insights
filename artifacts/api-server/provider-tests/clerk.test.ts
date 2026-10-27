@@ -3,6 +3,18 @@ import request from "supertest";
 import { clerkClient } from "@clerk/express";
 import { provider, runProviderCheck, type Manifest } from "./harness";
 
+const databasePoolConstructor = vi.hoisted(() => vi.fn());
+vi.mock("pg", () => ({
+  default: {
+    Pool: class {
+      constructor() {
+        databasePoolConstructor();
+        throw new Error("Provider checks must not construct a PostgreSQL pool");
+      }
+    },
+  },
+}));
+
 // Real Clerk middleware, key selection, getAuth, user and session APIs.
 // Only application data/logging are isolated. No WMS or application pool opens.
 vi.mock("@workspace/db", async () => ({
@@ -23,6 +35,13 @@ let manifest: Manifest | undefined;
 let app: typeof import("../src/app").default;
 const probePath = "/api/reports/provider-integration";
 let reached = 0;
+
+it("keeps provider execution isolated from application and WMS databases", () => {
+  expect(process.env.DATABASE_URL).toBeUndefined();
+  expect(process.env.WMS_DATABASE_URL).toBeUndefined();
+  expect(process.env.WMS_PGPASSWORD).toBeUndefined();
+  expect(databasePoolConstructor).not.toHaveBeenCalled();
+});
 
 async function token() {
   const session = await provider("fresh development session creation", () =>

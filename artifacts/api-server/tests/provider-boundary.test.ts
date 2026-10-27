@@ -36,6 +36,7 @@ describe("opt-in provider test boundary", () => {
     expect(getIncludePatterns(providerConfig))
       .toEqual(["artifacts/api-server/provider-tests/**/*.test.ts"]);
 
+    await expectProviderDatabaseIsolation();
     await expectLiveEntrypointToRespectPreflightAndRecovery();
   });
 });
@@ -43,6 +44,55 @@ describe("opt-in provider test boundary", () => {
 function getIncludePatterns(configSource: string) {
   return [...configSource.matchAll(/\binclude:\s*(\[[^\]]*\])/g)]
     .flatMap(([, raw]) => JSON.parse(raw) as string[]);
+}
+
+async function expectProviderDatabaseIsolation() {
+  const tempRoot = join(workspaceRoot, "tmp");
+  await mkdir(tempRoot, { recursive: true });
+  const directory = await mkdtemp(join(tempRoot, "wareiq-provider-database-"));
+  const networkBlockerPath = join(directory, "block-network.cjs");
+
+  try {
+    await writeFile(networkBlockerPath, networkBlockerModule);
+    const result = spawnSync(
+      process.execPath,
+      [
+        join(workspaceRoot, "node_modules/vitest/vitest.mjs"),
+        "run",
+        "--config",
+        join(workspaceRoot, "vitest.provider.config.ts"),
+        "--root",
+        workspaceRoot,
+        "--reporter=verbose",
+        "--testNamePattern",
+        "keeps provider execution isolated from application and WMS databases",
+      ],
+      {
+        cwd: workspaceRoot,
+        env: {
+          PATH: process.env.PATH,
+          HOME: directory,
+          TMPDIR: directory,
+          NODE_OPTIONS: `--require=${networkBlockerPath}`,
+          NODE_ENV: "test",
+          DATABASE_URL: "postgresql://offline:offline@127.0.0.1:1/application",
+          WMS_DATABASE_URL: "postgresql://offline:offline@127.0.0.1:1/wms",
+          WMS_PGPASSWORD: "synthetic-offline-password",
+        },
+        encoding: "utf8",
+        timeout: 45_000,
+      },
+    );
+    const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+    expect(result.error).toBeUndefined();
+    expect(result.status, output).toBe(0);
+    expect(output).toContain(
+      "keeps provider execution isolated from application and WMS databases",
+    );
+    expect(output).not.toContain("FORBIDDEN_OFFLINE_NETWORK");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 }
 
 async function expectLiveEntrypointToRespectPreflightAndRecovery() {

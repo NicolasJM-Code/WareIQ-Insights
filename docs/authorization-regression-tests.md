@@ -148,6 +148,13 @@ The live harness uses bearer transport. Browser cookie handshakes (including
 Clerk's development-browser and client timestamp cookies) are not simulated by
 simply inserting `__session`; those require a separate real-browser check.
 
+The provider Vitest configuration clears `DATABASE_URL`, `WMS_DATABASE_URL`,
+and `WMS_PGPASSWORD` in its test process. Its offline boundary regression starts
+the actual provider test entrypoint with synthetic values for all three,
+blocks network connections, and verifies the suite sees empty database
+settings without constructing a PostgreSQL pool. This check requires no
+database credentials and never contacts either database.
+
 ## Opt-in browser cookie and frontend revalidation check
 
 ```sh
