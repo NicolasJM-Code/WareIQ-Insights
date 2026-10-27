@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test:report-import": "esbuild src/lib/own-report-validation.test.ts --bundle --platform=node --format=cjs --outfile=/tmp/wareiq-import-validation.cjs && esbuild ../wareiq/src/lib/legacy-report-import.test.ts --bundle --platform=node --format=cjs --outfile=/tmp/wareiq-legacy-parser.cjs && node --test /tmp/wareiq-import-validation.cjs /tmp/wareiq-legacy-parser.cjs",
     "test:access": "esbuild src/lib/access-catalog.test.ts --bundle --platform=node --format=cjs --outfile=/tmp/wareiq-access-tests.cjs && node --test /tmp/wareiq-access-tests.cjs",
     "test:wms": "esbuild src/lib/wms-connection.test.ts --bundle --platform=node --format=cjs --external:pg-native --outfile=/tmp/wareiq-wms-tests.cjs && node --test /tmp/wareiq-wms-tests.cjs",
     "dev": "export NODE_ENV=development && pnpm run build && pnpm run start",

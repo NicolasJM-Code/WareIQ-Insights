@@ -64,7 +64,7 @@ export function BrowserOnlyNote({ className }: { className?: string }) {
   return (
     <div className={cn('flex items-start gap-2.5 rounded-md border border-dashed border-accent-foreground/30 bg-accent/50 px-3 py-2 text-[12px] text-accent-foreground', className)} data-testid="text-browser-only">
       <HardDrive className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-      <p><strong className="font-semibold">Saved to your account.</strong> Report definitions are private to your login and client, and require your role's permission. Previous browser-only definitions remain untouched and are not automatically imported. Live results require the WMS connection and assigned sites.</p>
+      <p><strong className="font-semibold">Saved to your account.</strong> Report definitions are private to your login and client, and require your role's permission. Use “Import browser reports” on Own reports to review and confirm only definitions you own. Browser originals remain untouched and are never automatically imported. Live results require the WMS connection and assigned sites.</p>
     </div>
   );
 }

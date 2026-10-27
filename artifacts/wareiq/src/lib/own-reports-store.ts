@@ -4,10 +4,11 @@ import { useEffect } from 'react';
 import { useUser } from '@clerk/react';
 import { useListAccessOwnReports, getListAccessOwnReportsQueryKey, saveAccessOwnReport,
   deleteAccessOwnReport, type AccessOwnReport } from '@workspace/api-client-react';
+import { importAccessOwnReports, type AccessLegacyReportImportInput } from '@workspace/api-client-react';
+export { LEGACY_REPORTS_KEY as OWN_REPORTS_KEY } from './legacy-report-import';
 import type { SectionId } from './report-catalog';
 import { useAccess } from './use-access';
 
-export const OWN_REPORTS_KEY = 'wareiq.own-reports';
 export const NAME_MAX = 80;
 export type OwnReport = Omit<AccessOwnReport, 'section'> & { section: SectionId };
 export type OwnReportInput = Pick<OwnReport, 'section' | 'name' | 'description' | 'dataset' | 'fields' | 'sourceDefault'>;
@@ -16,6 +17,17 @@ const changed = () => window.dispatchEvent(new Event('wareiq-own-reports-changed
 function errorMessage(error: unknown) {
   const body = (error as { data?: { error?: unknown } })?.data;
   return typeof body?.error === 'string' ? body.error : 'The report could not be saved. Check your permissions and try again.';
+}
+export async function importLegacyReports(input: AccessLegacyReportImportInput): Promise<SaveResult> {
+  try {
+    await importAccessOwnReports(input);
+    changed();
+    return { ok: true };
+  } catch (error) {
+    const message = (error as { data?: { error?: unknown } })?.data?.error;
+    return { ok: false, error: typeof message === 'string' ? message :
+      'The import could not be confirmed. Check your account reports before retrying. Browser originals are unchanged.' };
+  }
 }
 export async function createReport(input: OwnReportInput): Promise<SaveResult> {
   try {

@@ -288,6 +288,46 @@ export const SaveAccessOwnReportResponse = zod.object({
 })
 
 
+
+
+export const importAccessOwnReportsBodyReportsItemNameMax = 80;
+
+export const importAccessOwnReportsBodyReportsItemDescriptionMax = 1000;
+
+export const importAccessOwnReportsBodyReportsItemFieldsMax = 100;
+
+export const importAccessOwnReportsBodyReportsMax = 50;
+
+
+
+export const ImportAccessOwnReportsBody = zod.object({
+  "expectedOwnerId": zod.string().min(1),
+  "expectedClientId": zod.string().min(1),
+  "confirmedOwnership": zod.literal(true),
+  "reports": zod.array(zod.object({
+  "section": zod.string(),
+  "name": zod.string().min(1).max(importAccessOwnReportsBodyReportsItemNameMax),
+  "description": zod.string().max(importAccessOwnReportsBodyReportsItemDescriptionMax),
+  "dataset": zod.string(),
+  "fields": zod.array(zod.string()).min(1).max(importAccessOwnReportsBodyReportsItemFieldsMax),
+  "sourceDefault": zod.string().optional()
+})).min(1).max(importAccessOwnReportsBodyReportsMax)
+})
+
+export const ImportAccessOwnReportsResponseItem = zod.object({
+  "id": zod.string(),
+  "section": zod.string(),
+  "name": zod.string(),
+  "description": zod.string(),
+  "dataset": zod.string(),
+  "fields": zod.array(zod.string()),
+  "sourceDefault": zod.string().optional(),
+  "createdAt": zod.string(),
+  "updatedAt": zod.string()
+})
+export const ImportAccessOwnReportsResponse = zod.array(ImportAccessOwnReportsResponseItem)
+
+
 export const DeleteAccessOwnReportParams = zod.object({
   "id": zod.coerce.string()
 })

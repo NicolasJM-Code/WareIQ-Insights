@@ -20,6 +20,7 @@ import { toast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { useAccess } from '@/lib/use-access';
 import { ReportRunControl } from '@/components/report-run-control';
+import { LegacyReportImport } from '@/components/legacy-report-import';
 
 // ---------- shared ----------
 function StoreBanner() {
@@ -82,6 +83,7 @@ export function OwnReportsIndex({ sectionId }: { sectionId: SectionId }) {
     <div>
       <PageHeader eyebrow={`${s.eyebrow} · Own reports`} title="Own reports" description={`Reports you build from the fields available in ${s.label.toLowerCase()}. Pick a dataset, choose and order the columns, then run or export.`}>
         <DemoBadge />
+        <LegacyReportImport section={s} reports={st.reports} ready={canWrite && !st.loading} />
         {canWrite && <Link href={`${s.base}/own-reports/new`} className={btn.primary} data-testid="link-create-report"><Plus className="h-3.5 w-3.5" />New report</Link>}
       </PageHeader>
       <StoreBanner />
@@ -401,7 +403,7 @@ function Builder({ s, initial, existing, fromTitle, fromId, unknownFrom }: { s: 
           {touched && errors.fields && <p className="text-[12px] text-destructive mt-2" data-testid="error-fields">{errors.fields}</p>}
           <div className="mt-4 pt-3 border-t text-[12px] text-muted-foreground flex items-center gap-2">
             {dirty ? <><span className="h-1.5 w-1.5 rounded-full bg-chart-2" />Unsaved changes</> : <><span className="h-1.5 w-1.5 rounded-full bg-chart-3" />No unsaved changes</>}
-            <span className="ml-auto font-mono text-[11px]">this browser only</span>
+            <span className="ml-auto font-mono text-[11px]">your account only</span>
           </div>
         </section>
       </div>

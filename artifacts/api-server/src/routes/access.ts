@@ -9,10 +9,12 @@ import {
   SaveAccessWarehouseBody, SaveAccessWarehouseResponse,
   SaveAccessOwnReportBody, SaveAccessOwnReportResponse, ListAccessOwnReportsResponse,
   DeleteAccessOwnReportParams, RunAccessReportParams, RunAccessReportBody, RunAccessReportResponse,
+  ImportAccessOwnReportsBody, ImportAccessOwnReportsResponse,
 } from "@workspace/api-zod";
 import { getAuth } from "@clerk/express";
 import { AccessError, accessFor, requireAccessAdmin, requireMemberAccess } from "../lib/reporting-access";
-import { accessReports, allowedSection, sectionDatasets } from "../lib/access-catalog";
+import { accessReports, allowedSection } from "../lib/access-catalog";
+import { reportDefinitionError } from "../lib/own-report-validation";
 import { GetAuthSessionResponse, GetSettingsAccessResponse } from "@workspace/api-zod";
 import { requireIdentity, requireAdministrator } from "../middlewares/access";
 
@@ -165,13 +167,8 @@ router.get("/access/own-reports", handler(async (req, res) => {
 router.post("/access/own-reports", handler(async (req, res) => {
   const access = await ownAccess(req);
   const input = parsed(SaveAccessOwnReportBody.strict(), req.body);
-  if (!allowedSection(access.session.reportIds, input.section)) throw new AccessError(403, "Your role does not grant access to this reporting section.");
-  const allowed = sectionDatasets[input.section]?.[input.dataset];
-  if (!allowed || input.fields.some((field) => !allowed.includes(field)) || new Set(input.fields).size !== input.fields.length)
-    throw new AccessError(400, "Use only fields from the selected dataset within this section.");
-  if (!input.name.trim()) throw new AccessError(400, "Report name is required.");
-  if (input.sourceDefault && !access.session.reportIds.includes(input.sourceDefault))
-    throw new AccessError(403, "You do not have access to the source report.");
+  const invalid = reportDefinitionError(input, access.session.reportIds);
+  if (invalid) throw new AccessError(invalid.status, invalid.message);
   const { id, ...definition } = input;
   const clientId = access.member!.clientId;
   const ownerId = access.actor.userId;
@@ -189,6 +186,37 @@ router.post("/access/own-reports", handler(async (req, res) => {
     : await db.insert(ownReportsTable).values({ id: randomUUID(), ownerId, clientId, definition }).returning();
   if (!row) throw new AccessError(404, "Own report not found in your account.");
   res.json(SaveAccessOwnReportResponse.parse({ id: row.id, ...row.definition, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() }));
+}));
+router.post("/access/own-reports/import", handler(async (req, res) => {
+  const access = await ownAccess(req);
+  const input = parsed(ImportAccessOwnReportsBody.strict(), req.body);
+  const ownerId = access.actor.userId;
+  const clientId = access.member!.clientId;
+  if (input.expectedOwnerId !== ownerId || input.expectedClientId !== clientId)
+    throw new AccessError(409, "Your account or client changed. Close the import and preview again.");
+  const names = new Set<string>();
+  const definitions = input.reports.map((_report, index) => {
+    // Reject supplied ownership, legacy IDs, timestamps, or other hidden properties.
+    const definition = parsed(SaveAccessOwnReportBody.omit({ id: true }).strict(),
+      (req.body as { reports: unknown[] }).reports[index]);
+    const invalid = reportDefinitionError(definition, access.session.reportIds);
+    if (invalid) throw new AccessError(invalid.status, invalid.message);
+    definition.name = definition.name.trim();
+    const key = JSON.stringify([definition.section, definition.name.toLowerCase()]);
+    if (names.has(key)) throw new AccessError(409, "Selected reports have duplicate names in the same section. Rename or deselect them.");
+    names.add(key);
+    return definition;
+  });
+  // The unique index covers existing names and concurrent imports. One transaction
+  // ensures a rejected selection never leaves an invisible, partially imported batch.
+  const reports = await db.transaction(async (tx) => {
+    const rows = await tx.insert(ownReportsTable).values(definitions.map((definition) => ({
+      id: randomUUID(), ownerId, clientId, definition,
+    }))).returning();
+    return rows.map((row) => ({ id: row.id, ...row.definition,
+      createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() }));
+  });
+  res.json(ImportAccessOwnReportsResponse.parse(reports));
 }));
 router.delete("/access/own-reports/:id", handler(async (req, res) => {
   const access = await ownAccess(req);

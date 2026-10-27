@@ -213,6 +213,37 @@ export interface AccessOwnReportInput {
   sourceDefault?: string;
 }
 
+export interface AccessLegacyReportInput {
+  section: string;
+  /**
+     * @minLength 1
+     * @maxLength 80
+     */
+  name: string;
+  /** @maxLength 1000 */
+  description: string;
+  dataset: string;
+  /**
+     * @minItems 1
+     * @maxItems 100
+     */
+  fields: string[];
+  sourceDefault?: string;
+}
+
+export interface AccessLegacyReportImportInput {
+  /** @minLength 1 */
+  expectedOwnerId: string;
+  /** @minLength 1 */
+  expectedClientId: string;
+  confirmedOwnership: true;
+  /**
+     * @minItems 1
+     * @maxItems 50
+     */
+  reports: AccessLegacyReportInput[];
+}
+
 export interface AccessOwnReport {
   id: string;
   section: string;

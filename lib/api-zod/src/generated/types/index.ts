@@ -11,6 +11,8 @@ export * from './accessClientInput';
 export * from './accessDirectory';
 export * from './accessError';
 export * from './accessFailureResponse';
+export * from './accessLegacyReportImportInput';
+export * from './accessLegacyReportInput';
 export * from './accessOwnReport';
 export * from './accessOwnReportInput';
 export * from './accessProblem';

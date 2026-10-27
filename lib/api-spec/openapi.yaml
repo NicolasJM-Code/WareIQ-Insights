@@ -201,6 +201,21 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AccessOwnReport" }
+  /access/own-reports/import:
+    post:
+      operationId: importAccessOwnReports
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccessLegacyReportImportInput" }
+      responses:
+        default: { $ref: "#/components/responses/AccessFailure" }
+        "200":
+          description: All selected definitions saved as new reports, or none on failure
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AccessOwnReport" } }
   /access/own-reports/{id}:
     delete:
       operationId: deleteAccessOwnReport
@@ -497,6 +512,24 @@ components:
         dataset: { type: string }
         fields: { type: array, minItems: 1, maxItems: 100, uniqueItems: true, items: { type: string } }
         sourceDefault: { type: string }
+    AccessLegacyReportInput:
+      type: object
+      required: [section, name, description, dataset, fields]
+      properties:
+        section: { type: string }
+        name: { type: string, minLength: 1, maxLength: 80 }
+        description: { type: string, maxLength: 1000 }
+        dataset: { type: string }
+        fields: { type: array, minItems: 1, maxItems: 100, uniqueItems: true, items: { type: string } }
+        sourceDefault: { type: string }
+    AccessLegacyReportImportInput:
+      type: object
+      required: [expectedOwnerId, expectedClientId, confirmedOwnership, reports]
+      properties:
+        expectedOwnerId: { type: string, minLength: 1 }
+        expectedClientId: { type: string, minLength: 1 }
+        confirmedOwnership: { type: boolean, enum: [true] }
+        reports: { type: array, minItems: 1, maxItems: 50, items: { $ref: "#/components/schemas/AccessLegacyReportInput" } }
     AccessOwnReport:
       type: object
       required: [id, section, name, description, dataset, fields, createdAt, updatedAt]

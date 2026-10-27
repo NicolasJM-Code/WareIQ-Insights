@@ -29,6 +29,7 @@ import type {
   AccessClientInput,
   AccessDirectory,
   AccessFailureResponse,
+  AccessLegacyReportImportInput,
   AccessOwnReport,
   AccessOwnReportInput,
   AccessRole,
@@ -1250,6 +1251,88 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
         TContext
       > => {
       return useMutation(getSaveAccessOwnReportMutationOptions(options), queryClient);
+    }
+
+export const getImportAccessOwnReportsUrl = () => {
+
+
+
+
+  return `/api/access/own-reports/import`
+}
+
+export const importAccessOwnReports = async (accessLegacyReportImportInput: AccessLegacyReportImportInput, options?: Parameters<typeof customFetch>[1]): Promise<AccessOwnReport[]> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AccessOwnReport[]>(getImportAccessOwnReportsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(accessLegacyReportImportInput)
+  }
+);}
+
+
+
+
+
+export const getImportAccessOwnReportsMutationKey = () => ['importAccessOwnReports'] as const;
+
+export const getImportAccessOwnReportsMutationOptions = <TError = ErrorType<AccessFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof importAccessOwnReports>>, TError,ImportAccessOwnReportsMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof importAccessOwnReports>>, TError,ImportAccessOwnReportsMutationVariables, TContext> => {
+
+const mutationKey = getImportAccessOwnReportsMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof importAccessOwnReports>>, ImportAccessOwnReportsMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  importAccessOwnReports(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ImportAccessOwnReportsMutationResult = NonNullable<Awaited<ReturnType<typeof importAccessOwnReports>>>
+    export type ImportAccessOwnReportsMutationBody = BodyType<AccessLegacyReportImportInput>
+    export type ImportAccessOwnReportsMutationError = ErrorType<AccessFailureResponse>
+    export type ImportAccessOwnReportsMutationVariables = {data: BodyType<AccessLegacyReportImportInput>}
+
+    export const useImportAccessOwnReports = <TError = ErrorType<AccessFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof importAccessOwnReports>>, TError,ImportAccessOwnReportsMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof importAccessOwnReports>>,
+        TError,
+        ImportAccessOwnReportsMutationVariables,
+        TContext
+      > => {
+      return useMutation(getImportAccessOwnReportsMutationOptions(options), queryClient);
     }
 
 export const getDeleteAccessOwnReportUrl = (id: string,) => {
