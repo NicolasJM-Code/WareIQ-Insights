@@ -13,6 +13,26 @@ tags:
 security:
   - clerkSession: []
 paths:
+  /admin/access-history:
+    get:
+      operationId: listAccessHistory
+      summary: Administrator-only platform role change history
+      parameters:
+        - in: query
+          name: beforeTime
+          schema: { type: string, pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$' }
+        - in: query
+          name: beforeId
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Durable application database records, newest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessHistoryPage"
+        default:
+          $ref: "#/components/responses/AccessFailure"
   /admin/users:
     get:
       operationId: listAccessUsers
@@ -335,6 +355,34 @@ components:
           schema:
             $ref: "#/components/schemas/AccessError"
   schemas:
+    AccessHistoryEntry:
+      type: object
+      required: [id, createdAt, finishedAt, actorId, targetId, previousRole, requestedRole, resultingRole, outcome, reason]
+      properties:
+        id: { type: string, format: uuid }
+        createdAt: { type: string }
+        finishedAt: { type: [string, "null"] }
+        actorId: { type: string }
+        targetId: { type: [string, "null"] }
+        previousRole: { type: [string, "null"], enum: [admin, supervisor, unassigned, null] }
+        requestedRole: { type: [string, "null"], enum: [admin, supervisor, unassigned, null] }
+        resultingRole: { type: [string, "null"], enum: [admin, supervisor, unassigned, null] }
+        outcome: { type: string, enum: [succeeded, unchanged, denied, failed, unconfirmed] }
+        reason: { type: string }
+    AccessHistoryPage:
+      type: object
+      required: [entries, nextCursor]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccessHistoryEntry"
+        nextCursor:
+          type: [object, "null"]
+          required: [beforeTime, beforeId]
+          properties:
+            beforeTime: { type: string }
+            beforeId: { type: string }
     PlatformAccessRole:
       type: string
       enum: [admin, supervisor, unassigned]

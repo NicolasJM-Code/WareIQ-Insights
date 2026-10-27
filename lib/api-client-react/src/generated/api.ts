@@ -29,6 +29,7 @@ import type {
   AccessClientInput,
   AccessDirectory,
   AccessFailureResponse,
+  AccessHistoryPage,
   AccessLegacyReportImportInput,
   AccessOwnReport,
   AccessOwnReportInput,
@@ -45,6 +46,7 @@ import type {
   AuthUnavailableResponse,
   ForbiddenResponse,
   HealthStatus,
+  ListAccessHistoryParams,
   ListAccessUsersParams,
   PlatformAccessRoleUpdate,
   PlatformAccessUser,
@@ -82,6 +84,114 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   }
   return result;
 };
+
+export const getListAccessHistoryUrl = (params?: ListAccessHistoryParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/admin/access-history?${stringifiedParams}` : `/api/admin/access-history`
+}
+
+/**
+ * @summary Administrator-only platform role change history
+ */
+export const listAccessHistory = async (params?: ListAccessHistoryParams, options?: Parameters<typeof customFetch>[1]): Promise<AccessHistoryPage> => {
+
+  return customFetch<AccessHistoryPage>(getListAccessHistoryUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAccessHistoryQueryKey = (params?: ListAccessHistoryParams,) => {
+    return [
+    `/api/admin/access-history`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListAccessHistoryQueryOptions = <TData = Awaited<ReturnType<typeof listAccessHistory>>, TError = ErrorType<AccessFailureResponse>>(params?: ListAccessHistoryParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAccessHistory>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAccessHistoryQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAccessHistory>>> = ({ signal }) => listAccessHistory(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAccessHistory>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListAccessHistoryQueryResult = NonNullable<Awaited<ReturnType<typeof listAccessHistory>>>
+export type ListAccessHistoryQueryError = ErrorType<AccessFailureResponse>
+
+
+export function useListAccessHistory<TData = Awaited<ReturnType<typeof listAccessHistory>>, TError = ErrorType<AccessFailureResponse>>(
+ params: undefined |  ListAccessHistoryParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAccessHistory>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listAccessHistory>>,
+          TError,
+          Awaited<ReturnType<typeof listAccessHistory>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListAccessHistory<TData = Awaited<ReturnType<typeof listAccessHistory>>, TError = ErrorType<AccessFailureResponse>>(
+ params?: ListAccessHistoryParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAccessHistory>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listAccessHistory>>,
+          TError,
+          Awaited<ReturnType<typeof listAccessHistory>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListAccessHistory<TData = Awaited<ReturnType<typeof listAccessHistory>>, TError = ErrorType<AccessFailureResponse>>(
+ params?: ListAccessHistoryParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAccessHistory>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Administrator-only platform role change history
+ */
+
+export function useListAccessHistory<TData = Awaited<ReturnType<typeof listAccessHistory>>, TError = ErrorType<AccessFailureResponse>>(
+ params?: ListAccessHistoryParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAccessHistory>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListAccessHistoryQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getListAccessUsersUrl = (params?: ListAccessUsersParams,) => {
   const normalizedParams = new URLSearchParams();

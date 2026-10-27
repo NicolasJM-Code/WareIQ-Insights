@@ -9,6 +9,37 @@ import * as zod from 'zod';
 
 
 /**
+ * @summary Administrator-only platform role change history
+ */
+export const listAccessHistoryQueryBeforeTimeRegExp = new RegExp('^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$');
+
+
+export const ListAccessHistoryQueryParams = zod.object({
+  "beforeTime": zod.coerce.string().regex(listAccessHistoryQueryBeforeTimeRegExp).optional(),
+  "beforeId": zod.coerce.string().uuid().optional()
+})
+
+export const ListAccessHistoryResponse = zod.object({
+  "entries": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "createdAt": zod.string(),
+  "finishedAt": zod.string().nullable(),
+  "actorId": zod.string(),
+  "targetId": zod.string().nullable(),
+  "previousRole": zod.union([zod.literal('admin'),zod.literal('supervisor'),zod.literal('unassigned'),zod.literal(null)]).nullable(),
+  "requestedRole": zod.union([zod.literal('admin'),zod.literal('supervisor'),zod.literal('unassigned'),zod.literal(null)]).nullable(),
+  "resultingRole": zod.union([zod.literal('admin'),zod.literal('supervisor'),zod.literal('unassigned'),zod.literal(null)]).nullable(),
+  "outcome": zod.enum(['succeeded', 'unchanged', 'denied', 'failed', 'unconfirmed']),
+  "reason": zod.string()
+})),
+  "nextCursor": zod.object({
+  "beforeTime": zod.string(),
+  "beforeId": zod.string()
+}).nullable()
+})
+
+
+/**
  * @summary List Clerk accounts for platform administrator approval
  */
 export const listAccessUsersQueryOffsetDefault = 0;

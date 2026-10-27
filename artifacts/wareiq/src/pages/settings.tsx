@@ -16,6 +16,7 @@ import { useTestWmsConnection, type WmsConnectionResult } from '@workspace/api-c
 import { useUser, UserButton } from '@clerk/react';
 import { Link } from 'wouter';
 import { AccessManagement } from '@/components/access-management';
+import { AccessHistory } from '@/components/access-history';
 
 const hostRe = /^(?=.{1,253}$)([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$|^(\d{1,3}\.){3}\d{1,3}$/;
 const ident = /^[a-zA-Z_][a-zA-Z0-9_$]{0,62}$/;
@@ -341,9 +342,7 @@ ALTER ROLE wms_reporting_ro
               </ul>
             ) : <p className="text-[12.5px] text-muted-foreground">No connection attempts recorded. Test attempts on the connection tab are listed here without credentials.</p>}
           </Section>
-          <Section icon={ScrollText} title="Audit log" aside={<Unavailable />}>
-            <p className="text-[12.5px] text-muted-foreground">A tamper-evident audit trail of setting changes and exports requires server-side storage. No audit records exist in this demo.</p>
-          </Section>
+          <AccessHistory />
         </TabsContent>
       </Tabs>
     </div>

@@ -1,6 +1,7 @@
 import { clerkClient, getAuth } from "@clerk/express";
 import type { RequestHandler } from "express";
 import { appRole, verifiedPrimaryEmail } from "../lib/access-policy";
+import { auditAccessDenial } from "./audit-access-denial";
 export { appRole, type AppRole } from "../lib/access-policy";
 
 // A valid signature alone does not prove the session is still active: an issued
@@ -43,6 +44,7 @@ export const requireIdentity: RequestHandler = async (req, res, next) => {
   try {
     const user = await clerkClient.users.getUser(userId);
     if (user.banned || user.locked) {
+      await auditAccessDenial(req, userId);
       res.status(403).json({ error: "This account is not permitted to access WareIQ." });
       return;
     }
@@ -69,8 +71,14 @@ export const requireReporter: RequestHandler = (_req, res, next) => {
   next();
 };
 
-export const requireAdministrator: RequestHandler = (_req, res, next) => {
+export const requireAdministrator: RequestHandler = async (req, res, next) => {
   if (!res.locals.access?.canAdminister) {
+    try {
+      await auditAccessDenial(req, res.locals.access?.userId);
+    } catch {
+      res.status(503).json({ error: "Access history is unavailable. No change was attempted." });
+      return;
+    }
     res.status(403).json({ error: "Administrator access is required." });
     return;
   }

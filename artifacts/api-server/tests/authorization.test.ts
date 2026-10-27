@@ -30,10 +30,12 @@ vi.mock("@workspace/db", async () => {
   const schema = await import("@workspace/db/schema");
   return {
     ...schema,
-    db: { select: () => ({ from: (table: unknown) => {
-      if (table !== schema.membersTable) throw new Error("Unexpected database access in isolated authorization test");
-      return { where: async () => [] };
-    } }) },
+    db: { select: vi.fn(() => ({
+      from: (table: unknown) => {
+        if (table !== schema.membersTable) throw new Error("Unexpected database access in isolated authorization test");
+        return { where: async () => [] }; // No reporting memberships in this isolated role-guard test.
+      },
+    })) },
   };
 });
 

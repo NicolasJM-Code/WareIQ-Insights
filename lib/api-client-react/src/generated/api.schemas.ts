@@ -5,6 +5,85 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+/**
+ * @nullable
+ */
+export type AccessHistoryEntryPreviousRole = typeof AccessHistoryEntryPreviousRole[keyof typeof AccessHistoryEntryPreviousRole] | null;
+
+
+export const AccessHistoryEntryPreviousRole = {
+  admin: 'admin',
+  supervisor: 'supervisor',
+  unassigned: 'unassigned',
+} as const;
+
+/**
+ * @nullable
+ */
+export type AccessHistoryEntryRequestedRole = typeof AccessHistoryEntryRequestedRole[keyof typeof AccessHistoryEntryRequestedRole] | null;
+
+
+export const AccessHistoryEntryRequestedRole = {
+  admin: 'admin',
+  supervisor: 'supervisor',
+  unassigned: 'unassigned',
+} as const;
+
+/**
+ * @nullable
+ */
+export type AccessHistoryEntryResultingRole = typeof AccessHistoryEntryResultingRole[keyof typeof AccessHistoryEntryResultingRole] | null;
+
+
+export const AccessHistoryEntryResultingRole = {
+  admin: 'admin',
+  supervisor: 'supervisor',
+  unassigned: 'unassigned',
+} as const;
+
+export type AccessHistoryEntryOutcome = typeof AccessHistoryEntryOutcome[keyof typeof AccessHistoryEntryOutcome];
+
+
+export const AccessHistoryEntryOutcome = {
+  succeeded: 'succeeded',
+  unchanged: 'unchanged',
+  denied: 'denied',
+  failed: 'failed',
+  unconfirmed: 'unconfirmed',
+} as const;
+
+export interface AccessHistoryEntry {
+  id: string;
+  createdAt: string;
+  /** @nullable */
+  finishedAt: string | null;
+  actorId: string;
+  /** @nullable */
+  targetId: string | null;
+  /** @nullable */
+  previousRole: AccessHistoryEntryPreviousRole;
+  /** @nullable */
+  requestedRole: AccessHistoryEntryRequestedRole;
+  /** @nullable */
+  resultingRole: AccessHistoryEntryResultingRole;
+  outcome: AccessHistoryEntryOutcome;
+  reason: string;
+}
+
+/**
+ * @nullable
+ */
+export type AccessHistoryPageNextCursor = {
+  beforeTime: string;
+  beforeId: string;
+} | null;
+
+export interface AccessHistoryPage {
+  entries: AccessHistoryEntry[];
+  /** @nullable */
+  nextCursor: AccessHistoryPageNextCursor;
+}
+
 export type PlatformAccessRole = typeof PlatformAccessRole[keyof typeof PlatformAccessRole];
 
 
@@ -361,6 +440,14 @@ export type ForbiddenResponse = AccessError;
  * Permissions could not be verified; access is denied
  */
 export type AuthUnavailableResponse = AccessError;
+
+export type ListAccessHistoryParams = {
+/**
+ * @pattern ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$
+ */
+beforeTime?: string;
+beforeId?: string;
+};
 
 export type ListAccessUsersParams = {
 /**

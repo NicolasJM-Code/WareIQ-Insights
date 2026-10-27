@@ -5,7 +5,7 @@ type User = Awaited<ReturnType<typeof clerkClient.users.getUser>>;
 type UserDirectory = Pick<typeof clerkClient.users, "getUser" | "getUserList" | "updateUserMetadata">;
 
 export class AccessConflict extends Error {
-  constructor(public readonly status: number, message: string) { super(message); }
+  constructor(public readonly status: number, message: string, public readonly code = "policy_denied") { super(message); }
 }
 
 export function accessUser(user: User) {
@@ -27,22 +27,28 @@ export async function changeRole(
   targetId: string,
   role: AppRole,
   expectedRole: AppRole,
+  observe?: {
+    previous: (role: AppRole) => Promise<void>;
+    beforeWrite: () => void;
+  },
 ) {
   const actor = await users.getUser(actorId);
   if (actor.banned || actor.locked || !verifiedPrimaryEmail(actor) || appRole(actor.publicMetadata.role) !== "admin") {
-    throw new AccessConflict(403, "Administrator access is required.");
+    throw new AccessConflict(403, "Administrator access is required.", "administrator_required");
   }
   // No self-service role changes, including a last administrator's demotion.
   if (actorId === targetId) {
-    throw new AccessConflict(409, "You cannot change your own role. Ask another administrator.");
+    await observe?.previous(appRole(actor.publicMetadata.role));
+    throw new AccessConflict(409, "You cannot change your own role. Ask another administrator.", "self_change_denied");
   }
   const target = await users.getUser(targetId);
   const previous = appRole(target.publicMetadata.role);
+  await observe?.previous(previous);
   if (previous !== expectedRole) {
-    throw new AccessConflict(409, "This account's role changed. Refresh the account list before trying again.");
+    throw new AccessConflict(409, "This account's role changed. Refresh the account list before trying again.", "stale_role");
   }
   if (role !== "unassigned" && (target.banned || target.locked || !verifiedPrimaryEmail(target))) {
-    throw new AccessConflict(403, "Access can only be granted to an unrestricted account with a verified primary email.");
+    throw new AccessConflict(403, "Access can only be granted to an unrestricted account with a verified primary email.", "target_restricted");
   }
   if (previous === role) return accessUser(target);
   if (previous === "admin" && role !== "admin") {
@@ -62,10 +68,14 @@ export async function changeRole(
       if (!page.data.length) throw new Error("Incomplete account listing");
     }
     if (!hasOtherAdministrator) {
-      throw new AccessConflict(409, "The last active administrator cannot be removed. Approve another administrator first.");
+      throw new AccessConflict(409, "The last active administrator cannot be removed. Approve another administrator first.", "last_administrator");
     }
   }
   // Clerk merges publicMetadata, preserving all unrelated metadata.
+  observe?.beforeWrite();
   const updated = await users.updateUserMetadata(targetId, { publicMetadata: { role } });
+  if (appRole(updated.publicMetadata.role) !== role) {
+    throw new Error("Role update was not confirmed");
+  }
   return accessUser(updated);
 }

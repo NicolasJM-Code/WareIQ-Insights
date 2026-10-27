@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useAuth } from '@clerk/react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { changeAccessRole, getListAccessUsersQueryKey, listAccessUsers, getGetAccessSessionQueryKey, type PlatformAccessRole as AccessRole, type PlatformAccessUser as AccessUser } from '@workspace/api-client-react';
+import { changeAccessRole, getListAccessHistoryQueryKey, getListAccessUsersQueryKey, listAccessUsers, getGetAccessSessionQueryKey, type PlatformAccessRole as AccessRole, type PlatformAccessUser as AccessUser } from '@workspace/api-client-react';
 import { Link } from 'wouter';
 import { ChevronLeft, ChevronRight, RefreshCw, ShieldAlert, UserCheck, UserX, Users } from 'lucide-react';
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
@@ -55,6 +55,7 @@ export function AccessManagement() {
   });
 
   const refreshAll = () => Promise.all([
+    qc.invalidateQueries({ queryKey: getListAccessHistoryQueryKey() }),
     qc.invalidateQueries({ queryKey: getListAccessUsersQueryKey() }),
     qc.invalidateQueries({ queryKey: ['wareiq-access'] }),
     qc.invalidateQueries({ queryKey: getGetAccessSessionQueryKey() }),

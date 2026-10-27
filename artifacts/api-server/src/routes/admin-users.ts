@@ -3,11 +3,31 @@ import { clerkClient } from "@clerk/express";
 import {
   ListAccessUsersQueryParams, ListAccessUsersResponse,
   ChangeAccessRoleParams, ChangeAccessRoleBody, ChangeAccessRoleResponse,
+  ListAccessHistoryQueryParams, ListAccessHistoryResponse,
 } from "@workspace/api-zod";
-import { AccessConflict, accessUser, changeRole } from "../lib/role-management";
+import { AccessConflict, accessUser } from "../lib/role-management";
 import { withRoleLock } from "../lib/role-lock";
+import { auditedRoleChange } from "../lib/audited-role-change";
+import { accessAuditStore, accessHistoryPage } from "../lib/access-history";
 
 const router: IRouter = Router();
+
+router.get("/admin/access-history", async (req, res): Promise<void> => {
+  const parsed = ListAccessHistoryQueryParams.safeParse(req.query);
+  if (!parsed.success || !!parsed.data.beforeTime !== !!parsed.data.beforeId ||
+      (parsed.data.beforeTime && !Number.isFinite(Date.parse(parsed.data.beforeTime)))) {
+    res.status(400).json({ error: "Invalid history page." });
+    return;
+  }
+  try {
+    const { beforeTime, beforeId } = parsed.data;
+    const cursor = beforeTime && beforeId ? { beforeTime: new Date(beforeTime).toISOString(), beforeId } : undefined;
+    res.json(ListAccessHistoryResponse.parse(await accessHistoryPage(cursor)));
+  } catch {
+    req.log.warn("Unable to load access history");
+    res.status(503).json({ error: "Access history could not be loaded. Try again shortly." });
+  }
+});
 
 router.get("/admin/users", async (req, res) => {
   const query = ListAccessUsersQueryParams.safeParse(req.query);
@@ -31,13 +51,22 @@ router.patch("/admin/users/:userId/role", async (req, res) => {
   const params = ChangeAccessRoleParams.safeParse(req.params);
   const body = ChangeAccessRoleBody.strict().safeParse(req.body);
   if (!params.success || !body.success) {
+    try {
+      await accessAuditStore.start({
+        actorId: res.locals.access.userId,
+        targetId: null, requestedRole: null, outcome: "denied", reason: "invalid_request",
+      });
+    } catch {
+      res.status(503).json({ error: "Access history is unavailable. No change was attempted." });
+      return;
+    }
     res.status(400).json({ error: "Provide a valid account, role, and expected current role." });
     return;
   }
   try {
-    const updated = await withRoleLock(() => changeRole(
+    const updated = await auditedRoleChange(accessAuditStore, withRoleLock,
       clerkClient.users, res.locals.access.userId, params.data.userId, body.data.role, body.data.expectedRole,
-    ));
+    );
     res.json(ChangeAccessRoleResponse.parse(updated));
   } catch (error) {
     if (error instanceof AccessConflict) {
