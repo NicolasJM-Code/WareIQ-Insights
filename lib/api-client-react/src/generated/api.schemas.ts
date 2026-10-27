@@ -394,13 +394,43 @@ export type AccessDirectoryNotificationSummary = {
   failed: number;
 };
 
+export type AccessFailedNotificationKind = typeof AccessFailedNotificationKind[keyof typeof AccessFailedNotificationKind];
+
+
+export const AccessFailedNotificationKind = {
+  reporting: 'reporting',
+  platform: 'platform',
+} as const;
+
+export interface AccessFailedNotification {
+  id: string;
+  recipient: string;
+  roleName: string;
+  kind: AccessFailedNotificationKind;
+  createdAt: string;
+  /** @minimum 1 */
+  attempts: number;
+}
+
 export interface AccessDirectory {
   clients: AccessClient[];
   sites: AccessSite[];
   roles: AccessRole[];
   users: AccessUser[];
   reports: AccessReport[];
+  failedNotifications: AccessFailedNotification[];
   notificationSummary: AccessDirectoryNotificationSummary;
+}
+
+export type AccessNotificationRetryResultStatus = typeof AccessNotificationRetryResultStatus[keyof typeof AccessNotificationRetryResultStatus];
+
+
+export const AccessNotificationRetryResultStatus = {
+  queued: 'queued',
+} as const;
+
+export interface AccessNotificationRetryResult {
+  status: AccessNotificationRetryResultStatus;
 }
 
 export type AccessSessionStatus = typeof AccessSessionStatus[keyof typeof AccessSessionStatus];

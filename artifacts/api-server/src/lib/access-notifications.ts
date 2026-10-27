@@ -30,7 +30,7 @@ export async function getAccessNotificationSummary(): Promise<AccessNotification
       count(*) FILTER (WHERE state IN ('pending', 'confirming') AND attempts = 0)::int AS queued,
       count(*) FILTER (WHERE state = 'pending' AND attempts > 0)::int AS retrying,
       count(*) FILTER (WHERE state = 'sent')::int AS accepted,
-      count(*) FILTER (WHERE state = 'failed')::int AS failed
+      count(*) FILTER (WHERE state IN ('failed', 'confirmed_failed'))::int AS failed
     FROM wareiq_access_notifications`);
   const summary = rows[0];
   if (!summary) throw new Error("Notification summary unavailable");
@@ -55,7 +55,7 @@ export async function queueAccessNotifications(tx: Transaction, notices: Notice[
         await savepoint.update(accessNotificationsTable).set({ state: "cancelled" }).where(and(
           or(matchTarget, matchRecipient)!,
           eq(accessNotificationsTable.kind, "reporting"),
-          inArray(accessNotificationsTable.state, ["pending", "confirming", "failed"]),
+          inArray(accessNotificationsTable.state, ["pending", "confirming", "failed", "confirmed_failed"]),
         ));
       }
       await savepoint.insert(accessNotificationsTable).values(
@@ -100,6 +100,27 @@ export async function confirmPlatformNotification(id: string): Promise<void> {
 // outside 23h: prefer an explicit failed record to a possible duplicate email.
 export function retryAllowed(firstAttemptAt: Date | null, now: Date): boolean {
   return !firstAttemptAt || now.getTime() - firstAttemptAt.getTime() < 23 * 60 * 60 * 1000;
+}
+
+export async function listConfirmedFailedAccessNotifications() {
+  const { rows } = await pool.query<{
+    id: string; recipient: string; role_name: string; kind: "reporting" | "platform";
+    created_at: Date; attempts: number;
+  }>(`SELECT id, recipient, role_name, kind, created_at, attempts
+      FROM wareiq_access_notifications
+      WHERE state = 'confirmed_failed'
+      ORDER BY created_at DESC LIMIT 100`);
+  return rows;
+}
+
+export async function retryConfirmedFailedAccessNotification(id: string): Promise<boolean> {
+  // Keep the same outbox ID (and provider idempotency key). Reset only the
+  // deduplication window because a provider rejection confirmed no delivery.
+  const { rows } = await pool.query<{ id: string }>(`UPDATE wareiq_access_notifications
+      SET state = 'pending', first_attempt_at = NULL, next_attempt_at = now()
+      WHERE id = $1 AND state = 'confirmed_failed'
+      RETURNING id`, [id]);
+  return rows.length === 1;
 }
 
 const connectors = new ReplitConnectors();
@@ -177,7 +198,18 @@ export async function deliverAccessNotifications(): Promise<void> {
             ...notificationMessage(row.kind, row.role_name) }),
           signal: AbortSignal.timeout(15_000),
         });
-        if (!response.ok) throw new Error("Delivery rejected");
+        if (!response.ok) {
+          if (response.status >= 400 && response.status < 500 && response.status !== 408) {
+            await connection.query(
+              "UPDATE wareiq_access_notifications SET state = 'confirmed_failed' WHERE id = $1 AND state = 'pending'",
+              [row.id],
+            );
+            await connection.query("COMMIT");
+            logger.warn({ event: "access_notification_provider_rejected" }, "Access email was rejected by the provider");
+            return;
+          }
+          throw new Error("Delivery rejected");
+        }
         const result = await response.json() as { id?: string };
         if (!result.id) throw new Error("Delivery not confirmed");
         await connection.query("UPDATE wareiq_access_notifications SET state = 'sent' WHERE id = $1", [row.id]);

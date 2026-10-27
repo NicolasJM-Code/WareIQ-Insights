@@ -168,6 +168,7 @@ export const GetAccessSessionResponse = zod.object({
 })
 
 
+
 export const getAccessAdminResponseNotificationSummaryQueuedMin = 0;
 
 export const getAccessAdminResponseNotificationSummaryRetryingMin = 0;
@@ -231,6 +232,14 @@ export const GetAccessAdminResponse = zod.object({
   "section": zod.string(),
   "sectionName": zod.string()
 })),
+  "failedNotifications": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "recipient": zod.string().email(),
+  "roleName": zod.string(),
+  "kind": zod.enum(['reporting', 'platform']),
+  "createdAt": zod.coerce.date(),
+  "attempts": zod.number().int().min(1)
+})),
   "notificationSummary": zod.object({
   "status": zod.enum(['available', 'unavailable']),
   "queued": zod.number().int().min(getAccessAdminResponseNotificationSummaryQueuedMin),
@@ -238,6 +247,15 @@ export const GetAccessAdminResponse = zod.object({
   "accepted": zod.number().int().min(getAccessAdminResponseNotificationSummaryAcceptedMin),
   "failed": zod.number().int().min(getAccessAdminResponseNotificationSummaryFailedMin)
 })
+})
+
+
+export const RetryAccessNotificationParams = zod.object({
+  "notificationId": zod.coerce.string().uuid()
+})
+
+export const RetryAccessNotificationResponse = zod.object({
+  "status": zod.enum(['queued'])
 })
 
 

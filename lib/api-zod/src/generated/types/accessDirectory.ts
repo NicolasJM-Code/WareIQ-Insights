@@ -7,6 +7,7 @@
  */
 import type { AccessClient } from './accessClient';
 import type { AccessDirectoryNotificationSummary } from './accessDirectoryNotificationSummary';
+import type { AccessFailedNotification } from './accessFailedNotification';
 import type { AccessReport } from './accessReport';
 import type { AccessRole } from './accessRole';
 import type { AccessSite } from './accessSite';
@@ -18,5 +19,6 @@ export interface AccessDirectory {
   roles: AccessRole[];
   users: AccessUser[];
   reports: AccessReport[];
+  failedNotifications: AccessFailedNotification[];
   notificationSummary: AccessDirectoryNotificationSummary;
 }

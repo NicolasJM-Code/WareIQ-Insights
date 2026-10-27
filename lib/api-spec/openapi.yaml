@@ -167,6 +167,21 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AccessDirectory" }
+  /access/notifications/{notificationId}/retry:
+    post:
+      operationId: retryAccessNotification
+      parameters:
+        - in: path
+          name: notificationId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        default: { $ref: "#/components/responses/AccessFailure" }
+        "200":
+          description: Confirmed failed notice queued for retry
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessNotificationRetryResult" }
   /access/clients:
     post:
       operationId: saveAccessClient
@@ -690,13 +705,14 @@ components:
         sectionName: { type: string }
     AccessDirectory:
       type: object
-      required: [clients, sites, roles, users, reports, notificationSummary]
+      required: [clients, sites, roles, users, reports, notificationSummary, failedNotifications]
       properties:
         clients: { type: array, items: { $ref: "#/components/schemas/AccessClient" } }
         sites: { type: array, items: { $ref: "#/components/schemas/AccessSite" } }
         roles: { type: array, items: { $ref: "#/components/schemas/AccessRole" } }
         users: { type: array, items: { $ref: "#/components/schemas/AccessUser" } }
         reports: { type: array, items: { $ref: "#/components/schemas/AccessReport" } }
+        failedNotifications: { type: array, items: { $ref: "#/components/schemas/AccessFailedNotification" } }
         notificationSummary:
           type: object
           required: [status, queued, retrying, accepted, failed]
@@ -706,6 +722,21 @@ components:
             retrying: { type: integer, minimum: 0 }
             accepted: { type: integer, minimum: 0 }
             failed: { type: integer, minimum: 0 }
+    AccessFailedNotification:
+      type: object
+      required: [id, recipient, roleName, kind, createdAt, attempts]
+      properties:
+        id: { type: string, format: uuid }
+        recipient: { type: string, format: email }
+        roleName: { type: string }
+        kind: { type: string, enum: [reporting, platform] }
+        createdAt: { type: string, format: date-time }
+        attempts: { type: integer, minimum: 1 }
+    AccessNotificationRetryResult:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [queued] }
     AccessSession:
       type: object
       required: [status, platformAdmin, canCreateOwnReports, reportIds, sites, clientId, clientName, clientCompanyNumber, clientAddressLine1, clientAddressLine2, clientCity, clientRegion, clientPostalCode, clientCountry, clientLogoUrl]

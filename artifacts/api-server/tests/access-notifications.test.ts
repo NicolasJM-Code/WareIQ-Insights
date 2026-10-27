@@ -4,12 +4,16 @@ import { notificationMessage, notificationSender } from "../src/lib/access-notif
 import { changeRole } from "../src/lib/role-management";
 
 const mocks = vi.hoisted(() => ({
-  query: vi.fn(), release: vi.fn(), send: vi.fn(), getUser: vi.fn(),
+  query: vi.fn(), poolQuery: vi.fn(), release: vi.fn(), send: vi.fn(), getUser: vi.fn(),
   insert: vi.fn(), update: vi.fn(), warn: vi.fn(), summaryQuery: vi.fn(),
 }));
 vi.mock("@workspace/db", async () => ({
   ...(await import("../../../lib/db/src/schema")),
-  pool: { connect: async () => ({ query: mocks.query, release: mocks.release }), query: mocks.summaryQuery },
+  pool: {
+    connect: async () => ({ query: mocks.query, release: mocks.release }),
+    query: (sql: string, ...params: unknown[]) =>
+      sql.includes("count(*) FILTER") ? mocks.summaryQuery(sql, ...params) : mocks.poolQuery(sql, ...params),
+  },
   db: { insert: mocks.insert, update: mocks.update },
 }));
 vi.mock("@replit/connectors-sdk", () => ({
@@ -20,7 +24,8 @@ vi.mock("../src/lib/role-lock", () => ({ withRoleLock: async (fn: () => Promise<
 vi.mock("../src/lib/logger", () => ({ logger: { warn: mocks.warn } }));
 
 import {
-  deliverAccessNotifications, getAccessNotificationSummary, queueAccessNotifications, retryAllowed,
+  deliverAccessNotifications, getAccessNotificationSummary, listConfirmedFailedAccessNotifications,
+  queueAccessNotifications, retryAllowed, retryConfirmedFailedAccessNotification,
   preparePlatformNotification, confirmPlatformNotification,
 } from "../src/lib/access-notifications";
 
@@ -119,6 +124,8 @@ describe("durable delivery and duplicate protection", () => {
   };
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.poolQuery.mockResolvedValue({ rows: [] });
+    mocks.summaryQuery.mockResolvedValue({ rows: [] });
     mocks.query.mockImplementation(async (sql: string) => ({ rows: sql.startsWith("SELECT *") ? [{ ...job }] : [] }));
     mocks.send.mockResolvedValue({ ok: true, json: async () => ({ id: "provider-email-id" }) });
   });
@@ -145,9 +152,10 @@ describe("durable delivery and duplicate protection", () => {
     expect(queryCalls.some(([sql]) => sql.includes("state = 'sent'"))).toBe(true);
   });
   it("retains failed deliveries for retry without marking sent or leaking provider responses", async () => {
-    mocks.send.mockResolvedValue({ ok: false, json: async () => ({ error: "sensitive provider response" }) });
+    mocks.send.mockResolvedValue({ ok: false, status: 422, json: async () => ({ error: "sensitive provider response" }) });
     await deliverAccessNotifications();
     expect(mocks.query.mock.calls.some(([sql]) => sql.includes("state = 'sent'"))).toBe(false);
+    expect(mocks.query.mock.calls.some(([sql]) => sql.includes("state = 'confirmed_failed'"))).toBe(true);
     expect(JSON.stringify(mocks.warn.mock.calls)).not.toContain("sensitive");
     expect(mocks.release).toHaveBeenCalledOnce();
   });
@@ -207,6 +215,50 @@ describe("durable delivery and duplicate protection", () => {
     await deliverAccessNotifications();
     expect(mocks.send).not.toHaveBeenCalled();
     expect(mocks.query.mock.calls.some(([sql]) => sql.includes("state = 'failed'"))).toBe(true);
+  });
+  it.each([408, 503])("does not mark status %i as a confirmed failure", async (status) => {
+    mocks.send.mockResolvedValue({ ok: false, status, json: async () => ({}) });
+    await deliverAccessNotifications();
+    expect(mocks.query.mock.calls.some(([sql]) => sql.includes("state = 'confirmed_failed'"))).toBe(false);
+    expect(mocks.query.mock.calls.some(([sql]) => sql.includes("state = 'sent'"))).toBe(false);
+  });
+  it("keeps a success response without a provider ID ambiguous", async () => {
+    mocks.send.mockResolvedValue({ ok: true, json: async () => ({}) });
+    await deliverAccessNotifications();
+    expect(mocks.query.mock.calls.some(([sql]) => sql.includes("state = 'confirmed_failed'"))).toBe(false);
+    expect(mocks.query.mock.calls.some(([sql]) => sql.includes("state = 'sent'"))).toBe(false);
+  });
+  it("reuses the original provider idempotency key after retrying a confirmed rejection", async () => {
+    mocks.send.mockResolvedValueOnce({ ok: false, status: 422, json: async () => ({}) });
+    await deliverAccessNotifications();
+    mocks.poolQuery.mockResolvedValueOnce({ rows: [{ id: job.id }] });
+    await expect(retryConfirmedFailedAccessNotification(job.id)).resolves.toBe(true);
+
+    mocks.send.mockResolvedValueOnce({ ok: true, json: async () => ({ id: "provider-email-id" }) });
+    await deliverAccessNotifications();
+    expect(mocks.send).toHaveBeenCalledTimes(2);
+    expect(mocks.send.mock.calls.map(([, options]) => options.headers["Idempotency-Key"]))
+      .toEqual([`wareiq-access/${job.id}`, `wareiq-access/${job.id}`]);
+  });
+  it("lists only confirmed provider rejections and retries atomically without changing notice identity", async () => {
+    const failedNotice = {
+      id: "event-one", recipient: member.email, role_name: "Supervisor",
+      kind: "reporting", created_at: new Date(), attempts: 2,
+    };
+    mocks.poolQuery.mockResolvedValueOnce({ rows: [failedNotice] });
+    await expect(listConfirmedFailedAccessNotifications()).resolves.toEqual([failedNotice]);
+    expect(mocks.poolQuery.mock.calls[0]![0]).toContain("state = 'confirmed_failed'");
+
+    mocks.poolQuery.mockResolvedValueOnce({ rows: [{ id: "event-one" }] });
+    await expect(retryConfirmedFailedAccessNotification("event-one")).resolves.toBe(true);
+    const [sql, params] = mocks.poolQuery.mock.calls[1]!;
+    expect(sql).toContain("state = 'confirmed_failed'");
+    expect(sql).toContain("first_attempt_at = NULL");
+    expect(sql).toContain("RETURNING id");
+    expect(params).toEqual(["event-one"]);
+
+    mocks.poolQuery.mockResolvedValueOnce({ rows: [] });
+    await expect(retryConfirmedFailedAccessNotification("event-one")).resolves.toBe(false);
   });
   it("isolates outbox insertion failure inside a savepoint", async () => {
     const transaction = vi.fn(async () => { throw new Error("insert failed"); });

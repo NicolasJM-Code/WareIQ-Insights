@@ -34,6 +34,7 @@ import type {
   AccessFailureResponse,
   AccessHistoryPage,
   AccessLegacyReportImportInput,
+  AccessNotificationRetryResult,
   AccessOwnReport,
   AccessOwnReportInput,
   AccessRole,
@@ -875,6 +876,74 @@ export function useGetAccessAdmin<TData = Awaited<ReturnType<typeof getAccessAdm
 
 
 
+
+export const getRetryAccessNotificationUrl = (notificationId: string,) => {
+
+
+
+
+  return `/api/access/notifications/${notificationId}/retry`
+}
+
+export const retryAccessNotification = async (notificationId: string, options?: Parameters<typeof customFetch>[1]): Promise<AccessNotificationRetryResult> => {
+
+  return customFetch<AccessNotificationRetryResult>(getRetryAccessNotificationUrl(notificationId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRetryAccessNotificationMutationKey = () => ['retryAccessNotification'] as const;
+
+export const getRetryAccessNotificationMutationOptions = <TError = ErrorType<AccessFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryAccessNotification>>, TError,RetryAccessNotificationMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof retryAccessNotification>>, TError,RetryAccessNotificationMutationVariables, TContext> => {
+
+const mutationKey = getRetryAccessNotificationMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof retryAccessNotification>>, RetryAccessNotificationMutationVariables> = (props) => {
+          const {notificationId} = props ?? {};
+
+          return  retryAccessNotification(notificationId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RetryAccessNotificationMutationResult = NonNullable<Awaited<ReturnType<typeof retryAccessNotification>>>
+
+    export type RetryAccessNotificationMutationError = ErrorType<AccessFailureResponse>
+    export type RetryAccessNotificationMutationVariables = {notificationId: string}
+
+    export const useRetryAccessNotification = <TError = ErrorType<AccessFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryAccessNotification>>, TError,RetryAccessNotificationMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof retryAccessNotification>>,
+        TError,
+        RetryAccessNotificationMutationVariables,
+        TContext
+      > => {
+      return useMutation(getRetryAccessNotificationMutationOptions(options), queryClient);
+    }
 
 export const getSaveAccessClientUrl = () => {
 

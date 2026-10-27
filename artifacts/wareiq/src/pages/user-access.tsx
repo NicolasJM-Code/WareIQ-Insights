@@ -10,6 +10,7 @@ import {
   useGetAccessSession,
   useSaveAccessClient,
   useRequestAccessClientLogoUpload,
+  useRetryAccessNotification,
   useSaveAccessClientLogo,
   useSaveAccessRole,
   useSaveAccessUser,
@@ -58,6 +59,7 @@ function Directory({ dir }: { dir: AccessDirectory }) {
   const saveRole = useSaveAccessRole();
   const saveUser = useSaveAccessUser();
   const saveWarehouse = useSaveAccessWarehouse();
+  const retryNotification = useRetryAccessNotification();
   const del = useDeleteAccessEntry();
   const [tab, setTab] = useState<Tab>('clients');
   const [whDlg, setWhDlg] = useState<{ open: boolean; item: AccessSite | null; k: number }>({ open: false, item: null, k: 0 });
@@ -120,6 +122,15 @@ function Directory({ dir }: { dir: AccessDirectory }) {
     const saved = await saveUser.mutateAsync({ data: v });
     await refresh();
     toast({ title: 'User access saved', description: notificationDescription(saved.notification) });
+  };
+  const retryFailedNotice = async (noticeId: string) => {
+    try {
+      await retryNotification.mutateAsync({ notificationId: noticeId });
+      await refresh();
+      toast({ title: 'Email retry queued', description: 'The access change was not repeated.' });
+    } catch (e) {
+      toast({ title: 'Could not retry email', description: errorMessage(e), variant: 'destructive' });
+    }
   };
 
   const doSaveWarehouse = async (v: WarehouseInput) => { await saveWarehouse.mutateAsync({ data: v }); await refresh(); toast({ title: v.id ? 'Warehouse saved' : 'Warehouse added' }); };
@@ -191,6 +202,39 @@ function Directory({ dir }: { dir: AccessDirectory }) {
           <Button data-testid="button-new-user" disabled={noClients} onClick={() => setUserDlg((d) => ({ open: true, item: null, k: d.k + 1 }))}><Plus className="mr-1.5 h-4 w-4" />Approve user</Button>
         </div>
       </header>
+
+      <section className="rounded-md border bg-card p-4" aria-labelledby="failed-notice-title" data-testid="section-failed-notifications">
+        <h2 id="failed-notice-title" className="font-semibold">Provider-confirmed email failures</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Retrying sends the original notice again without repeating the access change. Notices with an unclear delivery outcome are not eligible.
+        </p>
+        {dir.failedNotifications.length === 0 ? (
+          <p className="mt-3 text-sm text-muted-foreground" data-testid="text-no-failed-notifications">No confirmed failed emails.</p>
+        ) : (
+          <ul className="mt-3 divide-y" data-testid="list-failed-notifications">
+            {dir.failedNotifications.map((notice) => (
+              <li key={notice.id} data-testid={`row-failed-notification-${notice.id}`} className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0 text-sm">
+                  <p className="font-medium">{notice.recipient}</p>
+                  <p className="text-muted-foreground">
+                    {notice.kind === 'platform' ? 'Platform access' : 'Reporting access'} · {notice.roleName} · {notice.attempts} {notice.attempts === 1 ? 'attempt' : 'attempts'}
+                  </p>
+                  <p className="text-xs text-muted-foreground">Created {new Date(notice.createdAt).toLocaleString()}</p>
+                </div>
+                <button
+                  type="button"
+                  data-testid={`button-retry-notification-${notice.id}`}
+                  disabled={retryNotification.isPending}
+                  onClick={() => void retryFailedNotice(notice.id)}
+                  className="inline-flex h-9 shrink-0 items-center justify-center rounded-md border px-3 text-sm font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {retryNotification.isPending ? 'Queueing…' : 'Retry email'}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       <ol className="rise grid grid-cols-2 gap-px overflow-hidden rounded-md border bg-border md:grid-cols-4" aria-label="Setup order" data-testid="list-setup-steps">
         {(['Client', 'Warehouses', 'Roles', 'Users'] as const).map((l, i) => {

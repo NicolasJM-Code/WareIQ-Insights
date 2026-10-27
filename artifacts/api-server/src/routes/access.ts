@@ -12,6 +12,7 @@ import {
   ImportAccessOwnReportsBody, ImportAccessOwnReportsResponse,
   RequestAccessClientLogoUploadBody, RequestAccessClientLogoUploadResponse,
   SaveAccessClientLogoBody, SaveAccessClientLogoResponse,
+  RetryAccessNotificationParams, RetryAccessNotificationResponse,
 } from "@workspace/api-zod";
 import { getAuth } from "@clerk/express";
 import { AccessError, accessFor, requireAccessAdmin, requireMemberAccess } from "../lib/reporting-access";
@@ -23,7 +24,10 @@ import { accessReports, allowedSection } from "../lib/access-catalog";
 import { reportDefinitionError } from "../lib/own-report-validation";
 import { GetAuthSessionResponse, GetSettingsAccessResponse } from "@workspace/api-zod";
 import { requireIdentity, requireAdministrator } from "../middlewares/access";
-import { getAccessNotificationSummary, queueAccessNotifications } from "../lib/access-notifications";
+import {
+  getAccessNotificationSummary, listConfirmedFailedAccessNotifications, queueAccessNotifications,
+  retryConfirmedFailedAccessNotification,
+} from "../lib/access-notifications";
 import { reportingChangeNotices } from "../lib/reporting-notification-change";
 
 const router: IRouter = Router();
@@ -70,12 +74,17 @@ router.get("/access/me", handler(async (req, res) => {
 }));
 router.get("/access/admin", handler(async (req, res) => {
   await requireAccessAdmin(req);
-  const [clients, sites, roles, users] = await Promise.all([
+  const [clients, sites, roles, users, notifications] = await Promise.all([
     db.select().from(clientsTable).orderBy(clientsTable.name),
     db.select().from(sitesTable).orderBy(sitesTable.name),
     db.select().from(rolesTable).orderBy(rolesTable.name),
     db.select().from(membersTable).orderBy(membersTable.name),
+    listConfirmedFailedAccessNotifications(),
   ]);
+  const failedNotifications = notifications.map((notice) => ({
+    id: notice.id, recipient: notice.recipient, roleName: notice.role_name,
+    kind: notice.kind, createdAt: notice.created_at, attempts: notice.attempts,
+  }));
   let notificationSummary: {
     status: "available" | "unavailable";
     queued: number;
@@ -90,8 +99,15 @@ router.get("/access/admin", handler(async (req, res) => {
     notificationSummary = { status: "unavailable", queued: 0, retrying: 0, accepted: 0, failed: 0 };
   }
   res.json(GetAccessAdminResponse.parse({
-    clients, sites, roles, users, reports: accessReports, notificationSummary,
+    clients, sites, roles, users, reports: accessReports, notificationSummary, failedNotifications,
   }));
+}));
+router.post("/access/notifications/:notificationId/retry", handler(async (req, res) => {
+  await requireAccessAdmin(req);
+  const params = parsed(RetryAccessNotificationParams, req.params);
+  const queued = await retryConfirmedFailedAccessNotification(params.notificationId);
+  if (!queued) throw new AccessError(409, "Only provider-confirmed failed notices can be retried.");
+  res.json(RetryAccessNotificationResponse.parse({ status: "queued" }));
 }));
 router.post("/access/clients", handler(async (req, res) => {
   await requireAccessAdmin(req);
