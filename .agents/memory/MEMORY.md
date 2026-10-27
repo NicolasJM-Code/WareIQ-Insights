@@ -1,0 +1,1 @@
+- [Vite instrumentation compatibility](vite-instrumentation.md) — metadata injection can break generic JSX even when TypeScript passes.

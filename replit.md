@@ -1,6 +1,6 @@
-# [Project name]
+# WareIQ
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+Warehouse reporting and product traceability for management, supervisors, and operational users.
 
 ## Run & Operate
 
@@ -30,7 +30,11 @@ _Populate as you build — non-obvious choices a reader couldn't infer from the 
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+The source requirements are in `attached_assets/Pasted-WMS-Reporting-System-Summary-Specification-Version-1-0-_1793098308089.txt`.
+
+WareIQ reports against an existing operational PostgreSQL WMS database; it must never modify WMS transactions. Do not replace that database with the project's managed database. Live reporting requires the customer's approved reporting views and schema mapping.
+
+The initial application is a frontend demonstration with labeled sample data, not a live WMS integration. Database credentials must not be stored in browser storage or source control. Production connections need server-side secrets, a dedicated SELECT-only account, connection pooling, query timeouts, and administrator access control.
 
 ## User preferences
 

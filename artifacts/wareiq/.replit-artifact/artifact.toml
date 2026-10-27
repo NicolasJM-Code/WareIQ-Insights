@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "WareIQ"
+description = "Warehouse reporting and product traceability platform with database connection settings and read-only operational reporting."
+version = "1.0.0"
+id = "artifacts/wareiq"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 21044
+
+[services.development]
+run = "pnpm --filter @workspace/wareiq run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/wareiq", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/wareiq/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21044"
+BASE_PATH = "/"
