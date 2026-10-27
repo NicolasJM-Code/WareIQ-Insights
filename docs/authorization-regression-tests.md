@@ -28,6 +28,9 @@ helper used by the live command: preflight refusal (including recovery),
 ownership/email/ID mismatches, setup and assertion failures, invalid journals,
 provider outages, and journal write/unlink failures. This coverage is part of
 the ordinary offline suite, not `test:auth:provider`.
+The synthetic matching key pair has a local pairing attestation; tests also
+confirm that changing either key or removing the attestation stops before
+provider and journal work.
 
 The offline suite also checks that the package scripts and Vitest configs keep
 the live test out of ordinary discovery. It runs the live test entrypoint in an
@@ -111,8 +114,23 @@ failure; those conditions are never reported as a skipped/pass result.
 2. Supply matching `CLERK_SECRET_KEY` (`sk_test_…`) and
    `CLERK_PUBLISHABLE_KEY` (`pk_test_…`) using workspace secrets. Never put keys,
    cookies, session JWTs, or account passwords in commands, source, or test logs.
-   The suite refuses missing/live keys, missing opt-in, and `NODE_ENV=production`
-   before importing the app or making provider calls.
+   Clerk's publishable key encodes its frontend API instance URL, but the secret
+   key is opaque and cannot be matched to an instance offline. After verifying
+   that both keys came from the same isolated Development instance in Clerk,
+   generate a fingerprint of the exact pair without printing either key:
+
+   ```sh
+   node -e 'const { createHash } = require("node:crypto"); const secret = process.env.CLERK_SECRET_KEY; const publishable = process.env.CLERK_PUBLISHABLE_KEY; if (!secret || !publishable) process.exit(1); process.stdout.write(createHash("sha256").update("wareiq-clerk-provider-key-pair-v1\0").update(secret).update("\0").update(publishable).digest("hex") + "\n")'
+   ```
+
+   Save the resulting fingerprint as the workspace secret
+   `CLERK_PROVIDER_KEY_PAIR_ATTESTATION`. Recompute and update it whenever either
+   Clerk key changes, and only after verifying the new pair in Clerk. This is an
+   operator attestation, not an independent discovery of the secret key's
+   instance. The runner refuses missing, malformed, or stale fingerprints before
+   reading a recovery journal or making provider calls. It also refuses missing
+   or live keys, missing opt-in, and `NODE_ENV=production` before importing the
+   app or making provider calls.
 3. Do not supply an existing email, account ID, session, token, or published app
    URL. The runner has no remote application target: Supertest hosts the real
    Express app/router on an ephemeral local listener. The app DB is an in-memory

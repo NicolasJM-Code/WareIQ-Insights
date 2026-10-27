@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join, matchesGlob, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { createKeyPairAttestation } from "../provider-tests/harness";
 
 const workspaceRoot = resolve(process.cwd());
 const providerTestFile = "artifacts/api-server/provider-tests/clerk.test.ts";
@@ -118,6 +119,9 @@ async function expectLiveEntrypointToRespectPreflightAndRecovery() {
       CLERK_PROVIDER_TESTS: "isolated-development-only",
       CLERK_SECRET_KEY: "sk_test_offline_fake",
       CLERK_PUBLISHABLE_KEY: "pk_test_offline_fake",
+      CLERK_PROVIDER_KEY_PAIR_ATTESTATION: createKeyPairAttestation(
+        "sk_test_offline_fake", "pk_test_offline_fake",
+      ),
       CLERK_PROVIDER_CLEANUP_MANIFEST: journalPath,
     });
     expect(preflight.error).toBeUndefined();
@@ -131,11 +135,35 @@ async function expectLiveEntrypointToRespectPreflightAndRecovery() {
     expect(existsSync(callLogPath)).toBe(false);
     expect(existsSync(journalPath)).toBe(true);
 
+    const staleAttestation = runLiveEntrypoint(directory, configPath, callLogPath, {
+      NODE_ENV: "test",
+      CLERK_PROVIDER_TESTS: "isolated-development-only",
+      CLERK_SECRET_KEY: "sk_test_offline_other",
+      CLERK_PUBLISHABLE_KEY: "pk_test_offline_fake",
+      CLERK_PROVIDER_KEY_PAIR_ATTESTATION: createKeyPairAttestation(
+        "sk_test_offline_fake", "pk_test_offline_fake",
+      ),
+      CLERK_PROVIDER_CLEANUP_MANIFEST: journalPath,
+    });
+    expect(staleAttestation.error).toBeUndefined();
+    expect(staleAttestation.status).not.toBe(0);
+    expect(`${staleAttestation.stdout ?? ""}\n${staleAttestation.stderr ?? ""}`)
+      .toContain("local pairing attestation");
+    expect(`${staleAttestation.stdout ?? ""}\n${staleAttestation.stderr ?? ""}`)
+      .not.toContain("FORBIDDEN_PROVIDER_APP_IMPORT");
+    expect(`${staleAttestation.stdout ?? ""}\n${staleAttestation.stderr ?? ""}`)
+      .not.toContain("FORBIDDEN_OFFLINE_NETWORK");
+    expect(existsSync(callLogPath)).toBe(false);
+    expect(existsSync(journalPath)).toBe(true);
+
     const recovery = runLiveEntrypoint(directory, configPath, callLogPath, {
       NODE_ENV: "test",
       CLERK_PROVIDER_TESTS: "isolated-development-only",
       CLERK_SECRET_KEY: "sk_test_offline_fake",
       CLERK_PUBLISHABLE_KEY: "pk_test_offline_fake",
+      CLERK_PROVIDER_KEY_PAIR_ATTESTATION: createKeyPairAttestation(
+        "sk_test_offline_fake", "pk_test_offline_fake",
+      ),
       CLERK_PROVIDER_CLEANUP_MANIFEST: journalPath,
     });
     expect(recovery.error).toBeUndefined();

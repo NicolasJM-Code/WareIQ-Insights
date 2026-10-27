@@ -16,3 +16,11 @@ Treat a failed account-creation response without a returned ID as an unknown out
 **Why:** A provider can commit account creation before a network timeout hides the response. A blind retry can create another fixture, while guessed cleanup can delete an unrelated account.
 
 **How to apply:** Require exact generated email and private run-marker verification in the same Development instance before manual cleanup or another creation attempt. Recovery instructions must distinguish a usable journal, absent/partial persistence, and successful provider deletion followed by failed local journal removal.
+
+## Offline key-pair attestation
+
+Clerk's publishable key reveals the frontend API URL, but its secret key does not expose a locally verifiable instance identifier. When provider tests must stay offline through preflight, bind the exact configured pair with a local fingerprint and require an operator to create/update it only after verifying both keys in the same isolated Development instance.
+
+**Why:** Comparing two standard Clerk keys cannot establish their shared instance offline; an instance-mismatch refusal based on the secret key alone would be an unsupported assumption.
+
+**How to apply:** Keep the attestation check before recovery-journal reads and provider actions. Treat it as an operator assertion that detects later key drift, not proof of the pair's origin. Never log the keys while generating or checking the fingerprint.

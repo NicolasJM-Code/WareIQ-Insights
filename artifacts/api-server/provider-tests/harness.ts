@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
@@ -25,12 +25,24 @@ export type ProviderUsers = {
   deleteUser(id: string): Promise<unknown>;
 };
 export const journalIO = { mkdir, readFile, rename, unlink, writeFile };
+const keyPairAttestationVersion = "wareiq-clerk-provider-key-pair-v1\0";
 type Dependencies = {
   users: ProviderUsers;
   journal?: typeof journalIO;
   journalDirectory?: string;
   info?: (message: string) => void;
 };
+
+// Clerk's secret key does not expose its instance ID locally. This fingerprint
+// binds the exact pair an operator has verified in the Clerk dashboard.
+export function createKeyPairAttestation(secretKey: string, publishableKey: string) {
+  return createHash("sha256")
+    .update(keyPairAttestationVersion)
+    .update(secretKey)
+    .update("\0")
+    .update(publishableKey)
+    .digest("hex");
+}
 
 // Explicit input makes offline refusal tests independent of workspace secrets.
 export function preflight(env: NodeJS.ProcessEnv) {
@@ -39,6 +51,12 @@ export function preflight(env: NodeJS.ProcessEnv) {
     || !env.CLERK_SECRET_KEY?.startsWith("sk_test_")
     || !env.CLERK_PUBLISHABLE_KEY?.startsWith("pk_test_")) {
     throw new Error("Provider checks require explicit opt-in and development-only Clerk keys. See docs/authorization-regression-tests.md.");
+  }
+  const attestation = env.CLERK_PROVIDER_KEY_PAIR_ATTESTATION;
+  const expected = createKeyPairAttestation(env.CLERK_SECRET_KEY, env.CLERK_PUBLISHABLE_KEY);
+  if (!attestation || !/^[a-f0-9]{64}$/.test(attestation)
+    || !timingSafeEqual(Buffer.from(attestation, "hex"), Buffer.from(expected, "hex"))) {
+    throw new Error("Provider checks refused: configured Clerk keys do not match the local pairing attestation. See docs/authorization-regression-tests.md.");
   }
 }
 

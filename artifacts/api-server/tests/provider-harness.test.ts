@@ -3,15 +3,20 @@ import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  journalIO, runProviderCheck, type Manifest, type ProviderUsers,
+  createKeyPairAttestation, journalIO, runProviderCheck, type Manifest, type ProviderUsers,
 } from "../provider-tests/harness";
 
 // No Clerk/app import. Synthetic strings only; never read process.env.
+const syntheticSecretKey = "sk_test_offline_fake";
+const syntheticPublishableKey = "pk_test_offline_fake";
 const safeEnv = {
   NODE_ENV: "test",
   CLERK_PROVIDER_TESTS: "isolated-development-only",
-  CLERK_SECRET_KEY: "sk_test_offline_fake",
-  CLERK_PUBLISHABLE_KEY: "pk_test_offline_fake",
+  CLERK_SECRET_KEY: syntheticSecretKey,
+  CLERK_PUBLISHABLE_KEY: syntheticPublishableKey,
+  CLERK_PROVIDER_KEY_PAIR_ATTESTATION: createKeyPairAttestation(
+    syntheticSecretKey, syntheticPublishableKey,
+  ),
 };
 const providerDetail = "FAKE_PRIVATE_PROVIDER_RESPONSE";
 const outage = () => new Error(providerDetail);
@@ -99,6 +104,26 @@ describe("offline provider harness safety", () => {
         { ...(recovery ? recoveryEnv() : safeEnv), ...override },
         { ...dependencies(), journal: journal as unknown as typeof journalIO }, check,
       )).rejects.toThrow("explicit opt-in and development-only");
+      for (const call of [...Object.values(users), ...Object.values(journal), check, info]) {
+        expect(call).not.toHaveBeenCalled();
+      }
+    }
+  });
+
+  it.each([
+    ["a changed secret key", { CLERK_SECRET_KEY: "sk_test_offline_other" }],
+    ["a changed publishable key", { CLERK_PUBLISHABLE_KEY: "pk_test_offline_other" }],
+    ["a missing attestation", { CLERK_PROVIDER_KEY_PAIR_ATTESTATION: undefined }],
+    ["a malformed attestation", { CLERK_PROVIDER_KEY_PAIR_ATTESTATION: "not-a-fingerprint" }],
+  ])("refuses %s before provider, journal or application work", async (_name, override) => {
+    for (const recovery of [false, true]) {
+      const journal = {
+        mkdir: vi.fn(), readFile: vi.fn(), writeFile: vi.fn(), unlink: vi.fn(),
+      };
+      await expect(runProviderCheck(
+        { ...(recovery ? recoveryEnv() : safeEnv), ...override },
+        { ...dependencies(), journal: journal as unknown as typeof journalIO }, check,
+      )).rejects.toThrow("local pairing attestation");
       for (const call of [...Object.values(users), ...Object.values(journal), check, info]) {
         expect(call).not.toHaveBeenCalled();
       }
