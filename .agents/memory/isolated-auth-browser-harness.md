@@ -13,6 +13,12 @@ For renewal checks, observe SDK-written cookies passively and prove access after
 **Why:** A test-triggered refresh can hide a broken automatic renewal timer. A denial-only expiry test cannot establish that a valid open session stays authorized.
 
 **How to apply:** Use the same open document and session, require advancing cookie issuance/expiry, then require a fresh server access response. After blocking renewal, use the latest cookie's expiry rather than the initial one.
+
+When delaying an authorization response to prove recovery ordering, observe the browser's original fetch and return its original response rather than replacing it with Playwright's API-client request.
+
+**Why:** During real Development cookie recovery, Playwright `route.fetch()` did not produce the authenticated access summary even though the SDK had restored the session cookie; forwarding the original browser fetch preserved the actual handshake and passed.
+
+**How to apply:** Delay only delivery to the hook, preserve the original request and response, restore fetch in cleanup, and never manufacture cookies or permission summaries.
 ## Verified email versus fresh-browser verification
 
 A backend-created, verified email can still encounter Clerk's client-trust email challenge in a new browser. Do not disable the challenge or replace the screen with a sign-in ticket to make a hosted-screen check pass.

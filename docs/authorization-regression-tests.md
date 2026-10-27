@@ -267,8 +267,8 @@ pnpm test:auth:browser:renewal
 This is a separate live run, not part of `test:auth:browser`, the ordinary
 offline suite, the authorization workflow, or a build. It uses the same
 Development-only preflight and private cleanup journal described above and
-creates a **new** disposable account for this run. Allow about three minutes
-for two genuine short-lived cookie lifetimes plus access polling.
+creates a **new** disposable account for this run. Allow about five minutes
+for two genuine short-lived cookie lifetimes, outage polling and SDK recovery.
 
 After ticket sign-in and a cookie-authenticated reload control, it keeps the
 same reporting document open with Clerk networking enabled. It passively
@@ -286,7 +286,27 @@ observes at least one blocked session-token renewal attempt, and waits past
 the **latest** cookie's expiry. The real hook's next access recheck must lock
 both guards and permissions; reporting, settings and own-report APIs must
 deny access without reaching protected handlers. A non-renewing SDK therefore
-cannot pass only because it correctly locks on expiry.
+cannot pass only because it correctly locks on expiry. Another complete access
+poll with networking still blocked must leave permissions and both guards
+locked, despite the previously successful cached access summary.
+
+The runner then removes only its SDK-network block, keeping the same browser
+context, session and reporting document open. It does not sign in again, reload,
+inject cookies, request a manual token, or call `getToken` to recover. Passive
+cookie observation must prove that the SDK writes a fresh `__session` cookie:
+the session ID stays the same, issuance and expiry advance beyond the last
+pre-outage cookie, and the cookie is currently unexpired.
+
+The real hook must obtain a new successful `/api/access/me` response granting
+active administrator reporting access. The runner observes the browser's real
+fetch and briefly delays returning that successful response to the hook. It
+returns the original response unchanged only after asserting
+that permissions and both protected markers stayed locked throughout recovery.
+Thus neither stale cached permissions nor the fresh cookie alone can unlock
+reporting before the hook receives fresh server authorization. After delivery,
+both markers and permissions must recover and same-origin cookie-only summary
+and harmless protected-handler requests must succeed. Failure to renew or
+recover within the bounded waits fails the run; it is never skipped.
 
 The database boundary, harmless catalog and sensitive-output suppression are
 unchanged. No report data is loaded. The generated account is ownership-checked

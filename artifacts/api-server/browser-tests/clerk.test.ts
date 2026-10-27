@@ -2,7 +2,7 @@
 import { afterAll, expect, it, vi } from "vitest";
 import type { Server } from "node:http";
 import { resolve } from "node:path";
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Page, type Route } from "playwright";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import { clerkClient } from "@clerk/express";
@@ -99,12 +99,16 @@ async function freezeRefresh(context: BrowserContext) {
   // Keep the authentic cookie but stop Clerk refreshing it or learning about
   // revocation. The application's real /access/me polling must fail closed.
   let blockedRenewals = 0;
-  await context.route("**/*", route => {
+  const block = (route: Route) => {
     const url = new URL(route.request().url());
     if (url.origin !== origin && /\/client\/sessions\/[^/]+\/tokens(?:\/|$)/.test(url.pathname)) blockedRenewals++;
     return url.origin === origin ? route.continue() : route.abort();
-  });
-  return () => blockedRenewals;
+  };
+  await context.route("**/*", block);
+  return {
+    blockedRenewals: () => blockedRenewals,
+    restore: () => context.unroute("**/*", block),
+  };
 }
 
 async function cookieControl(page: Page) {
@@ -172,6 +176,74 @@ async function pastExpiry(exp: number) {
   await new Promise(done => setTimeout(done, wait));
 }
 
+async function recoverRenewal(
+  context: BrowserContext, page: Page, last: Awaited<ReturnType<typeof sessionCookie>>,
+  restore: () => Promise<void>,
+) {
+  // Observe the whole recovery window, not just a final snapshot: cached
+  // permissions must never unlock either guard before fresh server evidence.
+  const recovery = await page.evaluateHandle(() => {
+    let unlocked = false;
+    let activeSummary = false;
+    let release!: () => void;
+    const delivered = new Promise<void>(done => { release = done; });
+    const originalFetch = window.fetch;
+    // Observe and delay the browser's real fetch result, not a request made
+    // through Playwright's API client (which has different cookie handling).
+    window.fetch = async (...args: Parameters<typeof fetch>) => {
+      const response = await originalFetch.apply(window, args);
+      if (new URL(response.url).pathname === "/api/access/me" && response.status === 200) {
+        const access = await response.clone().json();
+        if (access.status === "active" && access.platformAdmin === true && access.reportIds.length > 0) {
+          activeSummary = true;
+          await delivered;
+        }
+      }
+      return response;
+    };
+    const check = () => {
+      unlocked ||= document.querySelector('[data-testid="permissions"]')?.textContent !== "locked"
+        || !!document.querySelector('[data-testid="report-gate"], [data-testid="admin-gate"]');
+    };
+    check();
+    const observer = new MutationObserver(check);
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    return {
+      received: () => activeSummary,
+      release,
+      stop: () => { check(); observer.disconnect(); return unlocked; },
+      dispose: () => { release(); observer.disconnect(); window.fetch = originalFetch; },
+    };
+  });
+  try {
+    phase = "restored SDK networking and passive cookie recovery";
+    await restore();
+    await expect.poll(async () => {
+      const fresh = await sessionCookie(context);
+      return fresh.sid === last.sid && fresh.iat > last.iat && fresh.exp > last.exp
+        && fresh.exp * 1000 > Date.now();
+    }, { timeout: 90_000, interval: 500 }).toBe(true);
+
+    phase = "fresh server authorization held before guard recovery";
+    await expect.poll(() => recovery.evaluate(state => state.received()), { timeout: 35_000 }).toBe(true);
+    // Even with a fresh SDK cookie and the server's successful response waiting
+    // at the network boundary, the old cached summary must not grant access.
+    phase = "cached permissions remain locked before fresh summary delivery";
+    expect(await recovery.evaluate(state => state.stop())).toBe(false);
+    expect(await page.getByTestId("permissions").textContent()).toBe("locked");
+    expect(await page.getByTestId("report-gate").count()).toBe(0);
+    expect(await page.getByTestId("admin-gate").count()).toBe(0);
+
+    phase = "fresh access summary delivery and reporting recovery";
+    await recovery.evaluate(state => state.release());
+    await page.getByTestId("admin-gate").waitFor({ state: "visible" });
+    await cookieControl(page);
+  } finally {
+    await recovery.evaluate(state => state.dispose());
+    await recovery.dispose();
+  }
+}
+
 async function renewal(userId: string) {
   phase = "renewal browser-authenticated positive control";
   const signedIn = await signIn(userId);
@@ -196,7 +268,7 @@ async function renewal(userId: string) {
     await cookieControl(page);
 
     phase = "post-renewal blocked refresh positive control";
-    const blockedRenewals = await freezeRefresh(context);
+    const outage = await freezeRefresh(context);
     await cookieControl(page);
     // Snapshot after blocking: a renewal just before the block must not make
     // the denial assertion run against the wrong token's expiry.
@@ -206,8 +278,12 @@ async function renewal(userId: string) {
     await pastExpiry(last.exp);
     const recheck = watchRevalidation(page);
     await locked(page, recheck, "failed renewal");
-    expect(blockedRenewals()).toBeGreaterThan(0);
-    console.info("Genuine SDK cookie renewal preserved reporting; failed renewal locked open-page guards.");
+    expect(outage.blockedRenewals()).toBeGreaterThan(0);
+    // Keep networking blocked for another complete access poll: stale cached
+    // success must not unlock reporting while the outage continues.
+    await locked(page, watchRevalidation(page), "continued renewal outage");
+    await recoverRenewal(context, page, last, outage.restore);
+    console.info("SDK renewal preserved reporting; outage locked guards; fresh cookies and server access restored reporting.");
   } finally {
     await context.close();
   }
@@ -215,7 +291,7 @@ async function renewal(userId: string) {
 
 const renewalRun = process.env.CLERK_BROWSER_SCENARIO === "renewal";
 it(renewalRun
-  ? "renews real browser cookies while reporting stays open, then locks on failed renewal"
+  ? "renews real browser cookies, locks on failed renewal, then safely recovers after connectivity returns"
   : "authenticates real browser cookies then locks reporting on expiry and immediate revocation", async () => {
   // Fail without network or account creation unless explicitly enabled.
   preflight();
