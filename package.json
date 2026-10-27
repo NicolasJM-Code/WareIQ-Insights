@@ -4,6 +4,7 @@
   "license": "MIT",
   "scripts": {
     "test:auth": "vitest run --config vitest.config.ts",
+    "test:auth:provider": "vitest run --config vitest.provider.config.ts",
     "test:auth:typecheck": "pnpm run typecheck:libs && pnpm --filter @workspace/api-server exec tsc -p tsconfig.test.json && pnpm --filter @workspace/wareiq exec tsc -p tsconfig.test.json",
     "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
     "build": "pnpm run typecheck && pnpm -r --if-present run build",

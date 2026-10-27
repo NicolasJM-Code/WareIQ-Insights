@@ -3,6 +3,34 @@ import type { RequestHandler } from "express";
 import { appRole, verifiedPrimaryEmail } from "../lib/access-policy";
 export { appRole, type AppRole } from "../lib/access-policy";
 
+// A valid signature alone does not prove the session is still active: an issued
+// JWT can remain cryptographically valid after provider-side revocation.
+// Run once before BOTH membership and legacy routes, without caching approvals.
+export const requireActiveSession: RequestHandler = async (req, res, next) => {
+  const { userId, sessionId } = getAuth(req);
+  if (!userId) { next(); return; } // Each route owns its signed-out policy.
+  res.setHeader("Cache-Control", "private, no-store");
+  if (!sessionId) {
+    res.status(401).json({ error: "Sign in to continue." });
+    return;
+  }
+  try {
+    const session = await clerkClient.sessions.getSession(sessionId);
+    if (session.status !== "active" || session.userId !== userId) {
+      res.status(401).json({ error: "Sign in to continue." });
+      return;
+    }
+    next();
+  } catch (error) {
+    if ((error as { status?: number })?.status === 404) {
+      res.status(401).json({ error: "Sign in to continue." });
+      return;
+    }
+    req.log.warn("Unable to verify active session");
+    res.status(503).json({ error: "Unable to verify access. Try again shortly." });
+  }
+};
+
 // Read current, server-owned metadata on EVERY request. Do not trust role headers,
 // unsafeMetadata, browser storage, or stale session claims after a role revocation.
 export const requireIdentity: RequestHandler = async (req, res, next) => {

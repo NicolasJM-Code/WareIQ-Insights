@@ -7,12 +7,14 @@ const provider = vi.hoisted(() => ({
   userId: null as string | null,
   claims: {} as Record<string, unknown>,
   getUser: vi.fn(),
+  sessionId: "sess_isolated",
+  getSession: vi.fn(),
   warn: vi.fn(),
 }));
 vi.mock("@clerk/express", () => ({
   clerkMiddleware: () => (_req: unknown, _res: unknown, next: () => void) => next(),
-  getAuth: () => ({ userId: provider.userId, sessionClaims: provider.claims }),
-  clerkClient: { users: { getUser: provider.getUser } },
+  getAuth: () => ({ userId: provider.userId, sessionId: provider.sessionId, sessionClaims: provider.claims }),
+  clerkClient: { users: { getUser: provider.getUser }, sessions: { getSession: provider.getSession } },
 }));
 vi.mock("@clerk/shared/keys", () => ({ publishableKeyFromHost: () => "isolated-test-key" }));
 vi.mock("pino-http", () => ({
@@ -22,12 +24,18 @@ vi.mock("pino-http", () => ({
   },
 }));
 vi.mock("../src/lib/logger", () => ({ logger: {} }));
-// New membership routes import the app database even when these tests exercise
-// legacy guards. Expose real schema objects, but never construct a live pool.
-vi.mock("@workspace/db", async () => ({
-  ...await import("@workspace/db/schema"),
-  db: { select: vi.fn(() => { throw new Error("Unexpected database access in isolated authorization test"); }) },
-}));
+// Verified identities may look up membership, but no live pool is constructed.
+// Empty membership reads are allowed; all other database operations throw.
+vi.mock("@workspace/db", async () => {
+  const schema = await import("@workspace/db/schema");
+  return {
+    ...schema,
+    db: { select: () => ({ from: (table: unknown) => {
+      if (table !== schema.membersTable) throw new Error("Unexpected database access in isolated authorization test");
+      return { where: async () => [] };
+    } }) },
+  };
+});
 
 import app from "../src/app";
 import router from "../src/routes";
@@ -48,7 +56,8 @@ for (const path of [...reportPaths, ...adminPaths]) {
 function account(role: unknown = "admin", extra = {}) {
   return {
     publicMetadata: { role }, unsafeMetadata: {}, banned: false, locked: false,
-    emailAddresses: [], primaryEmailAddressId: null, ...extra,
+    emailAddresses: [{ id: "email_isolated", emailAddress: "isolated@example.com", verification: { status: "verified" } }],
+    primaryEmailAddressId: "email_isolated", ...extra,
   };
 }
 function signIn(role: unknown = "admin", extra = {}) {
@@ -64,9 +73,46 @@ beforeEach(() => {
   provider.userId = null;
   provider.claims = {};
   provider.getUser.mockReset();
+  provider.sessionId = "sess_isolated";
+  provider.getSession.mockReset();
+  provider.getSession.mockImplementation(async () => ({ status: "active", userId: provider.userId }));
 });
 
 describe("identity and central route authorization", () => {
+  it.each(["revoked", "ended", "expired", "abandoned", "removed"])(
+    "denies a currently %s session across membership and legacy routes", async (status) => {
+      signIn();
+      expect((await request(app).get("/api/reports/regression")).status).toBe(200);
+      reached.mockClear();
+      provider.getUser.mockClear();
+      provider.getSession.mockResolvedValue({ status, userId: provider.userId });
+      for (const path of ["/api/access/me", "/api/access/own-reports", "/api/auth/session", "/api/reports/regression"]) {
+        const res = await request(app).get(path);
+        expect(res.status).toBe(401);
+        expect(res.headers["cache-control"]).toBe("private, no-store");
+      }
+      expect(reached).not.toHaveBeenCalled();
+      expect(provider.getUser).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects missing or mismatched sessions and fails closed on session lookup outages", async () => {
+    signIn();
+    provider.sessionId = "";
+    expect((await request(app).get("/api/access/me")).status).toBe(401);
+    expect(provider.getSession).not.toHaveBeenCalled();
+    provider.sessionId = "sess_isolated";
+    provider.getSession.mockResolvedValue({ status: "active", userId: "user_someone_else" });
+    expect((await request(app).get("/api/reports/regression")).status).toBe(401);
+    provider.getSession.mockRejectedValue({ status: 404 });
+    expect((await request(app).get("/api/access/me")).status).toBe(401);
+    provider.getSession.mockRejectedValue(new Error("private-provider-error"));
+    const failed = await request(app).get("/api/access/me");
+    expect(failed.status).toBe(503);
+    expect(JSON.stringify(failed.body)).not.toContain("private-provider-error");
+    expect(reached).not.toHaveBeenCalled();
+  });
+
   it("keeps health public without consulting the identity provider", async () => {
     expect((await request(app).get("/api/healthz")).status).toBe(200);
     expect(provider.getUser).not.toHaveBeenCalled();
