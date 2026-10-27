@@ -106,6 +106,9 @@ describe("full-app origin protection for saved reports", () => {
   const rejectedRequests = [
     ["absent Origin", {}],
     ["foreign Origin", { origin: "https://foreign.test" }],
+    ["malformed Origin", { origin: "not-an-origin" }],
+    ["Origin with a path", { origin: "https://wareiq.test/reports" }],
+    ["insecure HTTP Origin", { origin: "http://wareiq.test" }],
     ["mismatched fetch metadata", { origin: "https://wareiq.test", fetchSite: "cross-site" }],
   ] as const;
 
