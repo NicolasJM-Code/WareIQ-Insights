@@ -4,5 +4,5 @@
     "rootDir": "../..",
     "tsBuildInfoFile": ".access-integration.tsbuildinfo"
   },
-  "include": ["access-integration"]
+  "include": ["access-integration", "access-notifications-integration"]
 }

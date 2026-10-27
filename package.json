@@ -5,6 +5,8 @@
   "scripts": {
     "test:access-history": "vitest run --config vitest.access-history.config.ts",
     "test:access-history:typecheck": "pnpm run typecheck:libs && pnpm --filter @workspace/api-server exec tsc -p tsconfig.access-integration.json",
+    "test:access-notifications": "vitest run --config vitest.access-notifications.config.ts",
+    "test:access-notifications:typecheck": "pnpm run typecheck:libs && pnpm --filter @workspace/api-server exec tsc -p tsconfig.access-integration.json",
     "test:reports": "vitest run --config vitest.reports.config.ts",
     "test:auth": "vitest run --config vitest.config.ts",
     "test:auth:provider": "vitest run --config vitest.provider.config.ts",
