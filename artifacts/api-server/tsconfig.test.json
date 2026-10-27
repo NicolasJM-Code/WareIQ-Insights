@@ -5,7 +5,7 @@
     "noEmit": true,
     "tsBuildInfoFile": ".test.tsbuildinfo"
   },
-  "include": ["src", "tests", "provider-tests"],
+  "include": ["src", "tests", "provider-tests", "browser-tests"],
   "references": [
     { "path": "../../lib/db" },
     { "path": "../../lib/api-zod" }

@@ -148,6 +148,81 @@ The live harness uses bearer transport. Browser cookie handshakes (including
 Clerk's development-browser and client timestamp cookies) are not simulated by
 simply inserting `__session`; those require a separate real-browser check.
 
+## Opt-in browser cookie and frontend revalidation check
+
+```sh
+# Requires a working system Chromium binary; install Chromium in the workspace
+# if `command -v chromium` returns nothing.
+CLERK_BROWSER_TESTS=isolated-development-only \
+CLERK_BROWSER_EXECUTABLE="$(command -v chromium)" \
+pnpm test:auth:browser
+```
+
+This is **separate from** the offline `pnpm test:auth` suite and from the
+bearer-provider check. It requires matching `sk_test_…` and `pk_test_…` Clerk
+Development keys, network access to Clerk and a working local Chromium. It
+refuses Production keys, Production `NODE_ENV`, or an absent opt-in before any
+provider calls. Do not set the opt-in globally or add it to routine CI.
+Allow about two minutes for a naturally expiring session token and the
+frontend's 15-second access recheck. Failures (including a broken Chromium
+installation or cleanup) fail the command, not skip it.
+
+The runner serves a minimal React page on a random loopback port with the
+production `AuthProvider`, `AccessGate`, `use-access` hook and `access.tsx`
+permission components, plus the real Express middleware and Clerk SDK.
+Only the database read boundary is replaced with an empty fixture; it
+does **not** open the WMS or application database or import report content.
+Its only protected children are harmless test markers. It creates one
+new `wareiq-browser-<uuid>@example.com` Development account with temporary
+administrator metadata. A short-lived single-use Clerk sign-in ticket is
+redeemed **inside Chromium**, never injected as a bearer header or copied
+into a cookie. The browser reloads, proves a valid `__session` cookie and
+same-origin cookie-only request can fetch an active reporting summary and
+reach a protected test handler **before** any denial assertion. Other Clerk
+development-browser cookies are left to the SDK's real handshake.
+
+The check then prevents SDK refresh traffic without replacing the
+cookie or application API. It waits for natural token expiry and confirms
+the real `/api/access/me` recheck denies access and both reporting and
+administrator markers disappear. A fresh browser sign-in provides a second
+positive control; its still-unexpired session is revoked at Clerk and the
+next access recheck must lock those markers immediately. Legacy reporting,
+settings and own-report requests also deny access; the test-only protected
+handler is never reached after invalidation. The compatibility permission
+hook must not reuse a stale successful response after a failed refetch.
+
+This covers the Development browser SDK ticket sign-in, browser cookie
+handshake, same-origin API transport and frontend revalidation. It **does
+not** exercise hosted password/SSO screens, MFA, email delivery, a deployed
+edge proxy, or real customer reporting data. A failure to establish the
+valid cookie-authenticated control is a failure, not evidence that a bad
+session is correctly denied.
+
+The runner writes a private creation-intent journal **before** asking Clerk
+to create an account, then records its ID if creation succeeds. The mode-0600
+journal under `.cache/clerk-browser/<uuid>.json` contains only the generated
+account ID (when known), email and private run marker. If creation's response
+is lost, it never blindly retries or deletes an unknown account. It never
+logs tickets, JWTs, cookies, credentials, provider error details, browser
+storage, screenshots or request bodies. `afterAll` verifies the account ID,
+sole generated email and private marker at Clerk before deleting that
+account, including on assertion failure. On a process kill, ambiguous
+creation or failed cleanup, retain the journal and recover against the
+**same** Development instance:
+
+```sh
+CLERK_BROWSER_TESTS=isolated-development-only \
+CLERK_BROWSER_CLEANUP_MANIFEST=.cache/clerk-browser/<uuid>.json \
+pnpm test:auth:browser
+```
+
+Recovery creates no account and runs no browser. An intent-only journal uses
+an exact-email lookup and deletes **only** if one result also matches the
+private run marker and sole generated email; a verified zero-result lookup
+clears the journal without deleting an account. Any ambiguous result refuses
+deletion and retains the journal. Never bulk-delete or target an existing
+account.
+
 The immediate-revocation check exposed that signature verification alone can
 accept a previously issued token. A current-session lookup now runs once per
 authenticated API request before both membership and legacy access routes.

@@ -4,7 +4,7 @@
     "jsx": "react-jsx",
     "tsBuildInfoFile": ".test.tsbuildinfo"
   },
-  "include": ["src", "tests"],
+  "include": ["src", "tests", "browser-tests"],
   "exclude": ["node_modules", "build", "dist"],
   "references": [
     { "path": "../../lib/api-client-react" }

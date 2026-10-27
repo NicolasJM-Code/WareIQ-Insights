@@ -225,6 +225,26 @@ describe("administrator settings", () => {
   });
 });
 
+describe("compatibility permissions after revalidation", () => {
+  function Permissions() {
+    const { canAdminister, canReport, role } = useAccess();
+    return <output>{`${canAdminister}:${canReport}:${role}`}</output>;
+  }
+  it.each([401, 503])("does not reuse stale administrator approval after HTTP %s", async (status) => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    clients.push(client);
+    render(<QueryClientProvider client={client}><Permissions /></QueryClientProvider>);
+    await screen.findByText("true:true:admin");
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ error: "isolated denial" }), {
+      status, headers: { "Content-Type": "application/json" },
+    }));
+    await act(async () => { await client.invalidateQueries({ queryKey: ["/api/access/me"] }); });
+    expect(await screen.findByText("false:false:unassigned")).toBeInTheDocument();
+    // Make sure this actually exercised a retained prior success.
+    expect(client.getQueryCache().find({ queryKey: ["/api/access/me"], exact: false })?.state.data).toEqual(access());
+  });
+});
+
 describe("sign-out and session isolation", () => {
   it("clears cached report data BEFORE asking Clerk to sign out", async () => {
     const { client } = mount(<SignOutButton />);

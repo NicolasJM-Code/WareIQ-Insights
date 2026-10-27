@@ -8,7 +8,10 @@ import { useAccess as useReportingAccess } from './use-access';
 // Compatibility for the account and administrator UI. Application reporting
 // approval now comes from client membership, never a global supervisor claim.
 export function useAccess() {
-  const session = useReportingAccess().data;
+  const query = useReportingAccess();
+  // React Query retains stale data after refetch failure. It is not proof of
+  // current authorization and must not keep account/admin UI unlocked.
+  const session = query.isError ? undefined : query.data;
   const canAdminister = !!session?.platformAdmin;
   const canReport = canAdminister || session?.status === 'active' || session?.status === 'pending_sites';
   return { canAdminister, canReport, role: canAdminister ? 'admin' : canReport ? 'supervisor' : 'unassigned' };
