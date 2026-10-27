@@ -158,9 +158,12 @@ router.get("/access/clients/:clientId/logo", handler(async (req, res) => {
   if (!client?.logoPath || !isClientLogoPath(clientId, client.logoPath))
     throw new AccessError(404, "Client logo not found.");
   let file;
-  try { file = await getClientLogoFile(clientId, client.logoPath); }
+  let metadata;
+  try {
+    file = await getClientLogoFile(clientId, client.logoPath);
+    [metadata] = await file.getMetadata();
+  }
   catch { throw new AccessError(404, "Client logo not found."); }
-  const [metadata] = await file.getMetadata();
   const contentType = String(metadata.contentType ?? "");
   if (!["image/png", "image/jpeg", "image/webp"].includes(contentType) ||
       !metadata.size || Number(metadata.size) > 2 * 1024 * 1024)
