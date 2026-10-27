@@ -7,3 +7,4 @@
 - [Workspace type outputs](workspace-type-outputs.md) — run the root library typecheck build before diagnosing app errors caused by stale referenced package declarations.
 - [Report persistence isolation](report-persistence-isolation.md) — use private PostgreSQL for rollback checks, never shared development databases or WMS.
 - [PostgreSQL interruption evidence](postgres-interruption-evidence.md) — a checked-out client can fail between queries; durability tests must not hide process-level errors.
+- [Access notification lock ordering](access-notification-lock-order.md) — platform email delivery must check and send under the shared role lock before taking its outbox row lock.

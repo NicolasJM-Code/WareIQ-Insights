@@ -1,8 +1,9 @@
 type Membership = {
+  id?: string;
   email: string; active: boolean; roleId: string; clientId: string;
   siteIds: string[]; primarySiteId: string | null;
 };
-type ReportingNotice = { recipient: string; roleName: string; kind: "reporting" };
+type ReportingNotice = { recipient: string; roleName: string; kind: "reporting"; targetId?: string };
 
 // Compare effective assignments, not names or array ordering. Retrying the same
 // saved form must not send again, including after an HTTP response is lost.
@@ -14,10 +15,16 @@ export function reportingChangeNotices(before: Membership | undefined, after: Me
   if (same) return [];
   const notices: ReportingNotice[] = [];
   if (before?.active && (!after || before.email !== after.email || !after.active)) {
-    notices.push({ recipient: before.email, roleName: "No reporting access", kind: "reporting" });
+    notices.push({
+      recipient: before.email, roleName: "No reporting access", kind: "reporting",
+      ...(before.id ? { targetId: before.id } : {}),
+    });
   }
   if (after?.active) {
-    notices.push({ recipient: after.email, roleName, kind: "reporting" });
+    notices.push({
+      recipient: after.email, roleName, kind: "reporting",
+      ...(after.id ? { targetId: after.id } : {}),
+    });
   }
   return notices;
 }

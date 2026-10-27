@@ -254,7 +254,7 @@ router.post("/access/roles", handler(async (req, res) => {
     const members = changed ? await tx.select().from(membersTable).where(and(
       eq(membersTable.roleId, saved!.id), eq(membersTable.active, true))) : [];
     const notification = await queueAccessNotifications(tx, members.map((m) => ({
-      recipient: m.email, roleName: values.name, kind: "reporting" as const,
+      recipient: m.email, roleName: values.name, kind: "reporting" as const, targetId: m.id,
     })));
     return { ...saved!, notification };
   });

@@ -45,9 +45,9 @@ describe("reporting notification changes", () => {
     expect(reportingChangeNotices(undefined, { ...member, active: false }, "Supervisor")).toEqual([]);
   });
   it("notifies the old address only of revocation when reassigned to a new email", () => {
-    expect(reportingChangeNotices(member, { ...member, email: "new@example.test" }, "Manager")).toEqual([
-      { recipient: member.email, roleName: "No reporting access", kind: "reporting" },
-      { recipient: "new@example.test", roleName: "Manager", kind: "reporting" },
+    expect(reportingChangeNotices({ ...member, id: "member-1" }, { ...member, id: "member-1", email: "new@example.test" }, "Manager")).toEqual([
+      { recipient: member.email, roleName: "No reporting access", kind: "reporting", targetId: "member-1" },
+      { recipient: "new@example.test", roleName: "Manager", kind: "reporting", targetId: "member-1" },
     ]);
   });
   it("does not include warehouse assignments, account details or reports in the email", () => {
@@ -151,6 +151,40 @@ describe("durable delivery and duplicate protection", () => {
     expect(JSON.stringify(mocks.warn.mock.calls)).not.toContain("sensitive");
     expect(mocks.release).toHaveBeenCalledOnce();
   });
+  it("skips a notice cancelled by a newer change after the worker claimed it", async () => {
+    mocks.query.mockImplementation(async (sql: string) => {
+      if (sql.includes("WHERE state IN")) return { rows: [{ ...job, target_id: "member-1" }] };
+      if (sql.includes("WHERE id = $1 AND state = 'pending'")) return { rows: [] };
+      return { rows: [] };
+    });
+    await deliverAccessNotifications();
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(mocks.query.mock.calls.some(([sql]) => sql === "COMMIT")).toBe(true);
+  });
+  it("cancels a pending platform notice when a newer Clerk role is active", async () => {
+    mocks.query.mockImplementation(async (sql: string) => ({
+      rows: sql.includes("WHERE state IN")
+        ? [{ ...job, kind: "platform", target_id: "target", platform_role: "supervisor" }]
+        : [],
+    }));
+    mocks.getUser.mockResolvedValue({
+      privateMetadata: { wareiqRoleNotificationId: "newer-event" },
+      publicMetadata: { role: "admin" },
+    });
+    await deliverAccessNotifications();
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(mocks.query.mock.calls.some(([sql]) => sql.includes("state = 'cancelled'"))).toBe(true);
+  });
+  it("retries uncertain deliveries with the same provider key", async () => {
+    mocks.send.mockRejectedValueOnce(new Error("connection interrupted"));
+    await deliverAccessNotifications();
+    mocks.send.mockResolvedValueOnce({ ok: true, json: async () => ({ id: "provider-email-id" }) });
+    await deliverAccessNotifications();
+    expect(mocks.send).toHaveBeenCalledTimes(2);
+    for (const [, options] of mocks.send.mock.calls) {
+      expect(options.headers["Idempotency-Key"]).toBe("wareiq-access/event-one");
+    }
+  });
   it("never sends an unconfirmed Clerk event and recovers a confirmed write after a crash", async () => {
     mocks.query.mockImplementation(async (sql: string) => ({
       rows: sql.startsWith("SELECT *") ? [{ ...job, state: "confirming", target_id: "target", platform_role: "supervisor" }] : [],
@@ -183,6 +217,21 @@ describe("durable delivery and duplicate protection", () => {
     expect(result).toBe("failed");
     expect(transaction).toHaveBeenCalledOnce();
     expect(await queueAccessNotifications({} as never, [])).toBe("not_needed");
+  });
+  it("cancels older unsent notices before inserting the latest access state", async () => {
+    const operations: string[] = [];
+    const tx = {
+      transaction: async (callback: (savepoint: unknown) => Promise<void>) => callback({
+        update: () => ({ set: () => ({ where: async () => { operations.push("cancel"); } }) }),
+        insert: () => ({ values: async () => { operations.push("insert"); } }),
+      }),
+    };
+    const result = await queueAccessNotifications(
+      tx as unknown as Parameters<typeof queueAccessNotifications>[0],
+      [{ recipient: member.email, roleName: "Manager", kind: "reporting", targetId: "member-1" }],
+    );
+    expect(result).toBe("queued");
+    expect(operations).toEqual(["cancel", "insert"]);
   });
   it("does not let staging or confirmation errors escape to the role route", async () => {
     mocks.insert.mockReturnValue({ values: vi.fn().mockRejectedValue(new Error("database unavailable")) });

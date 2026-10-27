@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { db, pool, accessNotificationsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
 import { ReplitConnectors } from "@replit/connectors-sdk";
 import { clerkClient } from "@clerk/express";
 import { logger } from "./logger";
@@ -10,7 +10,9 @@ import type { AppRole } from "./access-policy";
 
 export type NotificationStatus = "queued" | "failed" | "not_needed";
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
-export type Notice = { recipient: string; roleName: string; kind: "reporting" | "platform" };
+export type Notice = {
+  recipient: string; roleName: string; kind: "reporting" | "platform"; targetId?: string;
+};
 export type AccessNotificationSummary = {
   queued: number;
   retrying: number;
@@ -45,6 +47,17 @@ export async function queueAccessNotifications(tx: Transaction, notices: Notice[
   if (!notices.length) return "not_needed";
   try {
     await tx.transaction(async (savepoint) => {
+      const targetIds = [...new Set(notices.flatMap((notice) => notice.targetId ? [notice.targetId] : []))];
+      const recipients = [...new Set(notices.map((notice) => notice.recipient))];
+      const matchTarget = targetIds.length ? inArray(accessNotificationsTable.targetId, targetIds) : undefined;
+      const matchRecipient = inArray(accessNotificationsTable.recipient, recipients);
+      if (targetIds.length || recipients.length) {
+        await savepoint.update(accessNotificationsTable).set({ state: "cancelled" }).where(and(
+          or(matchTarget, matchRecipient)!,
+          eq(accessNotificationsTable.kind, "reporting"),
+          inArray(accessNotificationsTable.state, ["pending", "confirming", "failed"]),
+        ));
+      }
       await savepoint.insert(accessNotificationsTable).values(
         notices.map((notice) => ({ id: randomUUID(), ...notice })),
       );
@@ -130,18 +143,50 @@ export async function deliverAccessNotifications(): Promise<void> {
     await connection.query("COMMIT");
     // Concurrent workers may reclaim after two minutes. They use the same key.
     try {
-      const response = await connectors.createProxyFetch("resend")("https://api.resend.com/emails", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": `wareiq-access/${row.id}` },
-        body: JSON.stringify({ from: notificationSender, to: [row.recipient],
-          ...notificationMessage(row.kind, row.role_name) }),
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (!response.ok) throw new Error("Delivery rejected");
-      const result = await response.json() as { id?: string };
-      if (!result.id) throw new Error("Delivery not confirmed");
-      await connection.query("UPDATE wareiq_access_notifications SET state = 'sent' WHERE id = $1", [row.id]);
+      const deliver = async () => {
+        if (row.kind === "platform") {
+          const user = await clerkClient.users.getUser(row.target_id!);
+          if (user.privateMetadata.wareiqRoleNotificationId !== row.id ||
+              user.publicMetadata.role !== row.platform_role) {
+            await connection.query("BEGIN");
+            await connection.query(
+              "UPDATE wareiq_access_notifications SET state = 'cancelled' WHERE id = $1 AND state = 'pending'",
+              [row.id],
+            );
+            await connection.query("COMMIT");
+            return;
+          }
+        }
+
+        // Recheck after acquiring the row lock: a newer role change may have
+        // cancelled this notice after the claim was committed. Keep the lock
+        // through delivery so a later change cannot overtake an in-flight send.
+        await connection.query("BEGIN");
+        const current = await connection.query<{ id: string }>(
+          "SELECT * FROM wareiq_access_notifications WHERE id = $1 AND state = 'pending' FOR UPDATE",
+          [row.id],
+        );
+        if (!current.rows.length) {
+          await connection.query("COMMIT");
+          return;
+        }
+        const response = await connectors.createProxyFetch("resend")("https://api.resend.com/emails", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Idempotency-Key": `wareiq-access/${row.id}` },
+          body: JSON.stringify({ from: notificationSender, to: [row.recipient],
+            ...notificationMessage(row.kind, row.role_name) }),
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (!response.ok) throw new Error("Delivery rejected");
+        const result = await response.json() as { id?: string };
+        if (!result.id) throw new Error("Delivery not confirmed");
+        await connection.query("UPDATE wareiq_access_notifications SET state = 'sent' WHERE id = $1", [row.id]);
+        await connection.query("COMMIT");
+      };
+      if (row.kind === "platform") await withRoleLock(deliver);
+      else await deliver();
     } catch {
+      await connection.query("ROLLBACK").catch(() => undefined);
       // Do not log provider responses: they may contain recipients or credentials.
       logger.warn({ event: "access_notification_delivery_failed" }, "Access email not confirmed; retry scheduled");
     }
