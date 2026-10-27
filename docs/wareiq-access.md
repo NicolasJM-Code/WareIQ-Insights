@@ -101,11 +101,16 @@ by running the command in development.
 Warehouse and report permissions are enforced server-side. Set up a client first,
 then add its warehouses under **User access → Warehouses**, then configure roles
 and assign users to selected warehouses. A client may have multiple warehouses.
-Warehouse names and WMS source codes are application configuration, not verified
-imports. Source code and client ownership cannot be changed after creation;
-deactivation removes that warehouse from user access. Users without active
-assignments stay pending. Live report mappings, schedules, alerts and durable audit history
-are not implemented.
+Client records include company number, postal address and an optional private
+logo; warehouse records include a postal address and contact phone. Logo bytes
+are kept in App Storage, while client metadata stores only a private object path.
+The logo is served to platform administrators and users approved for that client,
+and client/warehouse metadata is included in their reporting session for report
+headers. Warehouse names and WMS source codes are application configuration, not
+verified imports. Source code and client ownership cannot be changed after
+creation; deactivation removes that warehouse from user access. Users without
+active assignments stay pending. Actual printable report templates, live report
+mappings, schedules, alerts and durable audit history are not implemented.
 
 ## WMS credential destination approval
 

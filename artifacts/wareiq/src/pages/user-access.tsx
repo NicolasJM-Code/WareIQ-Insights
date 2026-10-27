@@ -9,17 +9,19 @@ import {
   useGetAccessAdmin,
   useGetAccessSession,
   useSaveAccessClient,
+  useRequestAccessClientLogoUpload,
+  useSaveAccessClientLogo,
   useSaveAccessRole,
   useSaveAccessUser,
   useSaveAccessWarehouse,
 } from '@workspace/api-client-react';
-import type { AccessClient, AccessDirectory, AccessRole, AccessSite, AccessUser } from '@workspace/api-client-react';
+import type { AccessClient, AccessClientLogoUploadInput, AccessDirectory, AccessRole, AccessSite, AccessUser } from '@workspace/api-client-react';
 import { Building2, KeyRound, MailCheck, MapPin, Pencil, Warehouse, Plus, Power, Trash2, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
 import { SkeletonBlock, StatePanel, StatusPill, FormError, errorMessage } from '@/components/access/access-ui';
-import { ClientDialog, RoleDialog, UserDialog } from '@/components/access/access-dialogs';
+import { ClientDialog, RoleDialog, UserDialog, type ClientDetailsInput } from '@/components/access/access-dialogs';
 import { WarehouseDialog, type WarehouseInput } from '@/components/access/warehouse-dialog';
 
 type Tab = 'clients' | 'sites' | 'roles' | 'users';
@@ -47,6 +49,8 @@ function Directory({ dir }: { dir: AccessDirectory }) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const saveClient = useSaveAccessClient();
+  const requestClientLogoUpload = useRequestAccessClientLogoUpload();
+  const saveClientLogo = useSaveAccessClientLogo();
   const saveRole = useSaveAccessRole();
   const saveUser = useSaveAccessUser();
   const saveWarehouse = useSaveAccessWarehouse();
@@ -74,7 +78,35 @@ function Directory({ dir }: { dir: AccessDirectory }) {
   const byClient = <T extends { clientId: string }>(arr: T[]) => (clientFilter ? arr.filter((x) => x.clientId === clientFilter) : arr);
   const pendingUsers = dir.users.filter((u) => u.active && u.siteIds.length === 0).length;
 
-  const doSaveClient = async (v: { id?: string; name: string; active: boolean }) => { await saveClient.mutateAsync({ data: v }); await refresh(); toast({ title: 'Client saved' }); };
+  const doSaveClient = async (v: ClientDetailsInput) => {
+    const saved = await saveClient.mutateAsync({ data: v });
+    await refresh();
+    return saved;
+  };
+  const doUploadClientLogo = async (clientId: string, file: File) => {
+    const contentType = file.type as AccessClientLogoUploadInput['contentType'];
+    const request = await requestClientLogoUpload.mutateAsync({
+      clientId,
+      data: { name: file.name, size: file.size, contentType },
+    });
+    const uploaded = await fetch(request.uploadURL, {
+      method: 'PUT', body: file, headers: { 'Content-Type': contentType }, credentials: 'omit',
+    });
+    if (!uploaded.ok) throw new Error('The logo could not be uploaded. Please try again.');
+    const saved = await saveClientLogo.mutateAsync({ clientId, data: { objectPath: request.objectPath } });
+    await refresh();
+    return saved;
+  };
+  const doRemoveClientLogo = async (clientId: string) => {
+    const saved = await saveClientLogo.mutateAsync({ clientId, data: { objectPath: null } });
+    await refresh();
+    return saved;
+  };
+  const clientInput = (c: AccessClient, active = c.active): ClientDetailsInput => ({
+    id: c.id, name: c.name, companyNumber: c.companyNumber,
+    addressLine1: c.addressLine1, addressLine2: c.addressLine2,
+    city: c.city, region: c.region, postalCode: c.postalCode, country: c.country, active,
+  });
   const doSaveRole = async (v: { id?: string; clientId: string; name: string; reportIds: string[]; canCreateOwnReports: boolean }) => {
     const saved = await saveRole.mutateAsync({ data: v });
     await refresh();
@@ -93,7 +125,7 @@ function Directory({ dir }: { dir: AccessDirectory }) {
   const step = dir.clients.length === 0 ? 1 : noWarehouses ? 2 : dir.roles.length === 0 ? 3 : dir.users.length === 0 ? 4 : 5;
 
   const toggleClient = async (c: AccessClient) => {
-    try { await doSaveClient({ id: c.id, name: c.name, active: !c.active }); } catch (e) { toast({ title: 'Could not update client', description: errorMessage(e), variant: 'destructive' }); }
+    try { await doSaveClient(clientInput(c, !c.active)); toast({ title: 'Client saved' }); } catch (e) { toast({ title: 'Could not update client', description: errorMessage(e), variant: 'destructive' }); }
   };
   const toggleUser = async (u: AccessUser) => {
     const siteIds = u.siteIds.filter((id) => dir.sites.some((site) => site.id === id && site.clientId === u.clientId && site.active));
@@ -181,10 +213,18 @@ function Directory({ dir }: { dir: AccessDirectory }) {
       <div key={tab} className="rise">
         {tab === 'clients' && (
           dir.clients.length === 0 ? <Empty title="No clients yet" body="Step 1. Create your first client, then add its warehouses, roles and users." action={<Button data-testid="button-empty-client" onClick={() => setClientDlg((d) => ({ open: true, item: null, k: d.k + 1 }))}><Plus className="mr-1.5 h-4 w-4" />New client</Button>} /> : (
-            <Table head={['Client', 'Warehouses', 'Roles', 'Users', 'Status', '']}>
+            <Table head={['Client details', 'Warehouses', 'Roles', 'Users', 'Status', '']}>
               {dir.clients.map((c) => (
                 <tr key={c.id} data-testid={`row-client-${c.id}`} className="border-t hover:bg-muted/40">
-                  <td className="px-4 py-3 font-medium">{c.name}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-start gap-3">
+                      {c.logoPath && <img data-testid={`img-client-logo-${c.id}`} src={`/api/access/clients/${c.id}/logo?v=${encodeURIComponent(c.logoPath)}`} alt="" className="h-10 w-14 rounded border bg-white object-contain p-1" />}
+                      <div><p className="font-medium">{c.name}</p>
+                        {c.companyNumber && <p className="text-xs text-muted-foreground">Company no. {c.companyNumber}</p>}
+                        {[c.addressLine1, c.addressLine2, [c.city, c.region, c.postalCode].filter(Boolean).join(', '), c.country].filter(Boolean).map((line, index) => <p key={index} className="text-xs text-muted-foreground">{line}</p>)}
+                      </div>
+                    </div>
+                  </td>
                   <td className="px-4 py-2"><button data-testid={`button-client-warehouses-${c.id}`} onClick={() => showClientWarehouses(c.id)} className="inline-flex items-center gap-1.5 rounded-sm border px-2 py-1 text-xs font-medium transition-colors hover:border-primary/50 hover:text-primary"><Warehouse className="h-3.5 w-3.5" />Warehouses<span className="tnum font-mono text-[10px] text-muted-foreground">{dir.sites.filter((x) => x.clientId === c.id).length}</span></button></td>
                   <Num v={dir.roles.filter((r) => r.clientId === c.id).length} />
                   <Num v={dir.users.filter((u) => u.clientId === c.id).length} />
@@ -252,7 +292,10 @@ function Directory({ dir }: { dir: AccessDirectory }) {
             <Table head={['Warehouse', 'WMS code', 'Client', 'Assigned users', 'Status', '']}>
               {byClient(dir.sites).map((x) => (
                 <tr key={x.id} data-testid={`row-site-${x.id}`} className="border-t hover:bg-muted/40">
-                  <td className="px-4 py-3 font-medium">{x.name}</td>
+                  <td className="px-4 py-3">
+                    <p className="font-medium">{x.name}</p>
+                    {[x.addressLine1, x.addressLine2, [x.city, x.region, x.postalCode].filter(Boolean).join(', '), x.country, x.contactPhone].filter(Boolean).map((line, index) => <p key={index} className="text-xs text-muted-foreground">{line}</p>)}
+                  </td>
                   <td className="px-4 py-3 font-mono text-xs">{x.sourceId}</td>
                   <td className="px-4 py-3 text-muted-foreground">{clientName(x.clientId)}</td>
                   <Num v={dir.users.filter((u) => u.siteIds.includes(x.id)).length} />
@@ -267,7 +310,9 @@ function Directory({ dir }: { dir: AccessDirectory }) {
         )}
       </div>
 
-      {clientDlg.open && <ClientDialog key={`c${clientDlg.k}`} open onOpenChange={(o) => setClientDlg((d) => ({ ...d, open: o }))} client={clientDlg.item} onSave={doSaveClient} />}
+      {clientDlg.open && <ClientDialog key={`c${clientDlg.k}`} open onOpenChange={(o) => setClientDlg((d) => ({ ...d, open: o }))} client={clientDlg.item}
+        onSave={doSaveClient} onUploadLogo={doUploadClientLogo} onRemoveLogo={doRemoveClientLogo}
+        onComplete={() => toast({ title: 'Client saved' })} />}
       {whDlg.open && <WarehouseDialog key={`w${whDlg.k}`} open onOpenChange={(o) => setWhDlg((d) => ({ ...d, open: o }))} warehouse={whDlg.item} dir={dir} defaultClientId={clientFilter} onSave={doSaveWarehouse} />}
       {roleDlg.open && <RoleDialog key={`r${roleDlg.k}`} open onOpenChange={(o) => setRoleDlg((d) => ({ ...d, open: o }))} role={roleDlg.item} dir={dir} defaultClientId={clientFilter} onSave={doSaveRole} />}
       {userDlg.open && <UserDialog key={`u${userDlg.k}`} open onOpenChange={(o) => setUserDlg((d) => ({ ...d, open: o }))} user={userDlg.item} dir={dir} onSave={doSaveUser} />}

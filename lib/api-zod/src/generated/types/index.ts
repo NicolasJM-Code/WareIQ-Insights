@@ -8,6 +8,10 @@
 
 export * from './accessClient';
 export * from './accessClientInput';
+export * from './accessClientLogoInput';
+export * from './accessClientLogoUpload';
+export * from './accessClientLogoUploadInput';
+export * from './accessClientLogoUploadInputContentType';
 export * from './accessDirectory';
 export * from './accessError';
 export * from './accessFailureResponse';

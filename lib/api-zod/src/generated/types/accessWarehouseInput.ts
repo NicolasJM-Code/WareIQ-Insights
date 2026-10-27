@@ -21,5 +21,19 @@ export interface AccessWarehouseInput {
      * @maxLength 100
      */
   name: string;
+  /** @maxLength 200 */
+  addressLine1: string;
+  /** @maxLength 200 */
+  addressLine2: string;
+  /** @maxLength 100 */
+  city: string;
+  /** @maxLength 100 */
+  region: string;
+  /** @maxLength 32 */
+  postalCode: string;
+  /** @maxLength 100 */
+  country: string;
+  /** @maxLength 40 */
+  contactPhone: string;
   active: boolean;
 }

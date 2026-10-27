@@ -27,6 +27,9 @@ import type {
 import type {
   AccessClient,
   AccessClientInput,
+  AccessClientLogoInput,
+  AccessClientLogoUpload,
+  AccessClientLogoUploadInput,
   AccessDirectory,
   AccessFailureResponse,
   AccessHistoryPage,
@@ -862,6 +865,285 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
         TContext
       > => {
       return useMutation(getSaveAccessClientMutationOptions(options), queryClient);
+    }
+
+export const getRequestAccessClientLogoUploadUrl = (clientId: string,) => {
+
+
+
+
+  return `/api/access/clients/${clientId}/logo-upload`
+}
+
+/**
+ * @summary Request a private upload URL for a client logo
+ */
+export const requestAccessClientLogoUpload = async (clientId: string,
+    accessClientLogoUploadInput: AccessClientLogoUploadInput, options?: Parameters<typeof customFetch>[1]): Promise<AccessClientLogoUpload> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AccessClientLogoUpload>(getRequestAccessClientLogoUploadUrl(clientId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(accessClientLogoUploadInput)
+  }
+);}
+
+
+
+
+
+export const getRequestAccessClientLogoUploadMutationKey = () => ['requestAccessClientLogoUpload'] as const;
+
+export const getRequestAccessClientLogoUploadMutationOptions = <TError = ErrorType<AccessFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof requestAccessClientLogoUpload>>, TError,RequestAccessClientLogoUploadMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof requestAccessClientLogoUpload>>, TError,RequestAccessClientLogoUploadMutationVariables, TContext> => {
+
+const mutationKey = getRequestAccessClientLogoUploadMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof requestAccessClientLogoUpload>>, RequestAccessClientLogoUploadMutationVariables> = (props) => {
+          const {clientId,data} = props ?? {};
+
+          return  requestAccessClientLogoUpload(clientId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RequestAccessClientLogoUploadMutationResult = NonNullable<Awaited<ReturnType<typeof requestAccessClientLogoUpload>>>
+    export type RequestAccessClientLogoUploadMutationBody = BodyType<AccessClientLogoUploadInput>
+    export type RequestAccessClientLogoUploadMutationError = ErrorType<AccessFailureResponse>
+    export type RequestAccessClientLogoUploadMutationVariables = {clientId: string;data: BodyType<AccessClientLogoUploadInput>}
+
+    /**
+ * @summary Request a private upload URL for a client logo
+ */
+export const useRequestAccessClientLogoUpload = <TError = ErrorType<AccessFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof requestAccessClientLogoUpload>>, TError,RequestAccessClientLogoUploadMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof requestAccessClientLogoUpload>>,
+        TError,
+        RequestAccessClientLogoUploadMutationVariables,
+        TContext
+      > => {
+      return useMutation(getRequestAccessClientLogoUploadMutationOptions(options), queryClient);
+    }
+
+export const getGetAccessClientLogoUrl = (clientId: string,) => {
+
+
+
+
+  return `/api/access/clients/${clientId}/logo`
+}
+
+/**
+ * @summary Serve a client logo to that client's users
+ */
+export const getAccessClientLogo = async (clientId: string, options?: Parameters<typeof customFetch>[1]): Promise<Blob> => {
+
+  return customFetch<Blob>(getGetAccessClientLogoUrl(clientId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAccessClientLogoQueryKey = (clientId: string,) => {
+    return [
+    `/api/access/clients/${clientId}/logo`
+    ] as const;
+    }
+
+
+export const getGetAccessClientLogoQueryOptions = <TData = Awaited<ReturnType<typeof getAccessClientLogo>>, TError = ErrorType<AccessFailureResponse>>(clientId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAccessClientLogo>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAccessClientLogoQueryKey(clientId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAccessClientLogo>>> = ({ signal }) => getAccessClientLogo(clientId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: clientId !== null && clientId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAccessClientLogo>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetAccessClientLogoQueryResult = NonNullable<Awaited<ReturnType<typeof getAccessClientLogo>>>
+export type GetAccessClientLogoQueryError = ErrorType<AccessFailureResponse>
+
+
+export function useGetAccessClientLogo<TData = Awaited<ReturnType<typeof getAccessClientLogo>>, TError = ErrorType<AccessFailureResponse>>(
+ clientId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAccessClientLogo>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getAccessClientLogo>>,
+          TError,
+          Awaited<ReturnType<typeof getAccessClientLogo>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAccessClientLogo<TData = Awaited<ReturnType<typeof getAccessClientLogo>>, TError = ErrorType<AccessFailureResponse>>(
+ clientId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAccessClientLogo>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getAccessClientLogo>>,
+          TError,
+          Awaited<ReturnType<typeof getAccessClientLogo>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAccessClientLogo<TData = Awaited<ReturnType<typeof getAccessClientLogo>>, TError = ErrorType<AccessFailureResponse>>(
+ clientId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAccessClientLogo>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Serve a client logo to that client's users
+ */
+
+export function useGetAccessClientLogo<TData = Awaited<ReturnType<typeof getAccessClientLogo>>, TError = ErrorType<AccessFailureResponse>>(
+ clientId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAccessClientLogo>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetAccessClientLogoQueryOptions(clientId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getSaveAccessClientLogoUrl = (clientId: string,) => {
+
+
+
+
+  return `/api/access/clients/${clientId}/logo`
+}
+
+/**
+ * @summary Set or remove a client logo after upload
+ */
+export const saveAccessClientLogo = async (clientId: string,
+    accessClientLogoInput: AccessClientLogoInput, options?: Parameters<typeof customFetch>[1]): Promise<AccessClient> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AccessClient>(getSaveAccessClientLogoUrl(clientId),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(accessClientLogoInput)
+  }
+);}
+
+
+
+
+
+export const getSaveAccessClientLogoMutationKey = () => ['saveAccessClientLogo'] as const;
+
+export const getSaveAccessClientLogoMutationOptions = <TError = ErrorType<AccessFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveAccessClientLogo>>, TError,SaveAccessClientLogoMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof saveAccessClientLogo>>, TError,SaveAccessClientLogoMutationVariables, TContext> => {
+
+const mutationKey = getSaveAccessClientLogoMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveAccessClientLogo>>, SaveAccessClientLogoMutationVariables> = (props) => {
+          const {clientId,data} = props ?? {};
+
+          return  saveAccessClientLogo(clientId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveAccessClientLogoMutationResult = NonNullable<Awaited<ReturnType<typeof saveAccessClientLogo>>>
+    export type SaveAccessClientLogoMutationBody = BodyType<AccessClientLogoInput>
+    export type SaveAccessClientLogoMutationError = ErrorType<AccessFailureResponse>
+    export type SaveAccessClientLogoMutationVariables = {clientId: string;data: BodyType<AccessClientLogoInput>}
+
+    /**
+ * @summary Set or remove a client logo after upload
+ */
+export const useSaveAccessClientLogo = <TError = ErrorType<AccessFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveAccessClientLogo>>, TError,SaveAccessClientLogoMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof saveAccessClientLogo>>,
+        TError,
+        SaveAccessClientLogoMutationVariables,
+        TContext
+      > => {
+      return useMutation(getSaveAccessClientLogoMutationOptions(options), queryClient);
     }
 
 export const getSaveAccessWarehouseUrl = () => {

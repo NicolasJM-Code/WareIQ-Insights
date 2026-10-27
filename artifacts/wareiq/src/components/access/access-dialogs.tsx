@@ -1,44 +1,168 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { AccessClient, AccessDirectory, AccessRole, AccessUser } from '@workspace/api-client-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Info, MailCheck } from 'lucide-react';
+import { FileImage, Info, MailCheck, X } from 'lucide-react';
 import { FieldLabel, FormError, errorMessage, selectCls } from './access-ui';
 
 type SaveFn<T> = (v: T) => Promise<unknown>;
+export type ClientDetailsInput = {
+  id?: string;
+  name: string;
+  companyNumber: string;
+  addressLine1: string;
+  addressLine2: string;
+  city: string;
+  region: string;
+  postalCode: string;
+  country: string;
+  active: boolean;
+};
 
-export function ClientDialog({ open, onOpenChange, client, onSave }: { open: boolean; onOpenChange: (o: boolean) => void; client: AccessClient | null; onSave: SaveFn<{ id?: string; name: string; active: boolean }> }) {
+export function ClientDialog({ open, onOpenChange, client, onSave, onUploadLogo, onRemoveLogo, onComplete }: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  client: AccessClient | null;
+  onSave: (v: ClientDetailsInput) => Promise<AccessClient>;
+  onUploadLogo: (clientId: string, file: File) => Promise<AccessClient>;
+  onRemoveLogo: (clientId: string) => Promise<AccessClient>;
+  onComplete: () => void;
+}) {
   const [name, setName] = useState(client?.name ?? '');
+  const [companyNumber, setCompanyNumber] = useState(client?.companyNumber ?? '');
+  const [addressLine1, setAddressLine1] = useState(client?.addressLine1 ?? '');
+  const [addressLine2, setAddressLine2] = useState(client?.addressLine2 ?? '');
+  const [city, setCity] = useState(client?.city ?? '');
+  const [region, setRegion] = useState(client?.region ?? '');
+  const [postalCode, setPostalCode] = useState(client?.postalCode ?? '');
+  const [country, setCountry] = useState(client?.country ?? '');
+  const [savedId, setSavedId] = useState(client?.id ?? '');
+  const [logoPath, setLogoPath] = useState(client?.logoPath ?? null);
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [removeLogo, setRemoveLogo] = useState(false);
+  const [logoPreview, setLogoPreview] = useState<string | null>(null);
+  const [progress, setProgress] = useState('');
   const [active, setActive] = useState(client?.active ?? true);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!logoFile) { setLogoPreview(null); return; }
+    const url = URL.createObjectURL(logoFile);
+    setLogoPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [logoFile]);
+  const addressFields = [
+    { label: 'Address line 1', testId: 'input-client-address-1', value: addressLine1, update: setAddressLine1, maxLength: 200 },
+    { label: 'Address line 2', testId: 'input-client-address-2', value: addressLine2, update: setAddressLine2, maxLength: 200 },
+    { label: 'City / town', testId: 'input-client-city', value: city, update: setCity, maxLength: 100 },
+    { label: 'State / province / region', testId: 'input-client-region', value: region, update: setRegion, maxLength: 100 },
+    { label: 'Postal code', testId: 'input-client-postal-code', value: postalCode, update: setPostalCode, maxLength: 32 },
+    { label: 'Country', testId: 'input-client-country', value: country, update: setCountry, maxLength: 100 },
+  ];
   const submit = async () => {
     if (!name.trim()) return setErr('Client name is required.');
     setBusy(true); setErr(null);
-    try { await onSave({ id: client?.id, name: name.trim(), active }); onOpenChange(false); }
-    catch (e) { setErr(errorMessage(e)); } finally { setBusy(false); }
+    let metadataSaved = false;
+    try {
+      const saved = await onSave({
+        id: savedId || undefined, name: name.trim(), companyNumber: companyNumber.trim(),
+        addressLine1: addressLine1.trim(), addressLine2: addressLine2.trim(),
+        city: city.trim(), region: region.trim(), postalCode: postalCode.trim(),
+        country: country.trim(), active,
+      });
+      metadataSaved = true;
+      setSavedId(saved.id);
+      if (logoFile) {
+        setProgress('Uploading logo…');
+        const updated = await onUploadLogo(saved.id, logoFile);
+        setLogoPath(updated.logoPath);
+        setLogoFile(null);
+        setRemoveLogo(false);
+      } else if (removeLogo) {
+        setProgress('Removing logo…');
+        const updated = await onRemoveLogo(saved.id);
+        setLogoPath(updated.logoPath);
+        setRemoveLogo(false);
+      }
+      onComplete();
+      onOpenChange(false);
+    } catch (e) {
+      setErr(errorMessage(e));
+      if (metadataSaved) setErr(`${errorMessage(e)} Client details are saved; retry the logo action or edit the client.`);
+    } finally { setProgress(''); setBusy(false); }
   };
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+    <Dialog open={open} onOpenChange={(o) => { if (!busy) onOpenChange(o); }}>
+      <DialogContent className="max-h-[90dvh] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-display">{client ? 'Edit client' : 'New client'}</DialogTitle>
-          <DialogDescription>A client owns roles, users and its WMS-imported sites.</DialogDescription>
+          <DialogDescription>Client details and branding can be reused on report printouts. Warehouses are configured separately.</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
-          <div><FieldLabel>Name</FieldLabel><Input data-testid="input-client-name" maxLength={100} value={name} onChange={(e) => setName(e.target.value)} /></div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div><FieldLabel>Company name</FieldLabel><Input data-testid="input-client-name" maxLength={100} value={name} onChange={(e) => setName(e.target.value)} /></div>
+            <div><FieldLabel>Company number</FieldLabel><Input data-testid="input-client-company-number" maxLength={100} value={companyNumber} onChange={(e) => setCompanyNumber(e.target.value)} placeholder="Registration or company number" /></div>
+          </div>
+          <section className="space-y-3 rounded-md border p-3" aria-label="Client address">
+            <FieldLabel>Company address</FieldLabel>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {addressFields.map((field) => <div key={field.testId} className={field.testId.includes('address-1') || field.testId.includes('address-2') ? 'sm:col-span-2' : ''}>
+                <FieldLabel>{field.label}</FieldLabel>
+                <Input data-testid={field.testId} maxLength={field.maxLength} value={field.value} onChange={(e) => field.update(e.target.value)} />
+              </div>)}
+            </div>
+          </section>
+          <section className="space-y-3 rounded-md border p-3" aria-label="Client report logo">
+            <div>
+              <FieldLabel hint="PNG, JPEG, or WebP · max 2 MB">Report logo</FieldLabel>
+              <p className="mt-1 text-xs text-muted-foreground">Stored privately and shown only to administrators and this client’s approved users.</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              {(logoPreview || (logoPath && savedId && !removeLogo)) && <img
+                data-testid="img-client-logo-preview"
+                src={logoPreview ?? `/api/access/clients/${savedId}/logo?v=${encodeURIComponent(logoPath ?? '')}`}
+                alt={`${name || 'Client'} logo preview`}
+                className="h-14 max-w-48 rounded border bg-white object-contain p-1"
+              />}
+              <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted">
+                <FileImage className="h-4 w-4" />Choose logo
+                <input data-testid="input-client-logo" type="file" accept="image/png,image/jpeg,image/webp" className="sr-only"
+                  disabled={busy} onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+                      setErr('Choose a PNG, JPEG, or WebP image.');
+                      e.target.value = '';
+                      return;
+                    }
+                    if (file.size > 2 * 1024 * 1024) {
+                      setErr('The logo must be smaller than 2 MB.');
+                      e.target.value = '';
+                      return;
+                    }
+                    setErr(null); setLogoFile(file); setRemoveLogo(false);
+                  }} />
+              </label>
+              {logoPath && !removeLogo && <Button type="button" variant="outline" size="sm" disabled={busy} data-testid="button-remove-client-logo"
+                onClick={() => { setLogoFile(null); setRemoveLogo(true); setLogoPath(null); }}>
+                <X className="mr-1 h-4 w-4" />Remove logo
+              </Button>}
+              {removeLogo && <Button type="button" variant="ghost" size="sm" data-testid="button-undo-remove-client-logo" onClick={() => { setRemoveLogo(false); setLogoPath(client?.logoPath ?? null); }}>Keep current logo</Button>}
+            </div>
+          </section>
           <label className="flex items-center justify-between rounded-md border p-3">
             <span className="text-sm"><b>Active</b><br /><span className="text-muted-foreground">Disabling blocks every user under this client.</span></span>
             <Switch data-testid="switch-client-active" checked={active} onCheckedChange={setActive} />
           </label>
+          {progress && <p role="status" className="text-sm text-muted-foreground" data-testid="status-client-logo">{progress}</p>}
           <FormError message={err} />
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button data-testid="button-save-client" disabled={busy} onClick={submit}>{busy ? 'Saving…' : 'Save client'}</Button>
+          <Button variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button data-testid="button-save-client" disabled={busy} onClick={() => void submit()}>{busy ? progress || 'Saving…' : 'Save client'}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

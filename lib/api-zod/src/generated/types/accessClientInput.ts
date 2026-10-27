@@ -13,5 +13,19 @@ export interface AccessClientInput {
      * @maxLength 100
      */
   name: string;
+  /** @maxLength 100 */
+  companyNumber: string;
+  /** @maxLength 200 */
+  addressLine1: string;
+  /** @maxLength 200 */
+  addressLine2: string;
+  /** @maxLength 100 */
+  city: string;
+  /** @maxLength 100 */
+  region: string;
+  /** @maxLength 32 */
+  postalCode: string;
+  /** @maxLength 100 */
+  country: string;
   active: boolean;
 }

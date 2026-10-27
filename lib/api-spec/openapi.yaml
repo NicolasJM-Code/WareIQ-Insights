@@ -142,6 +142,67 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AccessClient" }
+  /access/clients/{clientId}/logo-upload:
+    post:
+      operationId: requestAccessClientLogoUpload
+      summary: Request a private upload URL for a client logo
+      parameters:
+        - in: path
+          name: clientId
+          required: true
+          schema: { type: string, minLength: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccessClientLogoUploadInput" }
+      responses:
+        default: { $ref: "#/components/responses/AccessFailure" }
+        "200":
+          description: Short-lived upload URL and private object path
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessClientLogoUpload" }
+  /access/clients/{clientId}/logo:
+    get:
+      operationId: getAccessClientLogo
+      summary: Serve a client logo to that client's users
+      parameters:
+        - in: path
+          name: clientId
+          required: true
+          schema: { type: string, minLength: 1 }
+      responses:
+        default: { $ref: "#/components/responses/AccessFailure" }
+        "200":
+          description: Client logo image
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/webp:
+              schema: { type: string, format: binary }
+    put:
+      operationId: saveAccessClientLogo
+      summary: Set or remove a client logo after upload
+      parameters:
+        - in: path
+          name: clientId
+          required: true
+          schema: { type: string, minLength: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccessClientLogoInput" }
+      responses:
+        default: { $ref: "#/components/responses/AccessFailure" }
+        "200":
+          description: Updated client
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessClient" }
   /access/warehouses:
     post:
       operationId: saveAccessWarehouse
@@ -450,35 +511,82 @@ components:
         error: { type: string }
     AccessClientInput:
       type: object
-      required: [name, active]
+      required: [name, companyNumber, addressLine1, addressLine2, city, region, postalCode, country, active]
       properties:
         id: { type: string }
         name: { type: string, minLength: 1, maxLength: 100 }
+        companyNumber: { type: string, maxLength: 100 }
+        addressLine1: { type: string, maxLength: 200 }
+        addressLine2: { type: string, maxLength: 200 }
+        city: { type: string, maxLength: 100 }
+        region: { type: string, maxLength: 100 }
+        postalCode: { type: string, maxLength: 32 }
+        country: { type: string, maxLength: 100 }
         active: { type: boolean }
     AccessClient:
       type: object
-      required: [id, name, active]
+      required: [id, name, companyNumber, addressLine1, addressLine2, city, region, postalCode, country, logoPath, active]
       properties:
         id: { type: string }
         name: { type: string }
+        companyNumber: { type: string }
+        addressLine1: { type: string }
+        addressLine2: { type: string }
+        city: { type: string }
+        region: { type: string }
+        postalCode: { type: string }
+        country: { type: string }
+        logoPath: { type: [string, "null"] }
         active: { type: boolean }
+    AccessClientLogoUploadInput:
+      type: object
+      required: [name, size, contentType]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        size: { type: integer, minimum: 1, maximum: 2097152 }
+        contentType: { type: string, enum: [image/png, image/jpeg, image/webp] }
+    AccessClientLogoUpload:
+      type: object
+      required: [uploadURL, objectPath]
+      properties:
+        uploadURL: { type: string, format: uri }
+        objectPath: { type: string }
+    AccessClientLogoInput:
+      type: object
+      required: [objectPath]
+      properties:
+        objectPath: { type: [string, "null"] }
     AccessWarehouseInput:
       type: object
-      required: [clientId, sourceId, name, active]
+      required: [clientId, sourceId, name, addressLine1, addressLine2, city, region, postalCode, country, contactPhone, active]
       properties:
         id: { type: string, minLength: 1 }
         clientId: { type: string, minLength: 1 }
         sourceId: { type: string, minLength: 1, maxLength: 100 }
         name: { type: string, minLength: 1, maxLength: 100 }
+        addressLine1: { type: string, maxLength: 200 }
+        addressLine2: { type: string, maxLength: 200 }
+        city: { type: string, maxLength: 100 }
+        region: { type: string, maxLength: 100 }
+        postalCode: { type: string, maxLength: 32 }
+        country: { type: string, maxLength: 100 }
+        contactPhone: { type: string, maxLength: 40 }
         active: { type: boolean }
     AccessSite:
       type: object
-      required: [id, clientId, sourceId, name, active]
+      required: [id, clientId, sourceId, name, addressLine1, addressLine2, city, region, postalCode, country, contactPhone, active]
       properties:
         id: { type: string }
         clientId: { type: string }
         sourceId: { type: string }
         name: { type: string }
+        addressLine1: { type: string }
+        addressLine2: { type: string }
+        city: { type: string }
+        region: { type: string }
+        postalCode: { type: string }
+        country: { type: string }
+        contactPhone: { type: string }
         active: { type: boolean }
     AccessRoleInput:
       type: object
@@ -543,13 +651,21 @@ components:
         reports: { type: array, items: { $ref: "#/components/schemas/AccessReport" } }
     AccessSession:
       type: object
-      required: [status, platformAdmin, canCreateOwnReports, reportIds, sites, clientId, clientName]
+      required: [status, platformAdmin, canCreateOwnReports, reportIds, sites, clientId, clientName, clientCompanyNumber, clientAddressLine1, clientAddressLine2, clientCity, clientRegion, clientPostalCode, clientCountry, clientLogoUrl]
       properties:
         status: { type: string, enum: [signed_out, unassigned, disabled, pending_sites, active] }
         platformAdmin: { type: boolean }
         canCreateOwnReports: { type: boolean }
         clientId: { type: [string, "null"] }
         clientName: { type: [string, "null"] }
+        clientCompanyNumber: { type: [string, "null"] }
+        clientAddressLine1: { type: [string, "null"] }
+        clientAddressLine2: { type: [string, "null"] }
+        clientCity: { type: [string, "null"] }
+        clientRegion: { type: [string, "null"] }
+        clientPostalCode: { type: [string, "null"] }
+        clientCountry: { type: [string, "null"] }
+        clientLogoUrl: { type: [string, "null"] }
         reportIds: { type: array, items: { type: string } }
         sites: { type: array, items: { $ref: "#/components/schemas/AccessSite" } }
     AccessOwnReportInput:

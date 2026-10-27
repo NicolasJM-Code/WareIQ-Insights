@@ -10,9 +10,12 @@ import {
   SaveAccessOwnReportBody, SaveAccessOwnReportResponse, ListAccessOwnReportsResponse,
   DeleteAccessOwnReportParams, RunAccessReportParams, RunAccessReportBody, RunAccessReportResponse,
   ImportAccessOwnReportsBody, ImportAccessOwnReportsResponse,
+  RequestAccessClientLogoUploadBody, RequestAccessClientLogoUploadResponse,
+  SaveAccessClientLogoBody, SaveAccessClientLogoResponse,
 } from "@workspace/api-zod";
 import { getAuth } from "@clerk/express";
 import { AccessError, accessFor, requireAccessAdmin, requireMemberAccess } from "../lib/reporting-access";
+import { assertClientLogoFile, getClientLogoFile, isClientLogoPath, requestClientLogoUpload } from "../lib/client-logo-storage";
 import { accessReports, allowedSection } from "../lib/access-catalog";
 import { reportDefinitionError } from "../lib/own-report-validation";
 import { GetAuthSessionResponse, GetSettingsAccessResponse } from "@workspace/api-zod";
@@ -46,11 +49,19 @@ function parsed<T>(schema: { safeParse: (value: unknown) => { success: true; dat
   if (!result.success) throw new AccessError(400, "Check all required fields and selections.");
   return result.data;
 }
+const isUuid = (value: unknown): value is string =>
+  typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+const routeClientId = (req: Request) => {
+  const value = req.params.clientId;
+  return Array.isArray(value) ? value[0] : value;
+};
 
 router.get("/access/me", handler(async (req, res) => {
   if (!getAuth(req).userId) {
     res.json(GetAccessSessionResponse.parse({ status: "signed_out", platformAdmin: false, canCreateOwnReports: false,
-      clientId: null, clientName: null, reportIds: [], sites: [] })); return;
+      clientId: null, clientName: null, clientCompanyNumber: null, clientAddressLine1: null,
+      clientAddressLine2: null, clientCity: null, clientRegion: null, clientPostalCode: null,
+      clientCountry: null, clientLogoUrl: null, reportIds: [], sites: [] })); return;
   }
   res.json(GetAccessSessionResponse.parse((await accessFor(req)).session));
 }));
@@ -67,13 +78,83 @@ router.get("/access/admin", handler(async (req, res) => {
 router.post("/access/clients", handler(async (req, res) => {
   await requireAccessAdmin(req);
   const input = parsed(SaveAccessClientBody.strict(), req.body);
-  const values = { name: input.name.trim(), active: input.active };
+  const values = {
+    name: input.name.trim(), companyNumber: input.companyNumber.trim(),
+    addressLine1: input.addressLine1.trim(), addressLine2: input.addressLine2.trim(),
+    city: input.city.trim(), region: input.region.trim(), postalCode: input.postalCode.trim(),
+    country: input.country.trim(), active: input.active,
+  };
   if (!values.name) throw new AccessError(400, "Client name is required.");
+  if (Object.values(values).some((value) => typeof value === "string" && /[\u0000-\u001f\u007f]/.test(value)))
+    throw new AccessError(400, "Client details cannot contain control characters.");
   const [result] = input.id
     ? await db.update(clientsTable).set(values).where(eq(clientsTable.id, input.id)).returning()
     : await db.insert(clientsTable).values({ id: randomUUID(), ...values }).returning();
   if (!result) throw new AccessError(404, "Client not found.");
   res.json(SaveAccessClientResponse.parse(result));
+}));
+router.post("/access/clients/:clientId/logo-upload", handler(async (req, res) => {
+  await requireAccessAdmin(req);
+  const input = parsed(RequestAccessClientLogoUploadBody.strict(), req.body);
+  const clientId = routeClientId(req);
+  if (!isUuid(clientId))
+    throw new AccessError(400, "Choose a valid client.");
+  const [client] = await db.select({ id: clientsTable.id }).from(clientsTable).where(eq(clientsTable.id, clientId));
+  if (!client) throw new AccessError(404, "Client not found.");
+  const maxLogoSize = 2 * 1024 * 1024;
+  if (input.size > maxLogoSize || !["image/png", "image/jpeg", "image/webp"].includes(input.contentType))
+    throw new AccessError(400, "Choose a PNG, JPEG, or WebP logo smaller than 2 MB.");
+  const result = await requestClientLogoUpload(clientId, input.contentType);
+  res.json(RequestAccessClientLogoUploadResponse.parse(result));
+}));
+router.put("/access/clients/:clientId/logo", handler(async (req, res) => {
+  await requireAccessAdmin(req);
+  const input = parsed(SaveAccessClientLogoBody.strict(), req.body);
+  const clientId = routeClientId(req);
+  if (!isUuid(clientId))
+    throw new AccessError(400, "Choose a valid client.");
+  if (input.objectPath !== null) {
+    if (!isClientLogoPath(clientId, input.objectPath))
+      throw new AccessError(400, "The uploaded logo does not belong to this client.");
+    try { await assertClientLogoFile(clientId, input.objectPath); }
+    catch { throw new AccessError(400, "The uploaded logo could not be verified. Please upload it again."); }
+  }
+  const [result] = await db.update(clientsTable).set({ logoPath: input.objectPath })
+    .where(eq(clientsTable.id, clientId)).returning();
+  if (!result) throw new AccessError(404, "Client not found.");
+  res.json(SaveAccessClientLogoResponse.parse(result));
+}));
+router.get("/access/clients/:clientId/logo", handler(async (req, res) => {
+  const access = await accessFor(req);
+  const clientId = routeClientId(req);
+  if (!isUuid(clientId))
+    throw new AccessError(404, "Client logo not found.");
+  if (!access.actor.platformAdmin) {
+    requireMemberAccess(access);
+    if (access.client?.id !== clientId)
+      throw new AccessError(403, "You cannot view another client's logo.");
+  }
+  const [client] = await db.select().from(clientsTable).where(eq(clientsTable.id, clientId));
+  if (!client?.logoPath || !isClientLogoPath(clientId, client.logoPath))
+    throw new AccessError(404, "Client logo not found.");
+  let file;
+  try { file = await getClientLogoFile(clientId, client.logoPath); }
+  catch { throw new AccessError(404, "Client logo not found."); }
+  const [metadata] = await file.getMetadata();
+  const contentType = String(metadata.contentType ?? "");
+  if (!["image/png", "image/jpeg", "image/webp"].includes(contentType) ||
+      !metadata.size || Number(metadata.size) > 2 * 1024 * 1024)
+    throw new AccessError(404, "Client logo not found.");
+  res.setHeader("Content-Type", contentType);
+  res.setHeader("Content-Disposition", "inline");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Cache-Control", "private, no-store");
+  const stream = file.createReadStream();
+  stream.on("error", () => {
+    if (!res.headersSent) res.status(404).end();
+    else res.destroy();
+  });
+  stream.pipe(res);
 }));
 router.post("/access/warehouses", handler(async (req, res) => {
   await requireAccessAdmin(req);
@@ -86,7 +167,14 @@ router.post("/access/warehouses", handler(async (req, res) => {
     const [client] = await tx.select().from(clientsTable).where(eq(clientsTable.id, input.clientId)).for("update");
     if (!client) throw new AccessError(400, "Choose an existing client.");
     if (!input.id && !client.active) throw new AccessError(400, "Enable the client before adding a warehouse.");
-    const values = { name, active: input.active };
+    const values = {
+      name, active: input.active,
+      addressLine1: input.addressLine1.trim(), addressLine2: input.addressLine2.trim(),
+      city: input.city.trim(), region: input.region.trim(), postalCode: input.postalCode.trim(),
+      country: input.country.trim(), contactPhone: input.contactPhone.trim(),
+    };
+    if (Object.values(values).some((value) => typeof value === "string" && /[\u0000-\u001f\u007f]/.test(value)))
+      throw new AccessError(400, "Warehouse details cannot contain control characters.");
     if (input.id) {
       const [warehouse] = await tx.select().from(sitesTable).where(eq(sitesTable.id, input.id)).for("update");
       if (!warehouse) throw new AccessError(404, "Warehouse not found.");

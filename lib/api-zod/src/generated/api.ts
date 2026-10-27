@@ -119,12 +119,27 @@ export const GetAccessSessionResponse = zod.object({
   "canCreateOwnReports": zod.boolean(),
   "clientId": zod.string().nullable(),
   "clientName": zod.string().nullable(),
+  "clientCompanyNumber": zod.string().nullable(),
+  "clientAddressLine1": zod.string().nullable(),
+  "clientAddressLine2": zod.string().nullable(),
+  "clientCity": zod.string().nullable(),
+  "clientRegion": zod.string().nullable(),
+  "clientPostalCode": zod.string().nullable(),
+  "clientCountry": zod.string().nullable(),
+  "clientLogoUrl": zod.string().nullable(),
   "reportIds": zod.array(zod.string()),
   "sites": zod.array(zod.object({
   "id": zod.string(),
   "clientId": zod.string(),
   "sourceId": zod.string(),
   "name": zod.string(),
+  "addressLine1": zod.string(),
+  "addressLine2": zod.string(),
+  "city": zod.string(),
+  "region": zod.string(),
+  "postalCode": zod.string(),
+  "country": zod.string(),
+  "contactPhone": zod.string(),
   "active": zod.boolean()
 }))
 })
@@ -134,6 +149,14 @@ export const GetAccessAdminResponse = zod.object({
   "clients": zod.array(zod.object({
   "id": zod.string(),
   "name": zod.string(),
+  "companyNumber": zod.string(),
+  "addressLine1": zod.string(),
+  "addressLine2": zod.string(),
+  "city": zod.string(),
+  "region": zod.string(),
+  "postalCode": zod.string(),
+  "country": zod.string(),
+  "logoPath": zod.string().nullable(),
   "active": zod.boolean()
 })),
   "sites": zod.array(zod.object({
@@ -141,6 +164,13 @@ export const GetAccessAdminResponse = zod.object({
   "clientId": zod.string(),
   "sourceId": zod.string(),
   "name": zod.string(),
+  "addressLine1": zod.string(),
+  "addressLine2": zod.string(),
+  "city": zod.string(),
+  "region": zod.string(),
+  "postalCode": zod.string(),
+  "country": zod.string(),
+  "contactPhone": zod.string(),
   "active": zod.boolean()
 })),
   "roles": zod.array(zod.object({
@@ -173,17 +203,116 @@ export const GetAccessAdminResponse = zod.object({
 
 export const saveAccessClientBodyNameMax = 100;
 
+export const saveAccessClientBodyCompanyNumberMax = 100;
+
+export const saveAccessClientBodyAddressLine1Max = 200;
+
+export const saveAccessClientBodyAddressLine2Max = 200;
+
+export const saveAccessClientBodyCityMax = 100;
+
+export const saveAccessClientBodyRegionMax = 100;
+
+export const saveAccessClientBodyPostalCodeMax = 32;
+
+export const saveAccessClientBodyCountryMax = 100;
+
 
 
 export const SaveAccessClientBody = zod.object({
   "id": zod.string().optional(),
   "name": zod.string().min(1).max(saveAccessClientBodyNameMax),
+  "companyNumber": zod.string().max(saveAccessClientBodyCompanyNumberMax),
+  "addressLine1": zod.string().max(saveAccessClientBodyAddressLine1Max),
+  "addressLine2": zod.string().max(saveAccessClientBodyAddressLine2Max),
+  "city": zod.string().max(saveAccessClientBodyCityMax),
+  "region": zod.string().max(saveAccessClientBodyRegionMax),
+  "postalCode": zod.string().max(saveAccessClientBodyPostalCodeMax),
+  "country": zod.string().max(saveAccessClientBodyCountryMax),
   "active": zod.boolean()
 })
 
 export const SaveAccessClientResponse = zod.object({
   "id": zod.string(),
   "name": zod.string(),
+  "companyNumber": zod.string(),
+  "addressLine1": zod.string(),
+  "addressLine2": zod.string(),
+  "city": zod.string(),
+  "region": zod.string(),
+  "postalCode": zod.string(),
+  "country": zod.string(),
+  "logoPath": zod.string().nullable(),
+  "active": zod.boolean()
+})
+
+
+/**
+ * @summary Request a private upload URL for a client logo
+ */
+
+
+
+export const RequestAccessClientLogoUploadParams = zod.object({
+  "clientId": zod.coerce.string().min(1)
+})
+
+export const requestAccessClientLogoUploadBodyNameMax = 255;
+
+export const requestAccessClientLogoUploadBodySizeMax = 2097152;
+
+
+
+export const RequestAccessClientLogoUploadBody = zod.object({
+  "name": zod.string().min(1).max(requestAccessClientLogoUploadBodyNameMax),
+  "size": zod.number().int().min(1).max(requestAccessClientLogoUploadBodySizeMax),
+  "contentType": zod.enum(['image/png', 'image/jpeg', 'image/webp'])
+})
+
+export const RequestAccessClientLogoUploadResponse = zod.object({
+  "uploadURL": zod.string().url(),
+  "objectPath": zod.string()
+})
+
+
+/**
+ * @summary Serve a client logo to that client's users
+ */
+
+
+
+export const GetAccessClientLogoParams = zod.object({
+  "clientId": zod.coerce.string().min(1)
+})
+
+export const GetAccessClientLogoResponse = zod.unknown()
+
+
+/**
+ * @summary Set or remove a client logo after upload
+ */
+
+
+
+export const SaveAccessClientLogoParams = zod.object({
+  "clientId": zod.coerce.string().min(1)
+})
+
+export const SaveAccessClientLogoBody = zod.object({
+  "objectPath": zod.string().nullable()
+})
+
+export const SaveAccessClientLogoResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "companyNumber": zod.string(),
+  "addressLine1": zod.string(),
+  "addressLine2": zod.string(),
+  "city": zod.string(),
+  "region": zod.string(),
+  "postalCode": zod.string(),
+  "country": zod.string(),
+  "logoPath": zod.string().nullable(),
   "active": zod.boolean()
 })
 
@@ -197,6 +326,20 @@ export const saveAccessWarehouseBodySourceIdMax = 100;
 
 export const saveAccessWarehouseBodyNameMax = 100;
 
+export const saveAccessWarehouseBodyAddressLine1Max = 200;
+
+export const saveAccessWarehouseBodyAddressLine2Max = 200;
+
+export const saveAccessWarehouseBodyCityMax = 100;
+
+export const saveAccessWarehouseBodyRegionMax = 100;
+
+export const saveAccessWarehouseBodyPostalCodeMax = 32;
+
+export const saveAccessWarehouseBodyCountryMax = 100;
+
+export const saveAccessWarehouseBodyContactPhoneMax = 40;
+
 
 
 export const SaveAccessWarehouseBody = zod.object({
@@ -204,6 +347,13 @@ export const SaveAccessWarehouseBody = zod.object({
   "clientId": zod.string().min(1),
   "sourceId": zod.string().min(1).max(saveAccessWarehouseBodySourceIdMax),
   "name": zod.string().min(1).max(saveAccessWarehouseBodyNameMax),
+  "addressLine1": zod.string().max(saveAccessWarehouseBodyAddressLine1Max),
+  "addressLine2": zod.string().max(saveAccessWarehouseBodyAddressLine2Max),
+  "city": zod.string().max(saveAccessWarehouseBodyCityMax),
+  "region": zod.string().max(saveAccessWarehouseBodyRegionMax),
+  "postalCode": zod.string().max(saveAccessWarehouseBodyPostalCodeMax),
+  "country": zod.string().max(saveAccessWarehouseBodyCountryMax),
+  "contactPhone": zod.string().max(saveAccessWarehouseBodyContactPhoneMax),
   "active": zod.boolean()
 })
 
@@ -212,6 +362,13 @@ export const SaveAccessWarehouseResponse = zod.object({
   "clientId": zod.string(),
   "sourceId": zod.string(),
   "name": zod.string(),
+  "addressLine1": zod.string(),
+  "addressLine2": zod.string(),
+  "city": zod.string(),
+  "region": zod.string(),
+  "postalCode": zod.string(),
+  "country": zod.string(),
+  "contactPhone": zod.string(),
   "active": zod.boolean()
 })
 

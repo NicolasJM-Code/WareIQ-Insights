@@ -5,6 +5,14 @@ import { sql } from "drizzle-orm";
 export const clientsTable = pgTable("wareiq_clients", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
+  companyNumber: text("company_number").notNull().default(""),
+  addressLine1: text("address_line_1").notNull().default(""),
+  addressLine2: text("address_line_2").notNull().default(""),
+  city: text("city").notNull().default(""),
+  region: text("region").notNull().default(""),
+  postalCode: text("postal_code").notNull().default(""),
+  country: text("country").notNull().default(""),
+  logoPath: text("logo_path"),
   active: boolean("active").notNull().default(true),
 }, (table) => [uniqueIndex("wareiq_client_name_unique").on(sql`lower(${table.name})`)]);
 export const sitesTable = pgTable("wareiq_sites", {
@@ -12,6 +20,13 @@ export const sitesTable = pgTable("wareiq_sites", {
   clientId: text("client_id").notNull().references(() => clientsTable.id),
   sourceId: text("source_id").notNull(),
   name: text("name").notNull(),
+  addressLine1: text("address_line_1").notNull().default(""),
+  addressLine2: text("address_line_2").notNull().default(""),
+  city: text("city").notNull().default(""),
+  region: text("region").notNull().default(""),
+  postalCode: text("postal_code").notNull().default(""),
+  country: text("country").notNull().default(""),
+  contactPhone: text("contact_phone").notNull().default(""),
   active: boolean("active").notNull().default(true),
 }, (table) => [
   uniqueIndex("wareiq_site_source_per_client_unique").on(table.clientId, sql`lower(trim(${table.sourceId}))`),

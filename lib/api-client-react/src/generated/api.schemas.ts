@@ -159,13 +159,69 @@ export interface AccessClientInput {
      * @maxLength 100
      */
   name: string;
+  /** @maxLength 100 */
+  companyNumber: string;
+  /** @maxLength 200 */
+  addressLine1: string;
+  /** @maxLength 200 */
+  addressLine2: string;
+  /** @maxLength 100 */
+  city: string;
+  /** @maxLength 100 */
+  region: string;
+  /** @maxLength 32 */
+  postalCode: string;
+  /** @maxLength 100 */
+  country: string;
   active: boolean;
 }
 
 export interface AccessClient {
   id: string;
   name: string;
+  companyNumber: string;
+  addressLine1: string;
+  addressLine2: string;
+  city: string;
+  region: string;
+  postalCode: string;
+  country: string;
+  /** @nullable */
+  logoPath: string | null;
   active: boolean;
+}
+
+export type AccessClientLogoUploadInputContentType = typeof AccessClientLogoUploadInputContentType[keyof typeof AccessClientLogoUploadInputContentType];
+
+
+export const AccessClientLogoUploadInputContentType = {
+  'image/png': 'image/png',
+  'image/jpeg': 'image/jpeg',
+  'image/webp': 'image/webp',
+} as const;
+
+export interface AccessClientLogoUploadInput {
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  name: string;
+  /**
+     * @minimum 1
+     * @maximum 2097152
+     */
+  size: number;
+  contentType: AccessClientLogoUploadInputContentType;
+}
+
+export interface AccessClientLogoUpload {
+  uploadURL: string;
+  objectPath: string;
+}
+
+export interface AccessClientLogoInput {
+  /** @nullable */
+  objectPath: string | null;
 }
 
 export interface AccessWarehouseInput {
@@ -183,6 +239,20 @@ export interface AccessWarehouseInput {
      * @maxLength 100
      */
   name: string;
+  /** @maxLength 200 */
+  addressLine1: string;
+  /** @maxLength 200 */
+  addressLine2: string;
+  /** @maxLength 100 */
+  city: string;
+  /** @maxLength 100 */
+  region: string;
+  /** @maxLength 32 */
+  postalCode: string;
+  /** @maxLength 100 */
+  country: string;
+  /** @maxLength 40 */
+  contactPhone: string;
   active: boolean;
 }
 
@@ -191,6 +261,13 @@ export interface AccessSite {
   clientId: string;
   sourceId: string;
   name: string;
+  addressLine1: string;
+  addressLine2: string;
+  city: string;
+  region: string;
+  postalCode: string;
+  country: string;
+  contactPhone: string;
   active: boolean;
 }
 
@@ -299,6 +376,22 @@ export interface AccessSession {
   clientId: string | null;
   /** @nullable */
   clientName: string | null;
+  /** @nullable */
+  clientCompanyNumber: string | null;
+  /** @nullable */
+  clientAddressLine1: string | null;
+  /** @nullable */
+  clientAddressLine2: string | null;
+  /** @nullable */
+  clientCity: string | null;
+  /** @nullable */
+  clientRegion: string | null;
+  /** @nullable */
+  clientPostalCode: string | null;
+  /** @nullable */
+  clientCountry: string | null;
+  /** @nullable */
+  clientLogoUrl: string | null;
   reportIds: string[];
   sites: AccessSite[];
 }

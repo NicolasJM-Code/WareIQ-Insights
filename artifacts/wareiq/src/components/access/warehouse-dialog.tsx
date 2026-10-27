@@ -7,7 +7,20 @@ import { Switch } from '@/components/ui/switch';
 import { AlertTriangle, Lock } from 'lucide-react';
 import { FieldLabel, FormError, errorMessage, selectCls } from './access-ui';
 
-export type WarehouseInput = { id?: string; clientId: string; name: string; sourceId: string; active: boolean };
+export type WarehouseInput = {
+  id?: string;
+  clientId: string;
+  name: string;
+  sourceId: string;
+  addressLine1: string;
+  addressLine2: string;
+  city: string;
+  region: string;
+  postalCode: string;
+  country: string;
+  contactPhone: string;
+  active: boolean;
+};
 
 export function WarehouseDialog({ open, onOpenChange, warehouse, dir, defaultClientId, onSave }: {
   open: boolean; onOpenChange: (o: boolean) => void; warehouse: AccessSite | null; dir: AccessDirectory; defaultClientId: string; onSave: (v: WarehouseInput) => Promise<unknown>;
@@ -16,6 +29,13 @@ export function WarehouseDialog({ open, onOpenChange, warehouse, dir, defaultCli
   const [clientId, setClientId] = useState(warehouse?.clientId ?? (dir.clients.some((c) => c.id === defaultClientId) ? defaultClientId : ''));
   const [name, setName] = useState(warehouse?.name ?? '');
   const [sourceId, setSourceId] = useState(warehouse?.sourceId ?? '');
+  const [addressLine1, setAddressLine1] = useState(warehouse?.addressLine1 ?? '');
+  const [addressLine2, setAddressLine2] = useState(warehouse?.addressLine2 ?? '');
+  const [city, setCity] = useState(warehouse?.city ?? '');
+  const [region, setRegion] = useState(warehouse?.region ?? '');
+  const [postalCode, setPostalCode] = useState(warehouse?.postalCode ?? '');
+  const [country, setCountry] = useState(warehouse?.country ?? '');
+  const [contactPhone, setContactPhone] = useState(warehouse?.contactPhone ?? '');
   const [active, setActive] = useState(warehouse?.active ?? true);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -30,15 +50,19 @@ export function WarehouseDialog({ open, onOpenChange, warehouse, dir, defaultCli
     setBusy(true); setErr(null);
     try {
       await onSave(editing
-        ? { id: warehouse!.id, clientId: warehouse!.clientId, sourceId: warehouse!.sourceId, name: name.trim(), active }
-        : { clientId, name: name.trim(), sourceId: sourceId.trim(), active });
+        ? { id: warehouse!.id, clientId: warehouse!.clientId, sourceId: warehouse!.sourceId, name: name.trim(),
+          addressLine1: addressLine1.trim(), addressLine2: addressLine2.trim(), city: city.trim(), region: region.trim(),
+          postalCode: postalCode.trim(), country: country.trim(), contactPhone: contactPhone.trim(), active }
+        : { clientId, name: name.trim(), sourceId: sourceId.trim(),
+          addressLine1: addressLine1.trim(), addressLine2: addressLine2.trim(), city: city.trim(), region: region.trim(),
+          postalCode: postalCode.trim(), country: country.trim(), contactPhone: contactPhone.trim(), active });
       onOpenChange(false);
     } catch (e) { setErr(errorMessage(e)); } finally { setBusy(false); }
   };
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!busy) onOpenChange(o); }}>
-      <DialogContent className="max-h-[90dvh] max-w-lg overflow-y-auto">
+      <DialogContent className="max-h-[90dvh] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-display">{editing ? 'Edit warehouse' : 'Add warehouse'}</DialogTitle>
           <DialogDescription>Warehouses belong to exactly one client. Users only see warehouses explicitly assigned to them.</DialogDescription>
@@ -65,6 +89,18 @@ export function WarehouseDialog({ open, onOpenChange, warehouse, dir, defaultCli
             )}
             <p className="mt-1.5 text-xs text-muted-foreground">Stored in WareIQ only. This code is not verified against the WMS and no WMS data is changed.</p>
           </div>
+          <section className="space-y-3 rounded-md border p-3" aria-label="Warehouse address and contact">
+            <FieldLabel>Warehouse address and contact</FieldLabel>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="sm:col-span-2"><FieldLabel>Address line 1</FieldLabel><Input data-testid="input-warehouse-address-1" maxLength={200} value={addressLine1} onChange={(e) => setAddressLine1(e.target.value)} /></div>
+              <div className="sm:col-span-2"><FieldLabel>Address line 2</FieldLabel><Input data-testid="input-warehouse-address-2" maxLength={200} value={addressLine2} onChange={(e) => setAddressLine2(e.target.value)} /></div>
+              <div><FieldLabel>City / town</FieldLabel><Input data-testid="input-warehouse-city" maxLength={100} value={city} onChange={(e) => setCity(e.target.value)} /></div>
+              <div><FieldLabel>State / province / region</FieldLabel><Input data-testid="input-warehouse-region" maxLength={100} value={region} onChange={(e) => setRegion(e.target.value)} /></div>
+              <div><FieldLabel>Postal code</FieldLabel><Input data-testid="input-warehouse-postal-code" maxLength={32} value={postalCode} onChange={(e) => setPostalCode(e.target.value)} /></div>
+              <div><FieldLabel>Country</FieldLabel><Input data-testid="input-warehouse-country" maxLength={100} value={country} onChange={(e) => setCountry(e.target.value)} /></div>
+              <div><FieldLabel>Contact phone</FieldLabel><Input data-testid="input-warehouse-phone" type="tel" maxLength={40} value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} /></div>
+            </div>
+          </section>
           <label className="flex items-center justify-between rounded-md border p-3">
             <span className="text-sm"><span className="font-medium">Active</span><span className="block text-xs text-muted-foreground">Inactive warehouses cannot be assigned and grant no access.</span></span>
             <Switch data-testid="switch-warehouse-active" checked={active} onCheckedChange={setActive} />

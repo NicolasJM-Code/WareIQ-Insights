@@ -16,6 +16,22 @@ export interface AccessSession {
   clientId: string | null;
   /** @nullable */
   clientName: string | null;
+  /** @nullable */
+  clientCompanyNumber: string | null;
+  /** @nullable */
+  clientAddressLine1: string | null;
+  /** @nullable */
+  clientAddressLine2: string | null;
+  /** @nullable */
+  clientCity: string | null;
+  /** @nullable */
+  clientRegion: string | null;
+  /** @nullable */
+  clientPostalCode: string | null;
+  /** @nullable */
+  clientCountry: string | null;
+  /** @nullable */
+  clientLogoUrl: string | null;
   reportIds: string[];
   sites: AccessSite[];
 }
