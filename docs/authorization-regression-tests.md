@@ -231,7 +231,69 @@ fail closed with a sanitized 503. Health checks remain public. Approvals are not
 cached: this adds a Clerk API read per authenticated request and deliberately
 trades provider availability/latency for prompt revocation.
 
-### Generated-account cleanup
+## Opt-in hosted sign-in screen check
+
+```sh
+CLERK_HOSTED_TESTS=isolated-development-only \
+CLERK_BROWSER_EXECUTABLE="$(command -v chromium)" \
+pnpm test:auth:hosted
+```
+
+This separate command requires the same isolated Development setup and Chromium
+as the cookie check. `CLERK_BROWSER_TESTS` does **not** enable it. It is never
+selected by `pnpm test:auth`, `test:auth:browser`, the authorization workflow, or
+a build. Missing opt-in, live/missing keys, Production mode, unsupported login
+configuration, screen failures and cleanup failures all fail, never skip.
+
+The isolated page renders the production `SignInPage` and `AuthProvider`.
+The journey fills Clerk's hosted email/password component through its visible
+form; it does not use a sign-in ticket, SDK sign-in helper, injected cookie,
+bearer token, existing account or saved browser session. Only a newly generated
+`wareiq-browser-<uuid>+clerk_test@example.com` account is used, with a random
+password kept in memory. Clerk's supported Development test-email code `424242`
+is entered if the instance requests email verification after password sign-in.
+No mailbox, shared password, real email delivery or customer credentials are
+used. Password login must be enabled in the isolated Development instance;
+the runner does not change its authentication settings.
+
+A successful form submission must unlock both real frontend guards. A reload
+must preserve the real cookie session, return an active administrator reporting
+summary, and reach a harmless reporting handler behind production middleware.
+Only then do fresh, empty browser contexts check failure behavior: blocking the
+external sign-in screen and blocking its password handshake must keep both
+guards locked and return 401 from reporting, settings and own-report APIs
+without reaching the protected handler. The handshake-failure context also
+reloads and must remain locked. The application access API and identity provider
+are never replaced with synthetic successful responses.
+
+The password is never written into the private cleanup journal or logs.
+Browser errors are sanitized; no screenshot, trace, browser storage, request
+body or provider error detail is recorded. Teardown attempts ownership-verified
+account deletion even after launch, form, assertion or local shutdown failure.
+The account's sessions are removed along with the account.
+
+Recovery uses the same private browser journal format (including the generated
+test-email suffix) and the same exact ownership checks as the cookie check:
+
+```sh
+CLERK_HOSTED_TESTS=isolated-development-only \
+CLERK_BROWSER_CLEANUP_MANIFEST=.cache/clerk-browser/<uuid>.json \
+pnpm test:auth:hosted
+```
+
+Recovery performs no browser launch, account creation or sign-in. Retain the
+journal after interruption or ambiguous creation and use the **same**
+Development instance; never retry creation blindly or target an existing user.
+
+This is password/test-email coverage of the Clerk-hosted component in the app,
+not the separate Account Portal, social SSO, authenticator/TOTP MFA, real email
+delivery or a published edge proxy. Those methods are not silently bypassed:
+an unexpected required factor fails the positive control. The ordinary offline
+suite separately checks hosted opt-in refusal, Development key restrictions,
+generated-account/password journal safety, ambiguous creation and discovery
+isolation using fake provider and filesystem operations only.
+
+### Provider generated-account cleanup
 
 The runner keeps JWTs only in memory. Before contacting Clerk to create an
 account, it writes a mode-0600, git-ignored intent journal under

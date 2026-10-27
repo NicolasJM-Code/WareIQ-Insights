@@ -9,6 +9,8 @@ const fixtures = vi.hoisted(() => ({
   email: "admin@example.test",
   select: vi.fn(),
   update: vi.fn(),
+  transaction: vi.fn(),
+  lock: vi.fn(),
   fetch: vi.fn(),
   getMetadata: vi.fn(),
   createReadStream: vi.fn(),
@@ -33,21 +35,7 @@ vi.mock("@workspace/db", async () => {
   const schema = await import("@workspace/db/schema");
   return {
     ...schema,
-    db: {
-      select: fixtures.select,
-      update: fixtures.update,
-      transaction: (callback: (tx: {
-        select: () => { from: (table: unknown) => { where: () => { for: () => Promise<unknown[]> } } };
-        update: typeof fixtures.update;
-      }) => Promise<unknown>) => callback({
-        select: () => ({
-          from: (table: unknown) => ({
-            where: () => ({ for: async () => queryRows(table) }),
-          }),
-        }),
-        update: fixtures.update,
-      }),
-    },
+    db: { select: fixtures.select, update: fixtures.update, transaction: fixtures.transaction },
   };
 });
 
@@ -100,9 +88,15 @@ function queryRows(table: unknown) {
 }
 
 function configureDatabase() {
+  fixtures.lock.mockImplementation(async (_mode: string, table: unknown) => queryRows(table));
+  fixtures.transaction.mockImplementation(async (
+    callback: (tx: { select: typeof fixtures.select; update: typeof fixtures.update }) => Promise<unknown>,
+  ) => callback({ select: fixtures.select, update: fixtures.update }));
   fixtures.select.mockImplementation(() => ({
     from: (table: unknown) => ({
-      where: async () => queryRows(table),
+      where: () => Object.assign(Promise.resolve(queryRows(table)), {
+        for: (mode: string) => fixtures.lock(mode, table),
+      }),
     }),
   }));
   fixtures.update.mockImplementation(() => ({
@@ -220,6 +214,9 @@ describe("client logo routes", () => {
     expect(response.body.logoPath).toBe(logoAPath);
     expect(fixtures.getMetadata).toHaveBeenCalledOnce();
     expect(fixtures.update).toHaveBeenCalledOnce();
+    expect(fixtures.update).toHaveBeenCalledWith(clientsTable);
+    expect(fixtures.transaction).toHaveBeenCalledOnce();
+    expect(fixtures.lock).toHaveBeenCalledExactlyOnceWith("update", clientsTable);
   });
 
   it("denies a user from another client before reading the private logo", async () => {

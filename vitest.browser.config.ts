@@ -4,7 +4,7 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["artifacts/api-server/browser-tests/**/*.test.ts"],
+    include: ["artifacts/api-server/browser-tests/clerk.test.ts"],
     fileParallelism: false,
     hookTimeout: 60_000,
     testTimeout: 240_000,

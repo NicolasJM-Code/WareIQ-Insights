@@ -10,8 +10,8 @@ type Intent = { kind: "wareiq-browser"; state: "intent"; runId: string; email: s
 let manifest: Manifest | undefined;
 let path: string;
 
-export function preflight() {
-  if (process.env.CLERK_BROWSER_TESTS !== "isolated-development-only"
+export function preflight(optIn = "CLERK_BROWSER_TESTS") {
+  if (process.env[optIn] !== "isolated-development-only"
     || process.env.NODE_ENV === "production"
     || !process.env.CLERK_SECRET_KEY?.startsWith("sk_test_")
     || !process.env.CLERK_PUBLISHABLE_KEY?.startsWith("pk_test_")) {
@@ -26,9 +26,9 @@ export async function safe<T>(label: string, action: () => Promise<T>): Promise<
   catch { throw new Error(`Clerk browser check failed during ${label}; sensitive details suppressed.`); }
 }
 
-export async function createFixture() {
+export async function createFixture(password?: string) {
   const runId = randomUUID();
-  const email = `wareiq-browser-${runId}@example.com`;
+  const email = `wareiq-browser-${runId}${password ? "+clerk_test" : ""}@example.com`;
   path = resolve(directory, `${runId}.json`);
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const intent: Intent = { kind: "wareiq-browser", state: "intent", runId, email };
@@ -41,7 +41,7 @@ export async function createFixture() {
   let user: Awaited<ReturnType<typeof clerkClient.users.createUser>>;
   try {
     user = await safe("disposable account creation", () => clerkClient.users.createUser({
-      emailAddress: [email], skipPasswordRequirement: true,
+      emailAddress: [email], ...(password ? { password } : { skipPasswordRequirement: true }),
       publicMetadata: { role: "admin" },
       privateMetadata: { wareiqBrowserTest: runId },
     }));
@@ -62,6 +62,13 @@ export async function createFixture() {
   return user.id;
 }
 
+export async function createHostedFixture() {
+  // Never accept an existing user's credentials. Password exists only in memory.
+  const password = `Wiq!${randomUUID()}Aa9`;
+  const userId = await createFixture(password);
+  return { userId, email: manifest!.email, password };
+}
+
 export async function recoverFixture(filename: string) {
   path = resolve(filename);
   if (dirname(path) !== directory) throw new Error("Cleanup refused: journal must be in .cache/clerk-browser.");
@@ -70,7 +77,8 @@ export async function recoverFixture(filename: string) {
   const m = candidate as Partial<Manifest & Intent>;
   if (m.kind !== "wareiq-browser" || typeof m.runId !== "string" || !uuid.test(m.runId)
     || basename(path) !== `${m.runId}.json`
-    || m.email !== `wareiq-browser-${m.runId}@example.com`) {
+    || ![`wareiq-browser-${m.runId}@example.com`,
+      `wareiq-browser-${m.runId}+clerk_test@example.com`].includes(m.email ?? "")) {
     throw new Error("Cleanup refused: invalid generated-account journal.");
   }
   if (m.state === "intent" && m.userId === undefined) {
