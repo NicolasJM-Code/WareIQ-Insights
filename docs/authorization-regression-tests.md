@@ -328,7 +328,10 @@ generated email before deletion. For an intent record, it asks Clerk for users
 matching only the exact generated email, requires exactly one result, and
 verifies that result's private run marker and sole email before saving its ID
 and proceeding with ID-scoped cleanup. If no account matches, it removes the
-intent journal without changing any account. A provider lookup failure, multiple
+intent journal without changing any account and reports that the exact-email
+lookup found no account. Successful deletion of a verified fixture is also
+reported explicitly. These messages contain no provider response details,
+credentials, or tokens. A provider lookup failure, multiple
 matches, or any ownership mismatch fails closed and retains the journal; do not
 edit it to target another account. If an account was already deleted, confirm
 its absence in the same Development instance before manually removing an

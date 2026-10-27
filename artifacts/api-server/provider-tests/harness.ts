@@ -111,6 +111,7 @@ export async function runProviderCheck(
         if (journalWritten || (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
       manifest = undefined;
+      if (recovery) info("Recovery complete: verified generated fixture deleted.");
     } catch {
       if (deleted) {
         throw new Error(`Cleanup incomplete: generated account was deleted, but journal removal failed. Confirm its absence in the same Development instance, then manually remove ${path}. Do not rerun recovery for an already-deleted account.`);
@@ -160,6 +161,7 @@ export async function runProviderCheck(
           catch {
             throw new Error(`No account matched the exact generated email. The intent journal could not be removed; confirm absence in the same Development instance, then manually remove ${path}. No account was changed.`);
           }
+          info("Recovery complete: exact-email lookup found no account; intent journal removed. No account was changed.");
           return;
         }
         if (result.totalCount !== 1 || result.data.length !== 1

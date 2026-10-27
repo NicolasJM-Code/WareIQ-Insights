@@ -204,6 +204,7 @@ describe("offline provider harness safety", () => {
     expect(users.deleteUser).toHaveBeenCalledExactlyOnceWith(saved.userId);
     expect(users.createUser).not.toHaveBeenCalled();
     expect(check).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledExactlyOnceWith("Recovery complete: verified generated fixture deleted.");
     expect(await readdir(directory)).toEqual([]);
   });
 
@@ -338,6 +339,9 @@ describe("offline provider harness safety", () => {
     expect(users.deleteUser).not.toHaveBeenCalled();
     expect(users.createUser).not.toHaveBeenCalled();
     expect(check).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledExactlyOnceWith(
+      "Recovery complete: exact-email lookup found no account; intent journal removed. No account was changed.",
+    );
     expect(await readdir(directory)).toEqual([]);
   });
 
