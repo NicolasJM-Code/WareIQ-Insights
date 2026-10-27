@@ -29,6 +29,14 @@ ownership/email/ID mismatches, setup and assertion failures, invalid journals,
 provider outages, and journal write/unlink failures. This coverage is part of
 the ordinary offline suite, not `test:auth:provider`.
 
+The offline suite also checks that the package scripts and Vitest configs keep
+the live test out of ordinary discovery. It runs the live test entrypoint in an
+isolated subprocess with a fake Clerk module to verify unsafe preflight makes no
+provider calls and recovery performs only fixture ownership lookup/deletion,
+without importing the app or running token/access checks. The subprocess uses
+synthetic environment values and temporary files only; outbound network
+connections are disabled for both subprocess runs.
+
 ## Isolation
 
 These tests require no running app, network access, Clerk account, WMS database,
