@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import express from "express";
 import request from "supertest";
 import { db, pool, socketDirectory, startDatabase, stopDatabase } from "./database";
-import { ownReportsTable } from "@workspace/db/schema";
+import { clientsTable, ownReportsTable, rolesTable, sitesTable } from "@workspace/db/schema";
 
 const identity = vi.hoisted(() => ({ userId: "owner-a" as string | null, error: vi.fn() }));
 vi.mock("@workspace/db", async () => ({
@@ -80,6 +80,50 @@ describe("account report persistence through the API", () => {
     expect(pool.options.host).toBe(socketDirectory);
   });
 
+  it("enforces normalized client names and client-scoped role and site names", async () => {
+    await expect(db.insert(clientsTable).values({
+      id: "client-duplicate-name",
+      name: "sYnThEtIc A",
+    })).rejects.toMatchObject({
+      cause: { code: "23505", constraint: "wareiq_client_name_unique" },
+    });
+
+    await expect(db.insert(rolesTable).values({
+      id: "role-duplicate-name",
+      clientId: "client-a",
+      name: "bUiLdEr",
+    })).rejects.toMatchObject({
+      cause: { code: "23505", constraint: "wareiq_role_name_unique" },
+    });
+    await db.insert(rolesTable).values({
+      id: "role-same-name-other-client",
+      clientId: "client-b",
+      name: "bUiLdEr",
+    });
+
+    await expect(db.insert(sitesTable).values({
+      id: "site-duplicate-source",
+      clientId: "client-a",
+      sourceId: " TEST ",
+      name: "Different site",
+    })).rejects.toMatchObject({
+      cause: { code: "23505", constraint: "wareiq_site_source_per_client_unique" },
+    });
+    await expect(db.insert(sitesTable).values({
+      id: "site-duplicate-name",
+      clientId: "client-a",
+      sourceId: "different-source",
+      name: " synthetic SITE ",
+    })).rejects.toMatchObject({
+      cause: { code: "23505", constraint: "wareiq_site_name_per_client_unique" },
+    });
+    await db.insert(sitesTable).values({
+      id: "site-same-values-other-client",
+      clientId: "client-b",
+      sourceId: " TEST ",
+      name: "Synthetic site",
+    });
+  });
   it("creates, edits and deletes only the requested account row, with a fresh GET after each write", async () => {
     const before = await snapshot();
     const created = await save({ ...definition, name: "  New report  " });
