@@ -12,6 +12,15 @@ export type AccessDirectoryNotificationSummary = {
   /** @minimum 0 */
   queued: number;
   /** @minimum 0 */
+  queuedOverThreshold: number;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  oldestQueuedAgeSeconds: number | null;
+  /** @minimum 1 */
+  queueWarningAfterSeconds: number;
+  /** @minimum 0 */
   retrying: number;
   /** @minimum 0 */
   accepted: number;

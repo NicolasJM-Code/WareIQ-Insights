@@ -25,7 +25,8 @@ import { reportDefinitionError } from "../lib/own-report-validation";
 import { GetAuthSessionResponse, GetSettingsAccessResponse } from "@workspace/api-zod";
 import { requireIdentity, requireAdministrator } from "../middlewares/access";
 import {
-  getAccessNotificationSummary, listConfirmedFailedAccessNotifications, queueAccessNotifications,
+  ACCESS_NOTIFICATION_QUEUE_WARNING_AFTER_SECONDS, getAccessNotificationSummary,
+  listConfirmedFailedAccessNotifications, queueAccessNotifications,
   retryConfirmedFailedAccessNotification,
 } from "../lib/access-notifications";
 import { reportingChangeNotices } from "../lib/reporting-notification-change";
@@ -89,6 +90,9 @@ router.get("/access/admin", handler(async (req, res) => {
   let notificationSummary: {
     status: "available" | "unavailable";
     queued: number;
+    queuedOverThreshold: number;
+    oldestQueuedAgeSeconds: number | null;
+    queueWarningAfterSeconds: number;
     retrying: number;
     accepted: number;
     failed: number;
@@ -97,7 +101,16 @@ router.get("/access/admin", handler(async (req, res) => {
     notificationSummary = { status: "available", ...await getAccessNotificationSummary() };
   } catch {
     req.log.warn({ event: "access_notification_summary_unavailable" }, "Email delivery status unavailable");
-    notificationSummary = { status: "unavailable", queued: 0, retrying: 0, accepted: 0, failed: 0 };
+    notificationSummary = {
+      status: "unavailable",
+      queued: 0,
+      queuedOverThreshold: 0,
+      oldestQueuedAgeSeconds: null,
+      queueWarningAfterSeconds: ACCESS_NOTIFICATION_QUEUE_WARNING_AFTER_SECONDS,
+      retrying: 0,
+      accepted: 0,
+      failed: 0,
+    };
   }
   res.json(GetAccessAdminResponse.parse({
     clients, sites,

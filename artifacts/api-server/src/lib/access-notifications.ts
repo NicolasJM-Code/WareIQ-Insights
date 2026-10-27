@@ -15,10 +15,15 @@ export type Notice = {
 };
 export type AccessNotificationSummary = {
   queued: number;
+  queuedOverThreshold: number;
+  oldestQueuedAgeSeconds: number | null;
+  queueWarningAfterSeconds: number;
   retrying: number;
   accepted: number;
   failed: number;
 };
+
+export const ACCESS_NOTIFICATION_QUEUE_WARNING_AFTER_SECONDS = 5 * 60;
 
 // Keep completed outbox history for 90 days. Each run removes at most 500 rows.
 const COMPLETED_NOTIFICATION_RETENTION_DAYS = 90;
@@ -28,19 +33,33 @@ const COMPLETED_NOTIFICATION_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 export async function getAccessNotificationSummary(): Promise<AccessNotificationSummary> {
   const { rows } = await pool.query<{
     queued: number | string;
+    queued_over_threshold: number | string;
+    oldest_queued_age_seconds: number | string | null;
     retrying: number | string;
     accepted: number | string;
     failed: number | string;
   }>(`SELECT
       count(*) FILTER (WHERE state IN ('pending', 'confirming') AND attempts = 0)::int AS queued,
+      count(*) FILTER (
+        WHERE state IN ('pending', 'confirming') AND attempts = 0
+          AND created_at <= now() - ($1::int * interval '1 second')
+      )::int AS queued_over_threshold,
+      floor(extract(epoch FROM (now() - min(created_at) FILTER (
+        WHERE state IN ('pending', 'confirming') AND attempts = 0
+      ))))::int AS oldest_queued_age_seconds,
       count(*) FILTER (WHERE state = 'pending' AND attempts > 0)::int AS retrying,
       count(*) FILTER (WHERE state = 'sent')::int AS accepted,
       count(*) FILTER (WHERE state IN ('failed', 'confirmed_failed'))::int AS failed
-    FROM wareiq_access_notifications`);
+    FROM wareiq_access_notifications`, [ACCESS_NOTIFICATION_QUEUE_WARNING_AFTER_SECONDS]);
   const summary = rows[0];
   if (!summary) throw new Error("Notification summary unavailable");
   return {
     queued: Number(summary.queued),
+    queuedOverThreshold: Number(summary.queued_over_threshold),
+    oldestQueuedAgeSeconds: summary.oldest_queued_age_seconds === null
+      ? null
+      : Number(summary.oldest_queued_age_seconds),
+    queueWarningAfterSeconds: ACCESS_NOTIFICATION_QUEUE_WARNING_AFTER_SECONDS,
     retrying: Number(summary.retrying),
     accepted: Number(summary.accepted),
     failed: Number(summary.failed),

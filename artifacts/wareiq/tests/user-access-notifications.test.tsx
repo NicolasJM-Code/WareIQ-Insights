@@ -6,6 +6,31 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 const fixtures = vi.hoisted(() => ({
   retry: vi.fn(),
   toast: vi.fn(),
+  adminData: {
+    clients: [],
+    sites: [],
+    roles: [],
+    users: [],
+    reports: [],
+    notificationSummary: {
+      status: "available",
+      queued: 0,
+      queuedOverThreshold: 0,
+      oldestQueuedAgeSeconds: null as number | null,
+      queueWarningAfterSeconds: 300,
+      retrying: 0,
+      accepted: 0,
+      failed: 1,
+    },
+    failedNotifications: [{
+      id: "3ed2c922-b996-44e4-8d9f-929d522026b2",
+      recipient: "account@example.test",
+      roleName: "Supervisor",
+      kind: "reporting",
+      createdAt: new Date("2026-10-27T12:00:00Z"),
+      attempts: 2,
+    }],
+  },
 }));
 
 vi.mock("@workspace/api-client-react", () => ({
@@ -17,18 +42,7 @@ vi.mock("@workspace/api-client-react", () => ({
     isError: false,
   }),
   useGetAccessAdmin: () => ({
-    data: {
-      clients: [], sites: [], roles: [], users: [], reports: [],
-      notificationSummary: { status: "available", queued: 0, retrying: 0, accepted: 0, failed: 1 },
-      failedNotifications: [{
-        id: "3ed2c922-b996-44e4-8d9f-929d522026b2",
-        recipient: "account@example.test",
-        roleName: "Supervisor",
-        kind: "reporting",
-        createdAt: new Date("2026-10-27T12:00:00Z"),
-        attempts: 2,
-      }],
-    },
+    data: fixtures.adminData,
     isLoading: false,
     isError: false,
   }),
@@ -73,6 +87,41 @@ describe("admin failed access email retries", () => {
     await waitFor(() => expect(fixtures.toast).toHaveBeenCalledWith(expect.objectContaining({
       title: "Email retry queued",
     })));
+    queryClient.clear();
+  });
+
+  it("warns about old queued notices without disabling access changes", () => {
+    fixtures.adminData = {
+      clients: [],
+      sites: [],
+      roles: [],
+      users: [],
+      reports: [],
+      notificationSummary: {
+        status: "available",
+        queued: 3,
+        queuedOverThreshold: 2,
+        oldestQueuedAgeSeconds: 420,
+        queueWarningAfterSeconds: 300,
+        retrying: 0,
+        accepted: 0,
+        failed: 0,
+      },
+      failedNotifications: [],
+    };
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <UserAccess />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId("text-oldest-queued-age")).toHaveTextContent("Oldest queued notice: 7 minutes.");
+    expect(screen.getByTestId("warning-stale-queued-notifications")).toHaveTextContent(
+      "2 notices have been queued for at least 5 minutes",
+    );
+    expect(screen.getByTestId("button-new-client")).toBeEnabled();
+    expect(screen.queryByText("account@example.test")).not.toBeInTheDocument();
     queryClient.clear();
   });
 });

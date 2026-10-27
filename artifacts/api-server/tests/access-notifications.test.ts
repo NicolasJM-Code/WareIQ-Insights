@@ -130,13 +130,28 @@ describe("durable delivery and duplicate protection", () => {
     mocks.send.mockResolvedValue({ ok: true, json: async () => ({ id: "provider-email-id" }) });
   });
   it("exposes only aggregate delivery counts to administrator views", async () => {
-    mocks.summaryQuery.mockResolvedValue({ rows: [{ queued: "2", retrying: "1", accepted: "4", failed: "3" }] });
+    mocks.summaryQuery.mockResolvedValue({ rows: [{
+      queued: "2", queued_over_threshold: "1", oldest_queued_age_seconds: "420",
+      retrying: "1", accepted: "4", failed: "3",
+    }] });
     await expect(getAccessNotificationSummary()).resolves.toEqual({
-      queued: 2, retrying: 1, accepted: 4, failed: 3,
+      queued: 2, queuedOverThreshold: 1, oldestQueuedAgeSeconds: 420,
+      queueWarningAfterSeconds: 300, retrying: 1, accepted: 4, failed: 3,
     });
     const statement = mocks.summaryQuery.mock.calls[0][0] as string;
     expect(statement).toContain("count(*) FILTER");
     expect(statement).not.toMatch(/recipient|role_name|provider/i);
+    expect(statement).toContain("state IN ('pending', 'confirming') AND attempts = 0");
+    expect(mocks.summaryQuery.mock.calls[0][1]).toEqual([300]);
+  });
+  it("reports no oldest age when no first-attempt notices are queued", async () => {
+    mocks.summaryQuery.mockResolvedValue({ rows: [{
+      queued: 0, queued_over_threshold: 0, oldest_queued_age_seconds: null,
+      retrying: 0, accepted: 0, failed: 0,
+    }] });
+    await expect(getAccessNotificationSummary()).resolves.toMatchObject({
+      queued: 0, queuedOverThreshold: 0, oldestQueuedAgeSeconds: null,
+    });
   });
   it("deletes only old terminal notices in a bounded, repeatable batch", async () => {
     mocks.poolQuery.mockResolvedValueOnce({ rows: [{ deleted: "7" }] });

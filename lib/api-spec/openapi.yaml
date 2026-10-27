@@ -733,10 +733,13 @@ components:
         failedNotifications: { type: array, items: { $ref: "#/components/schemas/AccessFailedNotification" } }
         notificationSummary:
           type: object
-          required: [status, queued, retrying, accepted, failed]
+          required: [status, queued, queuedOverThreshold, oldestQueuedAgeSeconds, queueWarningAfterSeconds, retrying, accepted, failed]
           properties:
             status: { type: string, enum: [available, unavailable] }
             queued: { type: integer, minimum: 0 }
+            queuedOverThreshold: { type: integer, minimum: 0 }
+            oldestQueuedAgeSeconds: { type: [integer, "null"], minimum: 0 }
+            queueWarningAfterSeconds: { type: integer, minimum: 1 }
             retrying: { type: integer, minimum: 0 }
             accepted: { type: integer, minimum: 0 }
             failed: { type: integer, minimum: 0 }

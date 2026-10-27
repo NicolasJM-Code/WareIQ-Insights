@@ -54,7 +54,11 @@ manually resend an ambiguous old event without checking provider delivery.
 `sent` means accepted by Resend, not confirmed inbox delivery. The administrator
 access page shows aggregate counts for queued, retrying/unconfirmed, accepted,
 and terminally failed notices. Retrying counts include an attempt that has not
-yet been confirmed and may still be delivered.
+yet been confirmed and may still be delivered. Queued notices that have not
+started a delivery attempt for at least five minutes are flagged separately.
+The page also shows the age of the oldest first-attempt notice; both values are
+aggregate only and never identify a recipient. This warning is informational
+and does not pause access changes or alter the automatic delivery worker.
 
 If notices are retrying or have failed, administrators should check the Resend
 connection and verified sender setup. Provider responses are not shown because

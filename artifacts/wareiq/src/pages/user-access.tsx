@@ -183,6 +183,16 @@ function Directory({ dir }: { dir: AccessDirectory }) {
             <p role="status" className="max-w-lg text-sm text-muted-foreground">Delivery status is currently unavailable. This does not change access settings or confirm email delivery.</p>
           )}
         </div>
+        {dir.notificationSummary.status === 'available' && dir.notificationSummary.oldestQueuedAgeSeconds !== null && (
+          <p className="mt-3 text-sm text-muted-foreground" data-testid="text-oldest-queued-age">
+            Oldest queued notice: {formatQueueAge(dir.notificationSummary.oldestQueuedAgeSeconds)}.
+          </p>
+        )}
+        {dir.notificationSummary.status === 'available' && dir.notificationSummary.queuedOverThreshold > 0 && (
+          <p role="status" className="mt-3 rounded-sm border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm" data-testid="warning-stale-queued-notifications">
+            {dir.notificationSummary.queuedOverThreshold} {dir.notificationSummary.queuedOverThreshold === 1 ? 'notice has' : 'notices have'} been queued for at least {Math.ceil(dir.notificationSummary.queueWarningAfterSeconds / 60)} minutes without a delivery attempt. Access changes remain active; automatic delivery is unchanged.
+          </p>
+        )}
         {dir.notificationSummary.status === 'available' && (dir.notificationSummary.retrying > 0 || dir.notificationSummary.failed > 0) && (
           <p role="status" className="mt-3 rounded-sm border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">
             Some emails have not been accepted or permanently failed. Check the Resend connection and verified sender setup. Access changes remain active; pending deliveries will be retried automatically where possible.
@@ -422,6 +432,14 @@ function Table({ head, children }: { head: string[]; children: ReactNode }) {
   );
 }
 function Num({ v }: { v: number }) { return <td className="tnum px-4 py-3 font-mono text-xs">{v}</td>; }
+function formatQueueAge(seconds: number): string {
+  if (seconds < 60) return 'under 1 minute';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+}
 function NotificationCount({ label, count }: { label: string; count: number }) {
   return <p className="flex items-center gap-2"><span className="text-muted-foreground">{label}</span><span className="tnum font-mono font-semibold" data-testid={`notification-count-${label.toLowerCase()}`}>{count}</span></p>;
 }

@@ -183,6 +183,11 @@ export const GetAccessSessionResponse = zod.object({
 
 export const getAccessAdminResponseNotificationSummaryQueuedMin = 0;
 
+export const getAccessAdminResponseNotificationSummaryQueuedOverThresholdMin = 0;
+
+export const getAccessAdminResponseNotificationSummaryOldestQueuedAgeSecondsMin = 0;
+
+
 export const getAccessAdminResponseNotificationSummaryRetryingMin = 0;
 
 export const getAccessAdminResponseNotificationSummaryAcceptedMin = 0;
@@ -256,6 +261,9 @@ export const GetAccessAdminResponse = zod.object({
   "notificationSummary": zod.object({
   "status": zod.enum(['available', 'unavailable']),
   "queued": zod.number().int().min(getAccessAdminResponseNotificationSummaryQueuedMin),
+  "queuedOverThreshold": zod.number().int().min(getAccessAdminResponseNotificationSummaryQueuedOverThresholdMin),
+  "oldestQueuedAgeSeconds": zod.number().int().min(getAccessAdminResponseNotificationSummaryOldestQueuedAgeSecondsMin).nullable(),
+  "queueWarningAfterSeconds": zod.number().int().min(1),
   "retrying": zod.number().int().min(getAccessAdminResponseNotificationSummaryRetryingMin),
   "accepted": zod.number().int().min(getAccessAdminResponseNotificationSummaryAcceptedMin),
   "failed": zod.number().int().min(getAccessAdminResponseNotificationSummaryFailedMin)
