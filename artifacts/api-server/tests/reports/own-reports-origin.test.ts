@@ -60,7 +60,7 @@ function mutation(
   return req;
 }
 
-beforeAll(startDatabase);
+beforeAll(() => startDatabase());
 afterAll(stopDatabase);
 beforeEach(async () => {
   await pool.query(`

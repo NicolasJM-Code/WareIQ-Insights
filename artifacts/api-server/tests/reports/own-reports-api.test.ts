@@ -44,7 +44,7 @@ async function expectError(response: request.Response, status: number, before: u
   expect(await snapshot()).toEqual(before);
 }
 
-beforeAll(startDatabase);
+beforeAll(() => startDatabase());
 afterAll(stopDatabase);
 beforeEach(async () => {
   identity.userId = "owner-a";

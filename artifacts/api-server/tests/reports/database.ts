@@ -153,12 +153,13 @@ function createTableFromDrizzleSchema(table: FixtureTable) {
   return statements.join(";\n");
 }
 
-export async function startDatabase() {
+export async function startDatabase(options: { afterStart?: () => void | Promise<void> } = {}) {
   try {
     run("initdb", ["-D", data, "-U", "report_test", "--auth-local=trust", "--auth-host=reject", "--no-locale"]);
     run("pg_ctl", ["-D", data, "-l", join(directory, "postgres.log"), "-o",
       `-F -k ${directory} -c listen_addresses=''`, "-w", "start"]);
     started = true;
+    await options.afterStart?.();
     // Generate every table from the production schema so column, default,
     // foreign-key, check, and index changes cannot silently drift in tests.
     for (const table of [
@@ -179,14 +180,17 @@ export async function startDatabase() {
 export async function stopDatabase() {
   if (stopped) return;
   stopped = true;
-  await pool.end();
-  // Check the private data directory even after a partially failed start.
   try {
-    run("pg_ctl", ["-D", data, "-m", "immediate", "-w", "stop"]);
-  } catch (error) {
-    if (started) throw error;
+    await pool.end();
   } finally {
-    rmSync(directory, { recursive: true, force: true });
-    started = false;
+    // Check the private data directory even after a partially failed start.
+    try {
+      run("pg_ctl", ["-D", data, "-m", "immediate", "-w", "stop"]);
+    } catch (error) {
+      if (started) throw error;
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+      started = false;
+    }
   }
 }
