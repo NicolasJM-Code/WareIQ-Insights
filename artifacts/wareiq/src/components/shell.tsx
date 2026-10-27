@@ -173,7 +173,7 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
   const sites = access.data?.sites ?? [];
   const selectedSite = sites.some((s) => s.id === siteId) ? siteId : sites[0]?.id ?? '';
   return (
-    <header className="sticky top-0 z-30 border-b bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/70">
+    <header className="print-hide sticky top-0 z-30 border-b bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/70">
       <div className="flex flex-wrap items-center gap-2 px-4 md:px-6 min-h-14 py-2">
         <button onClick={onMenu} className="lg:hidden -ml-1 p-2 rounded hover:bg-muted" aria-label="Open navigation" data-testid="button-menu">
           <Menu className="h-5 w-5" />
@@ -222,15 +222,15 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
 export function AppShell({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="min-h-[100dvh] flex bg-background">
-      <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:bg-card focus:px-3 focus:py-2 focus:rounded">Skip to content</a>
-      <aside className="hidden lg:flex w-60 shrink-0 flex-col bg-sidebar text-sidebar-foreground sticky top-0 h-[100dvh]">
+    <div className="app-shell min-h-[100dvh] flex bg-background">
+      <a href="#main" className="print-hide sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:bg-card focus:px-3 focus:py-2 focus:rounded">Skip to content</a>
+      <aside className="print-hide hidden lg:flex w-60 shrink-0 flex-col bg-sidebar text-sidebar-foreground sticky top-0 h-[100dvh]">
         <Brand />
         <NavList />
         <SidebarFooter />
       </aside>
       <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent side="left" className="w-64 p-0 bg-sidebar text-sidebar-foreground border-sidebar-border flex flex-col">
+        <SheetContent side="left" className="print-hide w-64 p-0 bg-sidebar text-sidebar-foreground border-sidebar-border flex flex-col">
           <SheetTitle className="sr-only">Navigation</SheetTitle>
           <Brand />
           <NavList onNavigate={() => setOpen(false)} />
@@ -239,8 +239,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       </Sheet>
       <div className="flex-1 min-w-0 flex flex-col">
         <TopBar onMenu={() => setOpen(true)} />
-        <main id="main" className="flex-1 px-4 md:px-6 py-6 max-w-[1500px] w-full mx-auto"><SectionTabs />{children}</main>
-        <footer className="px-6 py-4 text-[11px] text-muted-foreground font-mono border-t flex flex-wrap gap-x-4 gap-y-1">
+        <main id="main" className="app-main flex-1 px-4 md:px-6 py-6 max-w-[1500px] w-full mx-auto"><div className="print-hide"><SectionTabs /></div>{children}</main>
+        <footer className="print-hide px-6 py-4 text-[11px] text-muted-foreground font-mono border-t flex flex-wrap gap-x-4 gap-y-1">
           <span>WareIQ reporting demo · read-only</span>
           <span>All figures are generated sample data, not WMS records</span>
         </footer>

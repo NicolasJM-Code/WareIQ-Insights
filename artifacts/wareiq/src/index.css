@@ -447,3 +447,42 @@
 @keyframes growy { from { transform: scaleY(0); } to { transform: scaleY(1); } }
 .grow-y { transform-origin: bottom; animation: growy .6s cubic-bezier(.2,.7,.2,1) both; }
 @media (prefers-reduced-motion: reduce) { .rise,.sweep,.grow-x,.grow-y { animation: none; } }
+
+@media print {
+  @page { margin: 14mm; }
+  html, body {
+    background: white !important;
+    color: #111 !important;
+  }
+  .print-hide {
+    display: none !important;
+  }
+  .app-shell,
+  .app-shell > div,
+  .app-main {
+    display: block !important;
+    width: auto !important;
+    min-height: 0 !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+  }
+  .print-report {
+    border: 0 !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    color: #111 !important;
+    background: white !important;
+  }
+  .print-report * {
+    color: #111 !important;
+    box-shadow: none !important;
+    animation: none !important;
+    print-color-adjust: exact;
+  }
+  .print-report header,
+  .print-report section {
+    break-inside: avoid;
+  }
+}
