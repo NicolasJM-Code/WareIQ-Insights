@@ -190,6 +190,42 @@ describe("legacy report import consent", () => {
     expect(removeItem).not.toHaveBeenCalled();
   });
 
+  it("keeps a report available and requires fresh confirmation after a connection failure", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    const removeItem = vi.spyOn(Storage.prototype, "removeItem");
+    state.importLegacyReports
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce({ ok: true });
+    mount();
+    await openImportDialog();
+
+    fireEvent.click(screen.getByTestId("checkbox-legacy-0"));
+    fireEvent.change(screen.getByTestId("input-import-name-0"), { target: { value: "My receiving report" } });
+    fireEvent.click(screen.getByTestId("checkbox-confirm-legacy-ownership"));
+    fireEvent.click(screen.getByTestId("button-confirm-legacy-import"));
+
+    expect(await screen.findByTestId("error-legacy-import")).toHaveTextContent(
+      "Could not reach the server. Your browser reports are unchanged.",
+    );
+    expect(screen.getByTestId("checkbox-legacy-0")).toBeChecked();
+    expect(screen.getByTestId("input-import-name-0")).toHaveValue("My receiving report");
+    expect(screen.getByTestId("checkbox-confirm-legacy-ownership")).not.toBeChecked();
+    expect(screen.getByTestId("button-confirm-legacy-import")).toBeDisabled();
+    expect(window.localStorage.getItem(LEGACY_REPORTS_KEY)).toBe(originalStorage);
+    expect(setItem).not.toHaveBeenCalled();
+    expect(removeItem).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("checkbox-confirm-legacy-ownership"));
+    expect(screen.getByTestId("button-confirm-legacy-import")).toBeEnabled();
+    fireEvent.click(screen.getByTestId("button-confirm-legacy-import"));
+
+    await waitFor(() => expect(screen.getByTestId("status-import-success")).toBeInTheDocument());
+    expect(state.importLegacyReports).toHaveBeenCalledTimes(2);
+    expect(window.localStorage.getItem(LEGACY_REPORTS_KEY)).toBe(originalStorage);
+    expect(setItem).not.toHaveBeenCalled();
+    expect(removeItem).not.toHaveBeenCalled();
+  });
+
   it("refreshes the preview and requires new confirmation when another tab changes browser reports", async () => {
     mount();
     await openImportDialog();

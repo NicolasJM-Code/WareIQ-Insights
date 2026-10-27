@@ -198,6 +198,14 @@ function ImportForAccount({ section, reports, ready, ownerId, accountLabel, clie
                 reports: picked.map((r) => ({ ...r.input, name: nameFor(r) })) });
               if (result.ok) setDone(true);
               else { setError(result.error); setConfirmed(false); }
+            } catch {
+              setError('Could not reach the server. Your browser reports are unchanged. Check your connection, review your selection, and confirm ownership again before retrying.');
+              setConfirmed(false);
+              trackEvent('legacy_report_import_failure', {
+                ...(safeSection ? { section: safeSection } : {}),
+                stage: 'import',
+                reason: 'connection_error',
+              });
             } finally { inFlight.current = false; setBusy(false); }
           }}>{busy ? 'Importing…' : `Import ${picked.length} selected`}</button>}
         </div>
