@@ -98,6 +98,15 @@ export interface PlatformAccessRoleUpdate {
   expectedRole: PlatformAccessRole;
 }
 
+export type PlatformAccessUserNotification = typeof PlatformAccessUserNotification[keyof typeof PlatformAccessUserNotification];
+
+
+export const PlatformAccessUserNotification = {
+  queued: 'queued',
+  failed: 'failed',
+  not_needed: 'not_needed',
+} as const;
+
 export interface PlatformAccessUser {
   id: string;
   name: string;
@@ -105,6 +114,7 @@ export interface PlatformAccessUser {
   emailVerified: boolean;
   role: PlatformAccessRole;
   restricted: boolean;
+  notification?: PlatformAccessUserNotification;
 }
 
 export interface PlatformAccessUserPage {
@@ -197,7 +207,17 @@ export interface AccessRoleInput {
   canCreateOwnReports: boolean;
 }
 
+export type AccessRoleNotification = typeof AccessRoleNotification[keyof typeof AccessRoleNotification];
+
+
+export const AccessRoleNotification = {
+  queued: 'queued',
+  failed: 'failed',
+  not_needed: 'not_needed',
+} as const;
+
 export interface AccessRole {
+  notification?: AccessRoleNotification;
   id: string;
   clientId: string;
   name: string;
@@ -223,6 +243,15 @@ export interface AccessUserInput {
   active: boolean;
 }
 
+export type AccessUserNotification = typeof AccessUserNotification[keyof typeof AccessUserNotification];
+
+
+export const AccessUserNotification = {
+  queued: 'queued',
+  failed: 'failed',
+  not_needed: 'not_needed',
+} as const;
+
 export interface AccessUser {
   id: string;
   email: string;
@@ -233,6 +262,7 @@ export interface AccessUser {
   /** @nullable */
   primarySiteId: string | null;
   active: boolean;
+  notification?: AccessUserNotification;
 }
 
 export interface AccessReport {

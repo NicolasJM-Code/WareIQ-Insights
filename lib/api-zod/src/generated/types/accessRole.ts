@@ -5,8 +5,10 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { AccessRoleNotification } from './accessRoleNotification';
 
 export interface AccessRole {
+  notification?: AccessRoleNotification;
   id: string;
   clientId: string;
   name: string;

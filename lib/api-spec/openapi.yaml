@@ -406,6 +406,7 @@ components:
         role:
           $ref: "#/components/schemas/PlatformAccessRole"
         restricted: { type: boolean }
+        notification: { type: string, enum: [queued, failed, not_needed] }
     PlatformAccessUserPage:
       type: object
       required: [users, total, offset, limit]
@@ -492,6 +493,7 @@ components:
       type: object
       required: [id, clientId, name, reportIds, canCreateOwnReports]
       properties:
+        notification: { type: string, enum: [queued, failed, not_needed] }
         id: { type: string }
         clientId: { type: string }
         name: { type: string }
@@ -521,6 +523,7 @@ components:
         siteIds: { type: array, items: { type: string } }
         primarySiteId: { type: [string, "null"] }
         active: { type: boolean }
+        notification: { type: string, enum: [queued, failed, not_needed] }
     AccessReport:
       type: object
       required: [id, name, section, sectionName]

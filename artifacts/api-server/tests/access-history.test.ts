@@ -14,6 +14,12 @@ vi.mock("../src/lib/access-history", () => ({
   accessAuditStore: { start: audit.start, previous: audit.previous, finish: audit.finish },
   accessHistoryPage: audit.page,
 }));
+// Keep this route test isolated from the notification worker's app-database and
+// provider setup; delivery has separate focused tests.
+vi.mock("../src/lib/access-notifications", () => ({
+  preparePlatformNotification: vi.fn(async () => "test-notification-id"),
+  confirmPlatformNotification: vi.fn(async () => undefined),
+}));
 vi.mock("../src/lib/role-lock", () => ({ withRoleLock: audit.lock }));
 vi.mock("@clerk/express", () => ({
   getAuth: () => ({ userId: audit.actorId }),

@@ -58,7 +58,8 @@ export const ListAccessUsersResponse = zod.object({
   "email": zod.string(),
   "emailVerified": zod.boolean(),
   "role": zod.enum(['admin', 'supervisor', 'unassigned']),
-  "restricted": zod.boolean()
+  "restricted": zod.boolean(),
+  "notification": zod.enum(['queued', 'failed', 'not_needed']).optional()
 })),
   "total": zod.number().int(),
   "offset": zod.number().int(),
@@ -88,7 +89,8 @@ export const ChangeAccessRoleResponse = zod.object({
   "email": zod.string(),
   "emailVerified": zod.boolean(),
   "role": zod.enum(['admin', 'supervisor', 'unassigned']),
-  "restricted": zod.boolean()
+  "restricted": zod.boolean(),
+  "notification": zod.enum(['queued', 'failed', 'not_needed']).optional()
 })
 
 
@@ -142,6 +144,7 @@ export const GetAccessAdminResponse = zod.object({
   "active": zod.boolean()
 })),
   "roles": zod.array(zod.object({
+  "notification": zod.enum(['queued', 'failed', 'not_needed']).optional(),
   "id": zod.string(),
   "clientId": zod.string(),
   "name": zod.string(),
@@ -156,7 +159,8 @@ export const GetAccessAdminResponse = zod.object({
   "roleId": zod.string(),
   "siteIds": zod.array(zod.string()),
   "primarySiteId": zod.string().nullable(),
-  "active": zod.boolean()
+  "active": zod.boolean(),
+  "notification": zod.enum(['queued', 'failed', 'not_needed']).optional()
 })),
   "reports": zod.array(zod.object({
   "id": zod.string(),
@@ -227,6 +231,7 @@ export const SaveAccessRoleBody = zod.object({
 })
 
 export const SaveAccessRoleResponse = zod.object({
+  "notification": zod.enum(['queued', 'failed', 'not_needed']).optional(),
   "id": zod.string(),
   "clientId": zod.string(),
   "name": zod.string(),
@@ -262,7 +267,8 @@ export const SaveAccessUserResponse = zod.object({
   "roleId": zod.string(),
   "siteIds": zod.array(zod.string()),
   "primarySiteId": zod.string().nullable(),
-  "active": zod.boolean()
+  "active": zod.boolean(),
+  "notification": zod.enum(['queued', 'failed', 'not_needed']).optional()
 })
 
 

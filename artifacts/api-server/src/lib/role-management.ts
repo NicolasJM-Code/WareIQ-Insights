@@ -31,6 +31,10 @@ export async function changeRole(
     previous: (role: AppRole) => Promise<void>;
     beforeWrite: () => void;
   },
+  notifications?: {
+    prepare: (email: string, targetId: string, role: AppRole) => Promise<string | null>;
+    confirm: (id: string) => Promise<void>;
+  },
 ) {
   const actor = await users.getUser(actorId);
   if (actor.banned || actor.locked || !verifiedPrimaryEmail(actor) || appRole(actor.publicMetadata.role) !== "admin") {
@@ -38,7 +42,6 @@ export async function changeRole(
   }
   // No self-service role changes, including a last administrator's demotion.
   if (actorId === targetId) {
-    await observe?.previous(appRole(actor.publicMetadata.role));
     throw new AccessConflict(409, "You cannot change your own role. Ask another administrator.", "self_change_denied");
   }
   const target = await users.getUser(targetId);
@@ -71,11 +74,33 @@ export async function changeRole(
       throw new AccessConflict(409, "The last active administrator cannot be removed. Approve another administrator first.", "last_administrator");
     }
   }
-  // Clerk merges publicMetadata, preserving all unrelated metadata.
+
+  // The email event is staged before Clerk and confirmed after the returned
+  // role is verified. Outbox failures never block an access mutation.
+  let notificationId: string | null = null;
+  let notificationStatus: "queued" | "failed" | "not_needed" = "not_needed";
+  if (notifications && verifiedPrimaryEmail(target)) {
+    notificationStatus = "failed";
+    try {
+      notificationId = await notifications.prepare(accessUser(target).email, targetId, role);
+      if (notificationId) notificationStatus = "queued";
+    } catch { /* Notification setup must not block an access change. */ }
+  }
+  // The audit intent was committed independently before issuing Clerk's write.
   observe?.beforeWrite();
-  const updated = await users.updateUserMetadata(targetId, { publicMetadata: { role } });
+  const updated = await users.updateUserMetadata(targetId, {
+    publicMetadata: { role },
+    ...(notificationId ? { privateMetadata: { wareiqRoleNotificationId: notificationId } } : {}),
+  });
   if (appRole(updated.publicMetadata.role) !== role) {
     throw new Error("Role update was not confirmed");
   }
-  return accessUser(updated);
+  if (notificationId) {
+    try { await notifications!.confirm(notificationId); }
+    catch { /* The durable confirming row can be reconciled by the worker. */ }
+  }
+  return {
+    ...accessUser(updated),
+    ...(notifications ? { notification: notificationStatus } : {}),
+  };
 }

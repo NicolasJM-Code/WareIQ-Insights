@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react';
+import { notificationDescription } from '@/lib/access-notification';
 import { Link } from 'wouter';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -74,8 +75,16 @@ function Directory({ dir }: { dir: AccessDirectory }) {
   const pendingUsers = dir.users.filter((u) => u.active && u.siteIds.length === 0).length;
 
   const doSaveClient = async (v: { id?: string; name: string; active: boolean }) => { await saveClient.mutateAsync({ data: v }); await refresh(); toast({ title: 'Client saved' }); };
-  const doSaveRole = async (v: { id?: string; clientId: string; name: string; reportIds: string[]; canCreateOwnReports: boolean }) => { await saveRole.mutateAsync({ data: v }); await refresh(); toast({ title: 'Role saved' }); };
-  const doSaveUser = async (v: Parameters<typeof saveUser.mutateAsync>[0]['data']) => { await saveUser.mutateAsync({ data: v }); await refresh(); toast({ title: 'User access saved' }); };
+  const doSaveRole = async (v: { id?: string; clientId: string; name: string; reportIds: string[]; canCreateOwnReports: boolean }) => {
+    const saved = await saveRole.mutateAsync({ data: v });
+    await refresh();
+    toast({ title: 'Role saved', description: notificationDescription(saved.notification) });
+  };
+  const doSaveUser = async (v: Parameters<typeof saveUser.mutateAsync>[0]['data']) => {
+    const saved = await saveUser.mutateAsync({ data: v });
+    await refresh();
+    toast({ title: 'User access saved', description: notificationDescription(saved.notification) });
+  };
 
   const doSaveWarehouse = async (v: WarehouseInput) => { await saveWarehouse.mutateAsync({ data: v }); await refresh(); toast({ title: v.id ? 'Warehouse saved' : 'Warehouse added' }); };
   const openWarehouse = (item: AccessSite | null) => setWhDlg((d) => ({ open: true, item, k: d.k + 1 }));
@@ -109,6 +118,7 @@ function Directory({ dir }: { dir: AccessDirectory }) {
 
   return (
     <div className="space-y-6">
+      <p className="text-xs text-muted-foreground">Reporting approvals, role changes and revocations queue an email from WareIQ. Email delivery may be delayed or fail independently; saved access changes apply immediately.</p>
       <header className="rise flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Administration / Access control</p>

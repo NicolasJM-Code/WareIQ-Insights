@@ -14,6 +14,7 @@ export async function auditedRoleChange(
   targetId: string,
   role: AppRole,
   expectedRole: AppRole,
+  notifications?: Parameters<typeof changeRole>[6],
 ) {
   // Only plausible provider IDs are retained, never arbitrary path text.
   const safeTargetId = /^user_[a-zA-Z0-9_]{1,195}$/.test(targetId) ? targetId : null;
@@ -28,7 +29,7 @@ export async function auditedRoleChange(
         previous = value;
       },
       beforeWrite: () => { writeAttempted = true; },
-    }));
+    }, notifications));
   } catch (error) {
     const outcome = writeAttempted ? "unconfirmed" : error instanceof AccessConflict ? "denied" : "failed";
     const reason = writeAttempted ? "provider_outcome_unknown"

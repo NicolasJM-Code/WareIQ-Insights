@@ -10,6 +10,8 @@ import { withRoleLock } from "../lib/role-lock";
 import { auditedRoleChange } from "../lib/audited-role-change";
 import { accessAuditStore, accessHistoryPage } from "../lib/access-history";
 
+import { preparePlatformNotification, confirmPlatformNotification } from "../lib/access-notifications";
+
 const router: IRouter = Router();
 
 router.get("/admin/access-history", async (req, res): Promise<void> => {
@@ -66,6 +68,13 @@ router.patch("/admin/users/:userId/role", async (req, res) => {
   try {
     const updated = await auditedRoleChange(accessAuditStore, withRoleLock,
       clerkClient.users, res.locals.access.userId, params.data.userId, body.data.role, body.data.expectedRole,
+      {
+        prepare: (recipient, targetId, role) => preparePlatformNotification({
+          recipient, kind: "platform",
+          roleName: role === "admin" ? "Administrator" : role === "supervisor" ? "Legacy Supervisor" : "No platform role",
+        }, targetId, role),
+        confirm: confirmPlatformNotification,
+      },
     );
     res.json(ChangeAccessRoleResponse.parse(updated));
   } catch (error) {

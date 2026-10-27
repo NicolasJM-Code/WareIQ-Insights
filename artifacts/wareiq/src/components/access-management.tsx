@@ -8,6 +8,7 @@ import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescript
 import { Pill } from '@/components/report-kit';
 import { toast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { notificationDescription } from '@/lib/access-notification';
 
 const PAGE = 25;
 const roleLabel: Record<AccessRole, string> = { admin: 'Administrator', supervisor: 'Legacy Supervisor', unassigned: 'No platform role' };
@@ -66,9 +67,10 @@ export function AccessManagement() {
     mutationFn: (p: Pending) => changeAccessRole(p.user.id, { role: p.role, expectedRole: p.user.role }, { credentials: 'same-origin' }),
     onSuccess: (updated, p) => {
       setPending(null);
-      const text = updated.role === 'unassigned'
+      const result = updated.role === 'unassigned'
         ? `Platform role removed for ${p.user.email}. Client reporting membership is unchanged; disable it in User access to revoke reporting too.`
         : `${p.user.email} is now ${roleLabel[updated.role]}.`;
+      const text = [result, notificationDescription(updated.notification)].filter(Boolean).join(' ');
       setNotice({ tone: 'good', text });
       toast({ title: 'Account role updated', description: text });
     },
@@ -201,6 +203,7 @@ export function AccessManagement() {
                     <p><span className="font-medium text-foreground">{pending.user.name || 'Unnamed account'}</span> <span className="font-mono">({pending.user.email})</span></p>
                     <p>Current role: <span className="font-medium text-foreground">{roleLabel[pending.user.role]}</span>. New role: <span className="font-medium text-foreground">{roleLabel[pending.role]}</span>.</p>
                     <p>{consequence[pending.role]}</p>
+                    <p className="text-[12px]">After a successful change, WareIQ queues an email to the verified primary address. Email delivery does not control access.</p>
                     <p className="text-[12px]">If this account changed since you loaded the list, the server rejects this change and the list reloads.</p>
                   </div>
                 </AlertDialogDescription>

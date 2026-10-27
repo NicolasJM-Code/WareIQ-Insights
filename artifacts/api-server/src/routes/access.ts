@@ -17,6 +17,8 @@ import { accessReports, allowedSection } from "../lib/access-catalog";
 import { reportDefinitionError } from "../lib/own-report-validation";
 import { GetAuthSessionResponse, GetSettingsAccessResponse } from "@workspace/api-zod";
 import { requireIdentity, requireAdministrator } from "../middlewares/access";
+import { queueAccessNotifications } from "../lib/access-notifications";
+import { reportingChangeNotices } from "../lib/reporting-notification-change";
 
 const router: IRouter = Router();
 router.get("/auth/session", requireIdentity, (_req, res) => {
@@ -114,10 +116,22 @@ router.post("/access/roles", handler(async (req, res) => {
   const values = { clientId: input.clientId, name: input.name.trim(), reportIds: input.reportIds,
     canCreateOwnReports: input.canCreateOwnReports };
   // A role's client cannot be changed while it may be assigned to users.
-  const [result] = input.id
-    ? await db.update(rolesTable).set(values).where(and(eq(rolesTable.id, input.id), eq(rolesTable.clientId, input.clientId))).returning()
-    : await db.insert(rolesTable).values({ id: randomUUID(), ...values }).returning();
-  if (!result) throw new AccessError(404, "Role not found for this client. Create a new role to use a different client.");
+  const result = await db.transaction(async (tx) => {
+    const [before] = input.id ? await tx.select().from(rolesTable).where(and(
+      eq(rolesTable.id, input.id), eq(rolesTable.clientId, input.clientId))).for("update") : [];
+    if (input.id && !before) throw new AccessError(404, "Role not found for this client. Create a new role to use a different client.");
+    const [saved] = input.id
+      ? await tx.update(rolesTable).set(values).where(eq(rolesTable.id, input.id)).returning()
+      : await tx.insert(rolesTable).values({ id: randomUUID(), ...values }).returning();
+    const changed = before && (before.name !== values.name || before.canCreateOwnReports !== values.canCreateOwnReports ||
+      JSON.stringify([...before.reportIds].sort()) !== JSON.stringify([...values.reportIds].sort()));
+    const members = changed ? await tx.select().from(membersTable).where(and(
+      eq(membersTable.roleId, saved!.id), eq(membersTable.active, true))) : [];
+    const notification = await queueAccessNotifications(tx, members.map((m) => ({
+      recipient: m.email, roleName: values.name, kind: "reporting" as const,
+    })));
+    return { ...saved!, notification };
+  });
   res.json(SaveAccessRoleResponse.parse(result));
 }));
 router.post("/access/users", handler(async (req, res) => {
@@ -134,15 +148,30 @@ router.post("/access/users", handler(async (req, res) => {
   const { id, ...data } = input;
   const values = { ...data, email: data.email.trim().toLowerCase(), name: data.name.trim() };
   if (!values.name) throw new AccessError(400, "User name is required.");
-  const [result] = id
-    ? await db.update(membersTable).set(values).where(eq(membersTable.id, id)).returning()
-    : await db.insert(membersTable).values({ id: randomUUID(), ...values }).returning();
-  if (!result) throw new AccessError(404, "User access record not found.");
+  const result = await db.transaction(async (tx) => {
+    const [before] = id ? await tx.select().from(membersTable).where(eq(membersTable.id, id)).for("update") : [];
+    if (id && !before) throw new AccessError(404, "User access record not found.");
+    const [saved] = id
+      ? await tx.update(membersTable).set(values).where(eq(membersTable.id, id)).returning()
+      : await tx.insert(membersTable).values({ id: randomUUID(), ...values }).returning();
+    const notification = await queueAccessNotifications(tx, reportingChangeNotices(before, saved, role.name));
+    return { ...saved!, notification };
+  });
   res.json(SaveAccessUserResponse.parse(result));
 }));
 router.delete(["/access/clients/:id", "/access/roles/:id", "/access/users/:id"], handler(async (req, res) => {
   await requireAccessAdmin(req);
   const { entity, id } = parsed(DeleteAccessEntryParams, { ...req.params, entity: req.path.split("/")[2] });
+  if (entity === "users") {
+    const notification = await db.transaction(async (tx) => {
+      const [deleted] = await tx.delete(membersTable).where(eq(membersTable.id, id)).returning();
+      if (!deleted) throw new AccessError(404, "Entry not found.");
+      return queueAccessNotifications(tx, reportingChangeNotices(deleted, undefined, ""));
+    });
+    res.setHeader("X-Access-Notification", notification);
+    res.sendStatus(204);
+    return;
+  }
   const table = entity === "clients" ? clientsTable : entity === "roles" ? rolesTable : membersTable;
   const deleted = await db.delete(table).where(eq(table.id, id)).returning({ id: table.id });
   if (!deleted.length) throw new AccessError(404, "Entry not found.");

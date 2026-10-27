@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { AccessUserNotification } from './accessUserNotification';
 
 export interface AccessUser {
   id: string;
@@ -16,4 +17,5 @@ export interface AccessUser {
   /** @nullable */
   primarySiteId: string | null;
   active: boolean;
+  notification?: AccessUserNotification;
 }

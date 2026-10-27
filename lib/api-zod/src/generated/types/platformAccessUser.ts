@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { PlatformAccessRole } from './platformAccessRole';
+import type { PlatformAccessUserNotification } from './platformAccessUserNotification';
 
 export interface PlatformAccessUser {
   id: string;
@@ -14,4 +15,5 @@ export interface PlatformAccessUser {
   emailVerified: boolean;
   role: PlatformAccessRole;
   restricted: boolean;
+  notification?: PlatformAccessUserNotification;
 }
