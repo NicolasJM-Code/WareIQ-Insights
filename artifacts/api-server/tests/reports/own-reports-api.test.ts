@@ -116,6 +116,24 @@ describe("account report persistence through the API", () => {
     expect((await save({ ...definition, id: "original" })).status).toBe(200);
   });
 
+  it("allows the same name in two sections but rejects case-insensitive duplicates in each", async () => {
+    await pool.query("UPDATE wareiq_roles SET report_ids = ARRAY['inbound-1', 'inventory-1']");
+    const inbound = { ...definition, name: "Shared report" };
+    const inventory = { ...definition, section: "inventory", dataset: "stock", fields: ["sku", "name"], name: "Shared report" };
+
+    const inboundCreated = await save(inbound);
+    const inventoryCreated = await save(inventory);
+
+    expect(inboundCreated.status).toBe(200);
+    expect(inventoryCreated.status).toBe(200);
+    expect(inboundCreated.body).toMatchObject({ section: "inbound", name: "Shared report" });
+    expect(inventoryCreated.body).toMatchObject({ section: "inventory", name: "Shared report" });
+
+    const beforeDuplicates = await snapshot();
+    await expectError(await save({ ...inbound, name: "shared REPORT" }), 409, beforeDuplicates);
+    await expectError(await save({ ...inventory, name: "SHARED report" }), 409, beforeDuplicates);
+  });
+
   it.each(["other-owner", "other-client", "missing"])("cannot edit or delete %s", async (id) => {
     const before = await snapshot();
     await expectError(await save({ ...definition, name: "Attempted edit", id }), 404, before);
