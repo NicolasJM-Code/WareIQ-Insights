@@ -155,6 +155,31 @@ describe("full-app origin protection for saved reports", () => {
     });
   });
 
+  it("allows a same-origin bulk import through the full application", async () => {
+    const before = await snapshot();
+    const importedDefinition = { ...definition, name: "Imported report" };
+    const response = await mutation("post", importPath, {
+      origin: "https://wareiq.test",
+      fetchSite: "same-origin",
+    }).send(importBody);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toHaveLength(1);
+    expect(response.body[0]).toMatchObject({
+      ...importedDefinition,
+      id: expect.any(String),
+      createdAt: expect.any(String),
+      updatedAt: expect.any(String),
+    });
+    const after = await snapshot();
+    expect(after).toHaveLength(before.length + 1);
+    expect(after.find((row) => row.id === response.body[0].id)).toMatchObject({
+      owner_id: "owner-a",
+      client_id: "client-a",
+      definition: importedDefinition,
+    });
+  });
+
   it("allows a same-origin DELETE to remove a report through the full application", async () => {
     const before = await snapshot();
     const response = await mutation("delete", `${path}/original`, {
