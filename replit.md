@@ -36,6 +36,10 @@ WareIQ reports against an existing operational PostgreSQL WMS database; it must 
 
 The initial application is a frontend demonstration with labeled sample data, not a live WMS integration. Database credentials must not be stored in browser storage or source control. Production connections need server-side secrets, a dedicated SELECT-only account, connection pooling, query timeouts, and administrator access control.
 
+Each menu must offer **Reports** (default reports) and **Own reports** (user-created reports using only fields available within that section). Keep custom report field choices scoped to their reporting section.
+
+Default report names and section assignments come from `attached_assets/Pasted-1-Executive-Dashboard-Warehouse-Performance-Summary-Dai_1793099471452.txt`. The user explicitly requested names only; develop actual default report contents later. Do not attach sample queries, export actions, or field templates to these entries.
+
 ## User preferences
 
 _Populate as you build — explicit user instructions worth remembering across sessions._

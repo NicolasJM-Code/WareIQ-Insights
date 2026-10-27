@@ -19,6 +19,9 @@ import StockCounts from '@/pages/stock-counts';
 import Labour from '@/pages/labour';
 import Exceptions from '@/pages/exceptions';
 import Settings from '@/pages/settings';
+import { SECTIONS } from '@/lib/report-catalog';
+import { ReportsIndex, DefaultReportView } from '@/pages/section-reports';
+import { OwnReportsIndex, OwnReportView, OwnReportBuilder } from '@/pages/own-reports';
 
 const queryClient = new QueryClient();
 
@@ -28,6 +31,15 @@ function Router() {
       <RoutedErrorBoundary>
         <Switch>
           <Route path="/" component={Dashboard} />
+          <Route path="/dashboard" component={Dashboard} />
+          {SECTIONS.flatMap((s) => [
+            <Route key={`${s.id}-r`} path={`${s.base}/reports`}><ReportsIndex sectionId={s.id} /></Route>,
+            <Route key={`${s.id}-rv`} path={`${s.base}/reports/:reportId`}><DefaultReportView sectionId={s.id} /></Route>,
+            <Route key={`${s.id}-o`} path={`${s.base}/own-reports`}><OwnReportsIndex sectionId={s.id} /></Route>,
+            <Route key={`${s.id}-on`} path={`${s.base}/own-reports/new`}><OwnReportBuilder key="new" sectionId={s.id} /></Route>,
+            <Route key={`${s.id}-oe`} path={`${s.base}/own-reports/:id/edit`}><OwnReportBuilder key="edit" sectionId={s.id} /></Route>,
+            <Route key={`${s.id}-ov`} path={`${s.base}/own-reports/:id`}><OwnReportView sectionId={s.id} /></Route>,
+          ])}
           <Route path="/inbound" component={Inbound} />
           <Route path="/putaway" component={Putaway} />
           <Route path="/inventory" component={Inventory} />

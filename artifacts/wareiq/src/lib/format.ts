@@ -14,8 +14,10 @@ export const mins = (m: number | null) => (m == null ? '—' : m >= 60 ? `${Math
 export interface CsvColumn<T> { label: string; value: (row: T) => string | number | null | undefined }
 export function downloadCsv<T>(filename: string, columns: CsvColumn<T>[], rows: T[]) {
   const esc = (v: unknown) => {
-    const s = v == null ? '' : String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    const raw = v == null ? '' : String(v);
+    // Text entered in report names or fields must not become spreadsheet formulas.
+    const s = typeof v === 'string' && /^[\s]*[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const lines = [
     `# WareIQ SAMPLE DATA export - not from a live WMS - generated ${new Date().toISOString()}`,

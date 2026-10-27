@@ -1,8 +1,8 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useLocation } from 'wouter';
 import {
   LayoutDashboard, PackageOpen, Warehouse, Boxes, ScanLine, ClipboardList, Truck, Route, ClipboardCheck,
-  Users, TriangleAlert, Settings, Menu, RefreshCw, Database, FlaskConical,
+  Users, TriangleAlert, Settings, Menu, RefreshCw, Database, FlaskConical, ChevronRight,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -11,6 +11,8 @@ import { WAREHOUSES, type WhCode } from '@/lib/data';
 import { useReport, type RangeDays } from '@/lib/report-context';
 import { time } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { SECTIONS, sectionForPath } from '@/lib/report-catalog';
+import { SectionTabs, activeSub, sectionLinks } from '@/components/reports-ui';
 
 export const NAV = [
   { group: 'Overview', items: [{ href: '/', label: 'Executive dashboard', icon: LayoutDashboard }] },
@@ -39,6 +41,11 @@ export const NAV = [
 
 function NavList({ onNavigate }: { onNavigate?: () => void }) {
   const [loc] = useLocation();
+  const current = sectionForPath(loc);
+  const [open, setOpen] = useState<Set<string>>(() => new Set(current ? [current.id] : []));
+  useEffect(() => {
+    if (current) setOpen((p) => (p.has(current.id) ? p : new Set(p).add(current.id)));
+  }, [current]);
   return (
     <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-5" aria-label="Main">
       {NAV.map((g) => (
@@ -46,24 +53,57 @@ function NavList({ onNavigate }: { onNavigate?: () => void }) {
           <div className="px-2 mb-1.5 text-[10px] font-mono uppercase tracking-[0.18em] text-sidebar-foreground/45">{g.group}</div>
           <ul className="space-y-0.5">
             {g.items.map((it) => {
-              const active = loc === it.href;
+              const sec = SECTIONS.find((x) => x.overview === it.href);
+              const inSection = !!sec && current?.id === sec.id;
+              const active = loc === it.href || (sec ? inSection && activeSub(sec, loc) === 'overview' : false);
+              const expanded = !!sec && open.has(sec.id);
               const Icon = it.icon;
+              const slug = it.href.replace('/', '') || 'dashboard';
               return (
                 <li key={it.href}>
-                  <Link
-                    href={it.href}
-                    onClick={onNavigate}
-                    data-testid={`link-nav-${it.href.replace('/', '') || 'dashboard'}`}
-                    aria-current={active ? 'page' : undefined}
-                    className={cn(
-                      'group relative flex items-center gap-2.5 rounded px-2 py-1.5 text-[13px] transition-colors',
-                      active ? 'bg-sidebar-accent text-sidebar-accent-foreground' : 'text-sidebar-foreground/75 hover:text-sidebar-accent-foreground hover:bg-sidebar-accent/60',
+                  <div className="relative flex items-center">
+                    <Link
+                      href={it.href}
+                      onClick={onNavigate}
+                      data-testid={`link-nav-${slug}`}
+                      aria-current={active ? 'page' : undefined}
+                      className={cn(
+                        'group relative flex flex-1 min-w-0 items-center gap-2.5 rounded px-2 py-1.5 pr-8 text-[13px] transition-colors',
+                        active ? 'bg-sidebar-accent text-sidebar-accent-foreground' : inSection ? 'text-sidebar-accent-foreground' : 'text-sidebar-foreground/75 hover:text-sidebar-accent-foreground hover:bg-sidebar-accent/60',
+                      )}
+                    >
+                      <span className={cn('absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r bg-sidebar-primary transition-transform origin-center', inSection ? 'scale-y-100' : 'scale-y-0')} />
+                      <Icon className={cn('h-4 w-4 shrink-0 transition-transform group-hover:translate-x-0.5', inSection && 'text-sidebar-primary')} />
+                      <span className="truncate">{it.label}</span>
+                    </Link>
+                    {sec && (
+                      <button
+                        onClick={() => setOpen((p) => { const n = new Set(p); if (n.has(sec.id)) n.delete(sec.id); else n.add(sec.id); return n; })}
+                        aria-expanded={expanded} aria-controls={`subnav-${sec.id}`} aria-label={`${expanded ? 'Collapse' : 'Expand'} ${it.label} reports`}
+                        data-testid={`button-toggle-nav-${slug}`}
+                        className="absolute right-1 h-6 w-6 grid place-items-center rounded text-sidebar-foreground/50 hover:text-sidebar-accent-foreground hover:bg-sidebar-accent/70 transition-colors"
+                      >
+                        <ChevronRight className={cn('h-3.5 w-3.5 transition-transform', expanded && 'rotate-90')} />
+                      </button>
                     )}
-                  >
-                    <span className={cn('absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r bg-sidebar-primary transition-transform origin-center', active ? 'scale-y-100' : 'scale-y-0')} />
-                    <Icon className={cn('h-4 w-4 shrink-0 transition-transform group-hover:translate-x-0.5', active && 'text-sidebar-primary')} />
-                    <span className="truncate">{it.label}</span>
-                  </Link>
+                  </div>
+                  {sec && expanded && (
+                    <ul id={`subnav-${sec.id}`} className="ml-[17px] mt-0.5 mb-1 border-l border-sidebar-border pl-2 space-y-px">
+                      {sectionLinks(sec).filter((l) => l.key !== 'overview').map((l) => {
+                        const on = inSection && activeSub(sec, loc) === l.key;
+                        return (
+                          <li key={l.key}>
+                            <Link href={l.href} onClick={onNavigate} aria-current={on ? 'page' : undefined} data-testid={`link-subnav-${sec.id}-${l.key}`}
+                              className={cn('flex items-center gap-2 rounded px-2 py-1 text-[12px] transition-colors',
+                                on ? 'bg-sidebar-accent text-sidebar-accent-foreground' : 'text-sidebar-foreground/60 hover:text-sidebar-accent-foreground hover:bg-sidebar-accent/50')}>
+                              <span className={cn('h-1 w-1 rounded-full', on ? 'bg-sidebar-primary' : 'bg-sidebar-foreground/30')} />
+                              {l.label}
+                            </Link>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
                 </li>
               );
             })}
@@ -182,7 +222,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </Sheet>
       <div className="flex-1 min-w-0 flex flex-col">
         <TopBar onMenu={() => setOpen(true)} />
-        <main id="main" className="flex-1 px-4 md:px-6 py-6 max-w-[1500px] w-full mx-auto">{children}</main>
+        <main id="main" className="flex-1 px-4 md:px-6 py-6 max-w-[1500px] w-full mx-auto"><SectionTabs />{children}</main>
         <footer className="px-6 py-4 text-[11px] text-muted-foreground font-mono border-t flex flex-wrap gap-x-4 gap-y-1">
           <span>WareIQ reporting demo · read-only</span>
           <span>All figures are generated sample data, not WMS records</span>
