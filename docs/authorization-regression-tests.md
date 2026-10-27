@@ -15,6 +15,20 @@ pnpm test:auth --project api-authorization
 pnpm test:auth --project wareiq-authorization
 ```
 
+For just the provider harness's **offline safety** checks:
+
+```sh
+pnpm test:auth --project api-authorization artifacts/api-server/tests/provider-harness.test.ts
+```
+
+These checks use fake provider clients, synthetic key strings and journals in
+temporary directories only. They do not import Clerk, the live provider test or
+the app, and need no opt-in or real credentials. They exercise the same lifecycle
+helper used by the live command: preflight refusal (including recovery),
+ownership/email/ID mismatches, setup and assertion failures, invalid journals,
+provider outages, and journal write/unlink failures. This coverage is part of
+the ordinary offline suite, not `test:auth:provider`.
+
 ## Isolation
 
 These tests require no running app, network access, Clerk account, WMS database,
@@ -139,8 +153,10 @@ trades provider availability/latency for prompt revocation.
 The runner keeps JWTs only in memory. It writes a mode-0600, git-ignored journal
 under `.cache/clerk-provider/<uuid>.json` containing only its generated user ID,
 email and run marker. The journal path is printed, but provider error details,
-tokens and credentials are not. `afterAll` deletes the generated account (and
-its sessions) even after a failed assertion, then removes the journal.
+tokens and credentials are not. A shared lifecycle helper uses `finally` to
+delete the generated account (and its sessions) even after application setup,
+journal persistence or assertion failures, then removes the journal. A failure
+is always nonzero, even if cleanup succeeds.
 
 If a process is killed or Clerk is unavailable during teardown, retain the
 journal and rerun **against the same Development instance**:
@@ -156,11 +172,28 @@ that the account's private run marker and sole generated email match the
 journal, then deletes only that account and removes the journal. Any mismatch
 fails without deletion; do not alter the journal to target another account.
 If the account was already deleted, confirm its absence in Development before
-manually removing the journal. An abrupt kill between provider creation and
-journal persistence can leave an unjournaled account: use Development account
-management to locate the exact generated email/private run marker from that run
-and delete only that fixture. Never bulk-delete or target customer accounts.
+manually removing the journal. If provider deletion succeeds but journal removal
+fails, the runner explicitly reports that the account **was deleted** and tells
+you to confirm absence and remove the journal manually, not rerun recovery.
 
-No provider tests are reachable from `vitest.config.ts`; their separate config
-is `vitest.provider.config.ts`. Their TypeScript is checked by the existing
+If journal persistence fails, access checks never run and cleanup is still
+attempted. If that cleanup also fails, there is no reliable journal for recovery:
+the error identifies the exact generated user ID, email and private run marker
+for manual verification/deletion in the same Development instance. Any partial
+journal must not be used for recovery; remove it after confirming deletion.
+If creation fails before returning an ID (for example, a timed-out response), the
+account's existence is unknown: the error supplies the exact generated email and
+private run marker to check manually before retrying creation. The runner never
+guesses an ID or searches for and deletes accounts on a failed creation.
+
+An abrupt kill between provider creation and journal persistence can still leave
+an unjournaled account without a printed recovery instruction: use Development
+account management to verify the exact generated email/private run marker and
+delete only that fixture. Never bulk-delete or target customer accounts.
+
+No live provider tests are reachable from `vitest.config.ts`; their separate
+config is `vitest.provider.config.ts`. The offline tests import only the shared
+`provider-tests/harness.ts`, which has no Clerk/app imports and cannot make
+provider calls without an explicitly supplied client. Both suites' TypeScript
+is checked by the existing
 `pnpm test:auth:typecheck` command without running live checks.
