@@ -190,6 +190,33 @@ describe("account report persistence through the API", () => {
     await expectError(await save({ ...inventory, name: "SHARED report" }), 409, beforeDuplicates);
   });
 
+  it("moves a report to another authorized section when its name is available", async () => {
+    await pool.query("UPDATE wareiq_roles SET report_ids = ARRAY['inbound-1', 'inventory-1']");
+    const moved = await save({
+      ...definition, id: "original", section: "inventory", dataset: "stock", fields: ["sku", "name"],
+    });
+
+    expect(moved.status).toBe(200);
+    expect(moved.body).toMatchObject({
+      id: "original", section: "inventory", dataset: "stock", name: definition.name,
+    });
+    expect((await snapshot()).find((row) => row.id === "original").definition)
+      .toMatchObject({ section: "inventory", name: definition.name });
+  });
+
+  it("rejects a move into a section with a case-insensitive name collision without changing the report", async () => {
+    await pool.query("UPDATE wareiq_roles SET report_ids = ARRAY['inbound-1', 'inventory-1']");
+    await db.insert(ownReportsTable).values({
+      id: "inventory-collision", ownerId: "owner-a", clientId: "client-a",
+      definition: { ...definition, section: "inventory", dataset: "stock", fields: ["sku", "name"], name: "oRiGiNaL" },
+    });
+    const before = await snapshot();
+
+    await expectError(await save({
+      ...definition, id: "original", section: "inventory", dataset: "stock", fields: ["sku", "name"],
+    }), 409, before);
+  });
+
   it.each(["other-owner", "other-client", "missing"])("cannot edit or delete %s", async (id) => {
     const before = await snapshot();
     await expectError(await save({ ...definition, name: "Attempted edit", id }), 404, before);
