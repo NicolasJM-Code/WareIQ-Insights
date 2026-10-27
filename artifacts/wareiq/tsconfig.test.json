@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "tsBuildInfoFile": ".test.tsbuildinfo"
+  },
+  "include": ["src", "tests"],
+  "exclude": ["node_modules", "build", "dist"],
+  "references": [
+    { "path": "../../lib/api-client-react" }
+  ]
+}

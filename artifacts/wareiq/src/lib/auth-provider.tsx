@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react';
-import { ClerkProvider, useClerk } from '@clerk/react';
+import { ClerkProvider, useAuth, useClerk } from '@clerk/react';
 import { publishableKeyFromHost } from '@clerk/shared/keys';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocation } from 'wouter';
@@ -14,12 +14,16 @@ function stripBase(path: string): string {
 
 export function ClearUserCache() {
   const { addListener } = useClerk();
+  const { userId, sessionId } = useAuth();
   const queryClient = useQueryClient();
-  const previous = useRef<string | null | undefined>(undefined);
-  useEffect(() => addListener(({ user }) => {
-    const id = user?.id ?? null;
-    if (previous.current !== undefined && previous.current !== id) queryClient.clear();
-    previous.current = id;
+  const previous = useRef({ userId, sessionId });
+  useEffect(() => addListener(({ user, session }) => {
+    const next = { userId: user?.id ?? null, sessionId: session?.id ?? null };
+    if (previous.current.userId !== next.userId || previous.current.sessionId !== next.sessionId) {
+      void queryClient.cancelQueries();
+      queryClient.clear();
+    }
+    previous.current = next;
   }), [addListener, queryClient]);
   return null;
 }

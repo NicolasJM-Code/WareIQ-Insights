@@ -43,9 +43,16 @@ app.use((req, res, next) => {
   if (!["GET", "HEAD", "OPTIONS"].includes(req.method)) {
     const origin = req.get("origin");
     const host = getClerkProxyHost(req);
-    let originHost: string | undefined;
-    try { originHost = origin ? new URL(origin).host : undefined; } catch { /* deny below */ }
-    if (!originHost || originHost !== host || req.get("sec-fetch-site") === "cross-site") {
+    // The edge supplies the public host and protocol. Compare the complete
+    // serialized origin: matching a hostname alone also permits HTTP/FTP origins.
+    const protocol = req.get("x-forwarded-proto")?.split(",")[0]?.trim() || req.protocol;
+    let sameOrigin = false;
+    try {
+      const parsed = new URL(origin ?? "");
+      sameOrigin = (protocol === "http" || protocol === "https")
+        && parsed.origin === origin && parsed.origin === `${protocol}://${host}`;
+    } catch { /* deny below */ }
+    if (!sameOrigin || req.get("sec-fetch-site") === "cross-site") {
       res.status(403).json({ error: "A same-origin request is required." });
       return;
     }
