@@ -23,7 +23,7 @@ import { accessReports, allowedSection } from "../lib/access-catalog";
 import { reportDefinitionError } from "../lib/own-report-validation";
 import { GetAuthSessionResponse, GetSettingsAccessResponse } from "@workspace/api-zod";
 import { requireIdentity, requireAdministrator } from "../middlewares/access";
-import { queueAccessNotifications } from "../lib/access-notifications";
+import { getAccessNotificationSummary, queueAccessNotifications } from "../lib/access-notifications";
 import { reportingChangeNotices } from "../lib/reporting-notification-change";
 
 const router: IRouter = Router();
@@ -76,7 +76,22 @@ router.get("/access/admin", handler(async (req, res) => {
     db.select().from(rolesTable).orderBy(rolesTable.name),
     db.select().from(membersTable).orderBy(membersTable.name),
   ]);
-  res.json(GetAccessAdminResponse.parse({ clients, sites, roles, users, reports: accessReports }));
+  let notificationSummary: {
+    status: "available" | "unavailable";
+    queued: number;
+    retrying: number;
+    accepted: number;
+    failed: number;
+  };
+  try {
+    notificationSummary = { status: "available", ...await getAccessNotificationSummary() };
+  } catch {
+    req.log.warn({ event: "access_notification_summary_unavailable" }, "Email delivery status unavailable");
+    notificationSummary = { status: "unavailable", queued: 0, retrying: 0, accepted: 0, failed: 0 };
+  }
+  res.json(GetAccessAdminResponse.parse({
+    clients, sites, roles, users, reports: accessReports, notificationSummary,
+  }));
 }));
 router.post("/access/clients", handler(async (req, res) => {
   await requireAccessAdmin(req);

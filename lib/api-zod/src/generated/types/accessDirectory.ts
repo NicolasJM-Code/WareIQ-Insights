@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { AccessClient } from './accessClient';
+import type { AccessDirectoryNotificationSummary } from './accessDirectoryNotificationSummary';
 import type { AccessReport } from './accessReport';
 import type { AccessRole } from './accessRole';
 import type { AccessSite } from './accessSite';
@@ -17,4 +18,5 @@ export interface AccessDirectory {
   roles: AccessRole[];
   users: AccessUser[];
   reports: AccessReport[];
+  notificationSummary: AccessDirectoryNotificationSummary;
 }

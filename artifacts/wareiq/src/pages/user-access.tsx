@@ -29,7 +29,11 @@ type Del = { entity: 'clients' | 'roles' | 'users'; id: string; label: string };
 
 export default function UserAccess() {
   const session = useGetAccessSession({ query: { queryKey: getGetAccessSessionQueryKey() } });
-  const admin = useGetAccessAdmin({ query: { queryKey: getGetAccessAdminQueryKey(), enabled: session.data?.platformAdmin === true } });
+  const admin = useGetAccessAdmin({ query: {
+    queryKey: getGetAccessAdminQueryKey(),
+    enabled: session.data?.platformAdmin === true,
+    refetchInterval: 30_000,
+  } });
 
   if (session.isLoading) return <Page><SkeletonBlock /></Page>;
   if (session.isError) return <Page><StatePanel title="Could not check your access" body={errorMessage(session.error)} onRetry={() => session.refetch()} /></Page>;
@@ -151,6 +155,29 @@ function Directory({ dir }: { dir: AccessDirectory }) {
   return (
     <div className="space-y-6">
       <p className="text-xs text-muted-foreground">Reporting approvals, role changes and revocations queue an email from WareIQ. Email delivery may be delayed or fail independently; saved access changes apply immediately.</p>
+      <section className="rounded-md border bg-card p-4" aria-labelledby="access-email-status-title" data-testid="access-email-status">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 id="access-email-status-title" className="font-semibold">Access email delivery</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Accepted means the email provider accepted the message; it does not confirm inbox delivery. Counts include all access notices.</p>
+          </div>
+          {dir.notificationSummary.status === 'available' ? (
+            <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4">
+              <NotificationCount label="Queued" count={dir.notificationSummary.queued} />
+              <NotificationCount label="Retrying" count={dir.notificationSummary.retrying} />
+              <NotificationCount label="Accepted" count={dir.notificationSummary.accepted} />
+              <NotificationCount label="Failed" count={dir.notificationSummary.failed} />
+            </div>
+          ) : (
+            <p role="status" className="max-w-lg text-sm text-muted-foreground">Delivery status is currently unavailable. This does not change access settings or confirm email delivery.</p>
+          )}
+        </div>
+        {dir.notificationSummary.status === 'available' && (dir.notificationSummary.retrying > 0 || dir.notificationSummary.failed > 0) && (
+          <p role="status" className="mt-3 rounded-sm border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">
+            Some emails have not been accepted or permanently failed. Check the Resend connection and verified sender setup. Access changes remain active; pending deliveries will be retried automatically where possible.
+          </p>
+        )}
+      </section>
       <header className="rise flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Administration / Access control</p>
@@ -345,6 +372,9 @@ function Table({ head, children }: { head: string[]; children: ReactNode }) {
   );
 }
 function Num({ v }: { v: number }) { return <td className="tnum px-4 py-3 font-mono text-xs">{v}</td>; }
+function NotificationCount({ label, count }: { label: string; count: number }) {
+  return <p className="flex items-center gap-2"><span className="text-muted-foreground">{label}</span><span className="tnum font-mono font-semibold" data-testid={`notification-count-${label.toLowerCase()}`}>{count}</span></p>;
+}
 function Actions({ children }: { children: ReactNode }) { return <td className="px-4 py-2"><div className="flex justify-end gap-1">{children}</div></td>; }
 function IconBtn({ id, label, onClick, danger, children }: { id: string; label: string; onClick: () => void; danger?: boolean; children: ReactNode }) {
   return <button data-testid={id} title={label} aria-label={label} onClick={onClick} className={`rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted ${danger ? 'hover:text-destructive' : 'hover:text-foreground'}`}>{children}</button>;

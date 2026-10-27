@@ -374,12 +374,33 @@ export interface AccessReport {
   sectionName: string;
 }
 
+export type AccessDirectoryNotificationSummaryStatus = typeof AccessDirectoryNotificationSummaryStatus[keyof typeof AccessDirectoryNotificationSummaryStatus];
+
+
+export const AccessDirectoryNotificationSummaryStatus = {
+  available: 'available',
+  unavailable: 'unavailable',
+} as const;
+
+export type AccessDirectoryNotificationSummary = {
+  status: AccessDirectoryNotificationSummaryStatus;
+  /** @minimum 0 */
+  queued: number;
+  /** @minimum 0 */
+  retrying: number;
+  /** @minimum 0 */
+  accepted: number;
+  /** @minimum 0 */
+  failed: number;
+};
+
 export interface AccessDirectory {
   clients: AccessClient[];
   sites: AccessSite[];
   roles: AccessRole[];
   users: AccessUser[];
   reports: AccessReport[];
+  notificationSummary: AccessDirectoryNotificationSummary;
 }
 
 export type AccessSessionStatus = typeof AccessSessionStatus[keyof typeof AccessSessionStatus];

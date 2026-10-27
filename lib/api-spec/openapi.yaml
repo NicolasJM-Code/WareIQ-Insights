@@ -690,13 +690,22 @@ components:
         sectionName: { type: string }
     AccessDirectory:
       type: object
-      required: [clients, sites, roles, users, reports]
+      required: [clients, sites, roles, users, reports, notificationSummary]
       properties:
         clients: { type: array, items: { $ref: "#/components/schemas/AccessClient" } }
         sites: { type: array, items: { $ref: "#/components/schemas/AccessSite" } }
         roles: { type: array, items: { $ref: "#/components/schemas/AccessRole" } }
         users: { type: array, items: { $ref: "#/components/schemas/AccessUser" } }
         reports: { type: array, items: { $ref: "#/components/schemas/AccessReport" } }
+        notificationSummary:
+          type: object
+          required: [status, queued, retrying, accepted, failed]
+          properties:
+            status: { type: string, enum: [available, unavailable] }
+            queued: { type: integer, minimum: 0 }
+            retrying: { type: integer, minimum: 0 }
+            accepted: { type: integer, minimum: 0 }
+            failed: { type: integer, minimum: 0 }
     AccessSession:
       type: object
       required: [status, platformAdmin, canCreateOwnReports, reportIds, sites, clientId, clientName, clientCompanyNumber, clientAddressLine1, clientAddressLine2, clientCity, clientRegion, clientPostalCode, clientCountry, clientLogoUrl]

@@ -51,12 +51,18 @@ after two minutes. Resend deduplicates for 24 hours: WareIQ stops automatic
 retries after 23 hours from first attempt to avoid duplicate mail when the
 provider's deduplication window expires. Do not reset the attempt timestamp or
 manually resend an ambiguous old event without checking provider delivery.
-`sent` means accepted by Resend, not confirmed inbox delivery.
+`sent` means accepted by Resend, not confirmed inbox delivery. The administrator
+access page shows aggregate counts for queued, retrying/unconfirmed, accepted,
+and terminally failed notices. Retrying counts include an attempt that has not
+yet been confirmed and may still be delivered.
 
-Logs expose only generic outcome codes, never provider responses or addresses.
-Queue records contain recipient addresses and role names and must be treated as
-private application data. Only server-side operational access should inspect
-them; there is no browser-facing queue listing.
+If notices are retrying or have failed, administrators should check the Resend
+connection and verified sender setup. Provider responses are not shown because
+they can contain private information. Logs expose only generic outcome codes,
+never provider responses or addresses. The browser receives aggregate counts
+only, never recipient addresses, role names, notification IDs, or provider
+secrets. Queue records contain recipient addresses and role names and must be
+treated as private application data.
 
 Run focused notification checks with:
 

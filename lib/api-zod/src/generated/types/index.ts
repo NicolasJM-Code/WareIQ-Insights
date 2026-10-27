@@ -13,6 +13,8 @@ export * from './accessClientLogoUpload';
 export * from './accessClientLogoUploadInput';
 export * from './accessClientLogoUploadInputContentType';
 export * from './accessDirectory';
+export * from './accessDirectoryNotificationSummary';
+export * from './accessDirectoryNotificationSummaryStatus';
 export * from './accessError';
 export * from './accessFailureResponse';
 export * from './accessHistoryEntry';

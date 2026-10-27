@@ -168,6 +168,16 @@ export const GetAccessSessionResponse = zod.object({
 })
 
 
+export const getAccessAdminResponseNotificationSummaryQueuedMin = 0;
+
+export const getAccessAdminResponseNotificationSummaryRetryingMin = 0;
+
+export const getAccessAdminResponseNotificationSummaryAcceptedMin = 0;
+
+export const getAccessAdminResponseNotificationSummaryFailedMin = 0;
+
+
+
 export const GetAccessAdminResponse = zod.object({
   "clients": zod.array(zod.object({
   "id": zod.string(),
@@ -220,7 +230,14 @@ export const GetAccessAdminResponse = zod.object({
   "name": zod.string(),
   "section": zod.string(),
   "sectionName": zod.string()
-}))
+})),
+  "notificationSummary": zod.object({
+  "status": zod.enum(['available', 'unavailable']),
+  "queued": zod.number().int().min(getAccessAdminResponseNotificationSummaryQueuedMin),
+  "retrying": zod.number().int().min(getAccessAdminResponseNotificationSummaryRetryingMin),
+  "accepted": zod.number().int().min(getAccessAdminResponseNotificationSummaryAcceptedMin),
+  "failed": zod.number().int().min(getAccessAdminResponseNotificationSummaryFailedMin)
+})
 })
 
 

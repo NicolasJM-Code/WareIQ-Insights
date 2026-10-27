@@ -11,6 +11,34 @@ import type { AppRole } from "./access-policy";
 export type NotificationStatus = "queued" | "failed" | "not_needed";
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 export type Notice = { recipient: string; roleName: string; kind: "reporting" | "platform" };
+export type AccessNotificationSummary = {
+  queued: number;
+  retrying: number;
+  accepted: number;
+  failed: number;
+};
+
+export async function getAccessNotificationSummary(): Promise<AccessNotificationSummary> {
+  const { rows } = await pool.query<{
+    queued: number | string;
+    retrying: number | string;
+    accepted: number | string;
+    failed: number | string;
+  }>(`SELECT
+      count(*) FILTER (WHERE state IN ('pending', 'confirming') AND attempts = 0)::int AS queued,
+      count(*) FILTER (WHERE state = 'pending' AND attempts > 0)::int AS retrying,
+      count(*) FILTER (WHERE state = 'sent')::int AS accepted,
+      count(*) FILTER (WHERE state = 'failed')::int AS failed
+    FROM wareiq_access_notifications`);
+  const summary = rows[0];
+  if (!summary) throw new Error("Notification summary unavailable");
+  return {
+    queued: Number(summary.queued),
+    retrying: Number(summary.retrying),
+    accepted: Number(summary.accepted),
+    failed: Number(summary.failed),
+  };
+}
 
 // A savepoint isolates queue failures from the access change's transaction.
 export async function queueAccessNotifications(tx: Transaction, notices: Notice[]): Promise<NotificationStatus> {

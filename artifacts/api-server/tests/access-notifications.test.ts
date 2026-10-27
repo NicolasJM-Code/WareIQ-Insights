@@ -5,11 +5,11 @@ import { changeRole } from "../src/lib/role-management";
 
 const mocks = vi.hoisted(() => ({
   query: vi.fn(), release: vi.fn(), send: vi.fn(), getUser: vi.fn(),
-  insert: vi.fn(), update: vi.fn(), warn: vi.fn(),
+  insert: vi.fn(), update: vi.fn(), warn: vi.fn(), summaryQuery: vi.fn(),
 }));
 vi.mock("@workspace/db", async () => ({
   ...(await import("../../../lib/db/src/schema")),
-  pool: { connect: async () => ({ query: mocks.query, release: mocks.release }) },
+  pool: { connect: async () => ({ query: mocks.query, release: mocks.release }), query: mocks.summaryQuery },
   db: { insert: mocks.insert, update: mocks.update },
 }));
 vi.mock("@replit/connectors-sdk", () => ({
@@ -20,7 +20,7 @@ vi.mock("../src/lib/role-lock", () => ({ withRoleLock: async (fn: () => Promise<
 vi.mock("../src/lib/logger", () => ({ logger: { warn: mocks.warn } }));
 
 import {
-  deliverAccessNotifications, queueAccessNotifications, retryAllowed,
+  deliverAccessNotifications, getAccessNotificationSummary, queueAccessNotifications, retryAllowed,
   preparePlatformNotification, confirmPlatformNotification,
 } from "../src/lib/access-notifications";
 
@@ -121,6 +121,15 @@ describe("durable delivery and duplicate protection", () => {
     vi.clearAllMocks();
     mocks.query.mockImplementation(async (sql: string) => ({ rows: sql.startsWith("SELECT *") ? [{ ...job }] : [] }));
     mocks.send.mockResolvedValue({ ok: true, json: async () => ({ id: "provider-email-id" }) });
+  });
+  it("exposes only aggregate delivery counts to administrator views", async () => {
+    mocks.summaryQuery.mockResolvedValue({ rows: [{ queued: "2", retrying: "1", accepted: "4", failed: "3" }] });
+    await expect(getAccessNotificationSummary()).resolves.toEqual({
+      queued: 2, retrying: 1, accepted: 4, failed: 3,
+    });
+    const statement = mocks.summaryQuery.mock.calls[0][0] as string;
+    expect(statement).toContain("count(*) FILTER");
+    expect(statement).not.toMatch(/recipient|role_name|provider/i);
   });
   it("commits an attempt before sending and uses a stable provider idempotency key across retries", async () => {
     await deliverAccessNotifications();
