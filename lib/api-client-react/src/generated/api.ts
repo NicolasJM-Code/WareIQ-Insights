@@ -44,6 +44,10 @@ import type {
   AuthUnavailableResponse,
   ForbiddenResponse,
   HealthStatus,
+  ListAccessUsersParams,
+  PlatformAccessRoleUpdate,
+  PlatformAccessUser,
+  PlatformAccessUserPage,
   SettingsAccess,
   UnauthorizedResponse,
   WmsConnectionInput,
@@ -77,6 +81,203 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   }
   return result;
 };
+
+export const getListAccessUsersUrl = (params?: ListAccessUsersParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/admin/users?${stringifiedParams}` : `/api/admin/users`
+}
+
+/**
+ * @summary List Clerk accounts for platform administrator approval
+ */
+export const listAccessUsers = async (params?: ListAccessUsersParams, options?: Parameters<typeof customFetch>[1]): Promise<PlatformAccessUserPage> => {
+
+  return customFetch<PlatformAccessUserPage>(getListAccessUsersUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAccessUsersQueryKey = (params?: ListAccessUsersParams,) => {
+    return [
+    `/api/admin/users`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListAccessUsersQueryOptions = <TData = Awaited<ReturnType<typeof listAccessUsers>>, TError = ErrorType<AccessFailureResponse>>(params?: ListAccessUsersParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAccessUsers>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAccessUsersQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAccessUsers>>> = ({ signal }) => listAccessUsers(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAccessUsers>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListAccessUsersQueryResult = NonNullable<Awaited<ReturnType<typeof listAccessUsers>>>
+export type ListAccessUsersQueryError = ErrorType<AccessFailureResponse>
+
+
+export function useListAccessUsers<TData = Awaited<ReturnType<typeof listAccessUsers>>, TError = ErrorType<AccessFailureResponse>>(
+ params: undefined |  ListAccessUsersParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAccessUsers>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listAccessUsers>>,
+          TError,
+          Awaited<ReturnType<typeof listAccessUsers>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListAccessUsers<TData = Awaited<ReturnType<typeof listAccessUsers>>, TError = ErrorType<AccessFailureResponse>>(
+ params?: ListAccessUsersParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAccessUsers>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listAccessUsers>>,
+          TError,
+          Awaited<ReturnType<typeof listAccessUsers>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListAccessUsers<TData = Awaited<ReturnType<typeof listAccessUsers>>, TError = ErrorType<AccessFailureResponse>>(
+ params?: ListAccessUsersParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAccessUsers>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Clerk accounts for platform administrator approval
+ */
+
+export function useListAccessUsers<TData = Awaited<ReturnType<typeof listAccessUsers>>, TError = ErrorType<AccessFailureResponse>>(
+ params?: ListAccessUsersParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAccessUsers>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListAccessUsersQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getChangeAccessRoleUrl = (userId: string,) => {
+
+
+
+
+  return `/api/admin/users/${userId}/role`
+}
+
+/**
+ * @summary Change platform privileges without bypassing client reporting assignments
+ */
+export const changeAccessRole = async (userId: string,
+    platformAccessRoleUpdate: PlatformAccessRoleUpdate, options?: Parameters<typeof customFetch>[1]): Promise<PlatformAccessUser> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<PlatformAccessUser>(getChangeAccessRoleUrl(userId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(platformAccessRoleUpdate)
+  }
+);}
+
+
+
+
+
+export const getChangeAccessRoleMutationKey = () => ['changeAccessRole'] as const;
+
+export const getChangeAccessRoleMutationOptions = <TError = ErrorType<AccessFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof changeAccessRole>>, TError,ChangeAccessRoleMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof changeAccessRole>>, TError,ChangeAccessRoleMutationVariables, TContext> => {
+
+const mutationKey = getChangeAccessRoleMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof changeAccessRole>>, ChangeAccessRoleMutationVariables> = (props) => {
+          const {userId,data} = props ?? {};
+
+          return  changeAccessRole(userId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ChangeAccessRoleMutationResult = NonNullable<Awaited<ReturnType<typeof changeAccessRole>>>
+    export type ChangeAccessRoleMutationBody = BodyType<PlatformAccessRoleUpdate>
+    export type ChangeAccessRoleMutationError = ErrorType<AccessFailureResponse>
+    export type ChangeAccessRoleMutationVariables = {userId: string;data: BodyType<PlatformAccessRoleUpdate>}
+
+    /**
+ * @summary Change platform privileges without bypassing client reporting assignments
+ */
+export const useChangeAccessRole = <TError = ErrorType<AccessFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof changeAccessRole>>, TError,ChangeAccessRoleMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof changeAccessRole>>,
+        TError,
+        ChangeAccessRoleMutationVariables,
+        TContext
+      > => {
+      return useMutation(getChangeAccessRoleMutationOptions(options), queryClient);
+    }
 
 export const getGetAuthSessionUrl = () => {
 

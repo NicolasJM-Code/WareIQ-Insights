@@ -1,11 +1,7 @@
 import { clerkClient, getAuth } from "@clerk/express";
 import type { RequestHandler } from "express";
-
-export type AppRole = "admin" | "supervisor" | "unassigned";
-
-export function appRole(value: unknown): AppRole {
-  return value === "admin" || value === "supervisor" ? value : "unassigned";
-}
+import { appRole, verifiedPrimaryEmail } from "../lib/access-policy";
+export { appRole, type AppRole } from "../lib/access-policy";
 
 // Read current, server-owned metadata on EVERY request. Do not trust role headers,
 // unsafeMetadata, browser storage, or stale session claims after a role revocation.
@@ -22,7 +18,7 @@ export const requireIdentity: RequestHandler = async (req, res, next) => {
       res.status(403).json({ error: "This account is not permitted to access WareIQ." });
       return;
     }
-    const role = appRole(user.publicMetadata.role);
+    const role = verifiedPrimaryEmail(user) ? appRole(user.publicMetadata.role) : "unassigned";
     res.locals.access = {
       userId,
       role,

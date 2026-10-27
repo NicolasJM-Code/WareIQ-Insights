@@ -7,7 +7,7 @@ approved by verified email in **User access**, assigned to one client, a client-
 role, and one or more explicitly assigned warehouses. Own-report creation is a separate permission.
 The former global `supervisor` role does not bypass these client/site assignments.
 
-## Establish the first administrator or change a role
+## Establish the first administrator
 
 1. Have the intended person sign up in WareIQ and verify their email.
 2. Verify that this person owns the account and is authorized for the role.
@@ -18,6 +18,9 @@ The former global `supervisor` role does not bypass these client/site assignment
    ```
 
    Use User access to approve or disable reporting users and change their roles.
+   After bootstrap, use Settings → Users & administration for platform role changes.
+   The command remains a trusted emergency recovery override; do not run it or
+   edit Clerk metadata concurrently with web role administration.
    Use `unassigned` here to remove platform administrator rights. Removing those
    rights does not delete any separately approved client membership; disable that
    membership as well when all reporting access must be revoked.
@@ -36,6 +39,28 @@ credentials; live changes additionally require `--confirm-production`. Never
 copy production credentials into the workspace. No production role is created
 by running the command in development.
 
+## Approve reporting access and platform administrators
+
+- **User access** manages client reporting approval: configure the client,
+  warehouses and reporting role, then approve the verified login email and
+  explicitly assigned warehouses. Disable its membership to revoke reporting.
+- **Settings → Users & administration → Platform administrator approval** lists
+  Clerk accounts, newest first, with pagination and verification/restriction
+  status. Confirm grants of Administrator or removal of a platform role here.
+  An account without a platform role may still have separately approved client
+  reporting access. The legacy global Supervisor role alone grants no client
+  access and is not offered as a reporting approval action.
+- Platform approvals require a verified primary email and unrestricted account.
+  Administrators cannot change their own role or remove the last usable
+  administrator. Stale confirmations conflict instead of overwriting newer roles.
+- Platform changes are serialized across API instances by a PostgreSQL advisory
+  lock in the application database, never the WMS. The actor is checked again
+  inside the lock. No additional access table migration is required for this lock.
+- Removing platform privileges does **not** disable client reporting membership.
+  Disable that membership in User access as well when all access must be revoked.
+  Each API request checks current privileges; open screens poll and refresh on
+  focus. Previously viewed or downloaded information cannot be recalled.
+
 ## Enforcement and boundaries
 
 - `/api/healthz` is public. The Clerk frontend proxy is mounted separately.
@@ -52,6 +77,9 @@ by running the command in development.
   server-side on each request, not client headers or stale token role claims.
   Client reporting grants come from active application-database membership and
   roles. Provider failures deny access. Role-edit APIs require platform administration.
+  `/api/admin/users` and `/api/admin/users/:userId/role` are guarded administrator
+  endpoints returning only account identity, verification/restriction status,
+  and platform role, never Clerk metadata or credentials.
 - Cookie-authenticated mutation requests require a matching Origin. CORS is
   not enabled for third-party browser clients.
 - Never return WMS passwords, usernames, connection strings, or raw database

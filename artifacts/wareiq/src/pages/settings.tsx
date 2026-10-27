@@ -15,6 +15,7 @@ import { cn } from '@/lib/utils';
 import { useTestWmsConnection, type WmsConnectionResult } from '@workspace/api-client-react';
 import { useUser, UserButton } from '@clerk/react';
 import { Link } from 'wouter';
+import { AccessManagement } from '@/components/access-management';
 
 const hostRe = /^(?=.{1,253}$)([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$|^(\d{1,3}\.){3}\d{1,3}$/;
 const ident = /^[a-zA-Z_][a-zA-Z0-9_$]{0,62}$/;
@@ -314,6 +315,7 @@ ALTER ROLE wms_reporting_ro
         </TabsContent>
 
         <TabsContent value="admin" className="grid gap-4 lg:grid-cols-2">
+          <AccessManagement />
           <Section icon={Users} title="User roles" aside={<Pill tone="good">Server enforced</Pill>}>
             <p className="text-[12.5px] text-muted-foreground mb-3">Managed sign-in verifies identity. The API checks the current, server-owned account role for every request. New accounts have no access until the application owner assigns a role.</p>
             <table className="w-full text-[12.5px]"><tbody className="divide-y">

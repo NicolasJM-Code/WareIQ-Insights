@@ -5,6 +5,36 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+export type PlatformAccessRole = typeof PlatformAccessRole[keyof typeof PlatformAccessRole];
+
+
+export const PlatformAccessRole = {
+  admin: 'admin',
+  supervisor: 'supervisor',
+  unassigned: 'unassigned',
+} as const;
+
+export interface PlatformAccessRoleUpdate {
+  role: PlatformAccessRole;
+  expectedRole: PlatformAccessRole;
+}
+
+export interface PlatformAccessUser {
+  id: string;
+  name: string;
+  email: string;
+  emailVerified: boolean;
+  role: PlatformAccessRole;
+  restricted: boolean;
+}
+
+export interface PlatformAccessUserPage {
+  users: PlatformAccessUser[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
 export interface AccessError {
   error: string;
 }
@@ -300,4 +330,11 @@ export type ForbiddenResponse = AccessError;
  * Permissions could not be verified; access is denied
  */
 export type AuthUnavailableResponse = AccessError;
+
+export type ListAccessUsersParams = {
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
 

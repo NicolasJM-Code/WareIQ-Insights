@@ -17,7 +17,7 @@ export async function identity(req: Request) {
   if (user.banned || user.locked) throw new AccessError(403, "This account is not permitted to access WareIQ.");
   const email = user.emailAddresses.find((e) =>
     e.id === user.primaryEmailAddressId && e.verification?.status === "verified")?.emailAddress.toLowerCase();
-  return { userId, email, platformAdmin: user.publicMetadata.role === "admin" };
+  return { userId, email, platformAdmin: !!email && user.publicMetadata.role === "admin" };
 }
 export async function requireAccessAdmin(req: Request) {
   const actor = await identity(req);

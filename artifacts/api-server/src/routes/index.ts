@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import healthRouter from "./health";
 import accessRouter from "./access";
+import adminUsersRouter from "./admin-users";
 import { requireIdentity, requireReporter, requireAdministrator } from "../middlewares/access";
 import wmsRouter from "./wms";
 
@@ -14,6 +15,7 @@ router.use(accessRouter);
 router.use(requireIdentity);
 router.use(["/settings", "/config", "/connection", "/admin"], requireAdministrator);
 router.use(wmsRouter);
+router.use(adminUsersRouter);
 router.use(requireReporter);
 
 export default router;

@@ -9,6 +9,59 @@ import * as zod from 'zod';
 
 
 /**
+ * @summary List Clerk accounts for platform administrator approval
+ */
+export const listAccessUsersQueryOffsetDefault = 0;
+export const listAccessUsersQueryOffsetMin = 0;
+
+
+
+export const ListAccessUsersQueryParams = zod.object({
+  "offset": zod.coerce.number().int().min(listAccessUsersQueryOffsetMin).default(listAccessUsersQueryOffsetDefault)
+})
+
+export const ListAccessUsersResponse = zod.object({
+  "users": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "email": zod.string(),
+  "emailVerified": zod.boolean(),
+  "role": zod.enum(['admin', 'supervisor', 'unassigned']),
+  "restricted": zod.boolean()
+})),
+  "total": zod.number().int(),
+  "offset": zod.number().int(),
+  "limit": zod.number().int()
+})
+
+
+/**
+ * @summary Change platform privileges without bypassing client reporting assignments
+ */
+export const changeAccessRolePathUserIdMax = 200;
+
+
+
+export const ChangeAccessRoleParams = zod.object({
+  "userId": zod.coerce.string().min(1).max(changeAccessRolePathUserIdMax)
+})
+
+export const ChangeAccessRoleBody = zod.object({
+  "role": zod.enum(['admin', 'supervisor', 'unassigned']),
+  "expectedRole": zod.enum(['admin', 'supervisor', 'unassigned'])
+})
+
+export const ChangeAccessRoleResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "email": zod.string(),
+  "emailVerified": zod.boolean(),
+  "role": zod.enum(['admin', 'supervisor', 'unassigned']),
+  "restricted": zod.boolean()
+})
+
+
+/**
  * @summary Get the verified user's application permissions
  */
 export const GetAuthSessionResponse = zod.object({

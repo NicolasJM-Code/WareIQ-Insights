@@ -13,6 +13,47 @@ tags:
 security:
   - clerkSession: []
 paths:
+  /admin/users:
+    get:
+      operationId: listAccessUsers
+      summary: List Clerk accounts for platform administrator approval
+      parameters:
+        - in: query
+          name: offset
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Account page without provider metadata or secrets
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformAccessUserPage"
+        default:
+          $ref: "#/components/responses/AccessFailure"
+  /admin/users/{userId}/role:
+    patch:
+      operationId: changeAccessRole
+      summary: Change platform privileges without bypassing client reporting assignments
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 200 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlatformAccessRoleUpdate"
+      responses:
+        "200":
+          description: Updated platform account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformAccessUser"
+        default:
+          $ref: "#/components/responses/AccessFailure"
   /auth/session:
     get:
       operationId: getAuthSession
@@ -279,6 +320,40 @@ components:
           schema:
             $ref: "#/components/schemas/AccessError"
   schemas:
+    PlatformAccessRole:
+      type: string
+      enum: [admin, supervisor, unassigned]
+    PlatformAccessRoleUpdate:
+      type: object
+      additionalProperties: false
+      required: [role, expectedRole]
+      properties:
+        role:
+          $ref: "#/components/schemas/PlatformAccessRole"
+        expectedRole:
+          $ref: "#/components/schemas/PlatformAccessRole"
+    PlatformAccessUser:
+      type: object
+      required: [id, name, email, emailVerified, role, restricted]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        email: { type: string }
+        emailVerified: { type: boolean }
+        role:
+          $ref: "#/components/schemas/PlatformAccessRole"
+        restricted: { type: boolean }
+    PlatformAccessUserPage:
+      type: object
+      required: [users, total, offset, limit]
+      properties:
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlatformAccessUser"
+        total: { type: integer }
+        offset: { type: integer }
+        limit: { type: integer }
     AccessError:
       type: object
       required: [error]
