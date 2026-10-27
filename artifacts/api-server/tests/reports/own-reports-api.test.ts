@@ -52,6 +52,9 @@ beforeEach(async () => {
   await pool.query(`
     DROP TRIGGER IF EXISTS injected_fault ON wareiq_own_reports;
     DROP FUNCTION IF EXISTS report_fault();
+    DROP TRIGGER IF EXISTS concurrent_insert_barrier ON wareiq_own_reports;
+    DROP FUNCTION IF EXISTS report_insert_barrier();
+    DROP SEQUENCE IF EXISTS own_report_insert_barrier;
     TRUNCATE wareiq_own_reports, wareiq_members, wareiq_sites, wareiq_roles, wareiq_clients;
     INSERT INTO wareiq_clients VALUES ('client-a', 'Synthetic A', true), ('client-b', 'Synthetic B', true);
     INSERT INTO wareiq_sites VALUES ('site-a', 'client-a', 'test', 'Synthetic site', true);
@@ -171,6 +174,58 @@ describe("account report persistence through the API", () => {
     await expectError(await save({ ...definition, id: "original", name: " neighbour " }), 409, before);
     expect((await save({ ...definition, id: "original" })).status).toBe(200);
   });
+
+  it("allows only one overlapping same-name save and keeps the winner readable", async () => {
+    // Both requests must finish the API duplicate preflight before either
+    // INSERT continues. The non-transactional sequence lets the trigger wait
+    // for both requests without serializing their database transactions.
+    await pool.query(`
+      CREATE SEQUENCE own_report_insert_barrier;
+      CREATE FUNCTION report_insert_barrier() RETURNS trigger LANGUAGE plpgsql AS $$
+      DECLARE
+        ticket bigint;
+        attempt integer;
+      BEGIN
+        ticket := nextval('own_report_insert_barrier');
+        IF ticket <= 2 THEN
+          FOR attempt IN 1..500 LOOP
+            EXIT WHEN (SELECT last_value FROM own_report_insert_barrier) >= 2;
+            PERFORM pg_sleep(0.01);
+          END LOOP;
+          IF (SELECT last_value FROM own_report_insert_barrier) < 2 THEN
+            RAISE EXCEPTION 'Concurrent report insert barrier timed out';
+          END IF;
+        END IF;
+        RETURN NEW;
+      END $$;
+      CREATE TRIGGER concurrent_insert_barrier BEFORE INSERT ON wareiq_own_reports
+        FOR EACH ROW EXECUTE FUNCTION report_insert_barrier();
+    `);
+
+    const [first, second] = await Promise.all([
+      save({ ...definition, name: "Concurrent Report" }),
+      save({ ...definition, name: " concurrent REPORT " }),
+    ]);
+
+    expect([first.status, second.status].sort()).toEqual([200, 409]);
+    const listed = await request(app).get(path);
+    expect(listed.status).toBe(200);
+    const matching = listed.body.filter((report: { section: string; name: string }) =>
+      report.section === definition.section && report.name.toLowerCase() === "concurrent report");
+    expect(matching).toHaveLength(1);
+    expect(matching[0]).toMatchObject({
+      section: definition.section,
+      name: expect.stringMatching(/^Concurrent Report$/i),
+      id: expect.any(String),
+      dataset: definition.dataset,
+      fields: definition.fields,
+    });
+    const stored = (await snapshot()).filter((row) =>
+      row.definition.section === definition.section
+      && row.definition.name.toLowerCase() === "concurrent report");
+    expect(stored).toHaveLength(1);
+    expect(matching[0].id).toBe(stored[0].id);
+  }, 15_000);
 
   it("allows the same name in two sections but rejects case-insensitive duplicates in each", async () => {
     await pool.query("UPDATE wareiq_roles SET report_ids = ARRAY['inbound-1', 'inventory-1']");
