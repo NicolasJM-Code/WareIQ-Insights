@@ -9,6 +9,25 @@ import * as zod from 'zod';
 
 
 /**
+ * Raw JSON is authenticated by the Svix signature and delivery timestamp, not a browser session. Instance and environment must match server configuration. No historical attempt is reconciled.
+ * @summary Receive signature-verified Clerk role observations
+ */
+export const IngestClerkRoleEvidenceParams = zod.object({
+  "environment": zod.enum(['development', 'production'])
+})
+
+export const IngestClerkRoleEvidenceHeader = zod.object({
+  "svix-id": zod.string(),
+  "svix-timestamp": zod.string(),
+  "svix-signature": zod.string()
+})
+
+export const IngestClerkRoleEvidenceBody = zod.record(zod.string(), zod.unknown()).describe('Opaque provider envelope; authenticate the original bytes before parsing or projecting allowlisted evidence.')
+
+export const IngestClerkRoleEvidenceResponse = zod.void()
+
+
+/**
  * @summary Administrator-only platform role change history
  */
 export const listAccessHistoryQueryBeforeTimeRegExp = new RegExp('^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$');
@@ -29,7 +48,11 @@ export const ListAccessHistoryResponse = zod.object({
   "previousRole": zod.union([zod.literal('admin'),zod.literal('supervisor'),zod.literal('unassigned'),zod.literal(null)]).nullable(),
   "requestedRole": zod.union([zod.literal('admin'),zod.literal('supervisor'),zod.literal('unassigned'),zod.literal(null)]).nullable(),
   "resultingRole": zod.union([zod.literal('admin'),zod.literal('supervisor'),zod.literal('unassigned'),zod.literal(null)]).nullable(),
-  "outcome": zod.enum(['succeeded', 'unchanged', 'denied', 'failed', 'unconfirmed']),
+  "providerEventId": zod.string().nullish(),
+  "providerInstanceId": zod.string().nullish(),
+  "providerEnvironment": zod.union([zod.literal('development'),zod.literal('production'),zod.literal(null)]).nullish(),
+  "providerOccurredAt": zod.string().nullish(),
+  "outcome": zod.enum(['succeeded', 'unchanged', 'denied', 'failed', 'unconfirmed', 'observed']),
   "reason": zod.string()
 })),
   "nextCursor": zod.object({

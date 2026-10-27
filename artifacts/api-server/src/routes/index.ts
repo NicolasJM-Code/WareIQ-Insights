@@ -7,6 +7,9 @@ import wmsRouter from "./wms";
 
 const router: IRouter = Router();
 
+// Signed /webhooks/clerk/:environment events are mounted separately in app.ts
+// before cookie authentication/CSRF and JSON parsing. All routes below retain
+// their existing session and authorization guards.
 router.use(healthRouter);
 router.use(requireActiveSession);
 // Each access operation authenticates and authorizes internally. Only /access/me

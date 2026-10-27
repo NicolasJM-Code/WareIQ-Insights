@@ -3,6 +3,41 @@ import { eq } from "drizzle-orm";
 import { db, pool, accessHistoryTable } from "./index";
 import type { AccessAuditStore } from "./access-audit-types";
 
+export type ProviderRoleObservation = {
+  eventId: string;
+  instanceId: string;
+  environment: "development" | "production";
+  occurredAt: Date;
+  targetId: string;
+  role: "admin" | "supervisor" | "unassigned";
+};
+
+// One atomic, append-only insert. The unique index also covers concurrent
+// delivery and provider replays signed with a fresh delivery timestamp.
+export async function recordProviderRoleObservation(entry: ProviderRoleObservation): Promise<void> {
+  await db.insert(accessHistoryTable).values({
+    id: randomUUID(),
+    actorId: "external:clerk",
+    targetId: entry.targetId,
+    previousRole: null,
+    requestedRole: null,
+    resultingRole: entry.role,
+    outcome: "observed",
+    reason: "provider_role_observed",
+    providerEventId: entry.eventId,
+    providerInstanceId: entry.instanceId,
+    providerEnvironment: entry.environment,
+    providerOccurredAt: entry.occurredAt,
+    finishedAt: null,
+  }).onConflictDoNothing({
+    target: [
+      accessHistoryTable.providerEnvironment,
+      accessHistoryTable.providerInstanceId,
+      accessHistoryTable.providerEventId,
+    ],
+  });
+}
+
 // Explicit projection prevents accidentally persisting provider payloads.
 // All evidence writes use the pool, independently of the role-lock transaction.
 export const accessAuditStore: AccessAuditStore & {

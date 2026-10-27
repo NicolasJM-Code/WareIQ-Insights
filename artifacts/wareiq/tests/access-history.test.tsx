@@ -74,7 +74,23 @@ it('shows declared command operators without presenting them as verified app adm
   await screen.findByText('operator:ops-alias');
   expect(screen.getByText(/not a verified app administrator/)).toBeInTheDocument();
   expect(screen.getByText(/Recovery command requires one verified/)).toBeInTheDocument();
-  expect(screen.getByText(/direct Clerk edits and other tools are not included/)).toBeInTheDocument();
+  expect(screen.getByText(/do not prove a dashboard edit/)).toBeInTheDocument();
+});
+it('separates signed provider observations with unknown actors from confirmed Settings attempts', async () => {
+  state.load.mockResolvedValue({ entries: [{
+    ...entry, actorId: 'external:clerk', previousRole: null, requestedRole: null,
+    resultingRole: 'admin', outcome: 'observed', reason: 'provider_role_observed',
+    providerEnvironment: 'development', providerEventId: 'msg_signedEvent',
+    providerOccurredAt: '2026-10-26T12:00:00.000Z',
+  }], nextCursor: null });
+  mount();
+  await screen.findByText('External provider · actor unknown');
+  expect(screen.getByText('Provider role observed')).toBeInTheDocument();
+  expect(screen.getByText(/development · msg_signedEvent/)).toBeInTheDocument();
+  expect(screen.getByText(/Provider event .*received at the time above/)).toBeInTheDocument();
+  expect(screen.getByText(/not proof of a role transition/)).toBeInTheDocument();
+  expect(screen.queryByText('Confirmed')).not.toBeInTheDocument();
+  expect(screen.getByText('Unknown')).toBeInTheDocument();
 });
 it('uses server cursors for older pages and resets to the newest page on refresh', async () => {
   const cursor = { beforeTime: entry.createdAt, beforeId: entry.id };

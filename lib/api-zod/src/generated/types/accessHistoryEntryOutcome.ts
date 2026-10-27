@@ -15,4 +15,5 @@ export const AccessHistoryEntryOutcome = {
   denied: 'denied',
   failed: 'failed',
   unconfirmed: 'unconfirmed',
+  observed: 'observed',
 } as const;

@@ -13,6 +13,7 @@ export async function accessHistoryPage(cursor?: { beforeTime: string; beforeId:
   return {
     entries: entries.map((row) => ({
       ...row, createdAt: row.createdAt.toISOString(), finishedAt: row.finishedAt?.toISOString() ?? null,
+      providerOccurredAt: row.providerOccurredAt?.toISOString() ?? null,
     })),
     nextCursor: rows.length > 25 && last ? { beforeTime: last.createdAt.toISOString(), beforeId: last.id } : null,
   };

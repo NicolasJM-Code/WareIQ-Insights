@@ -26,3 +26,14 @@ overstate the evidence; dashboard edits bypass the application entirely.
 **How to apply:** Preserve the trusted owner recovery path, label its identity
 provenance honestly, and never attribute external edits to an app administrator
 without independent evidence.
+
+Signed Clerk user-update events establish a role snapshot, not a role transition,
+dashboard provenance, or causal confirmation of a WareIQ attempt. Preserve
+provider event time separately from receipt order and do not derive old roles
+by comparing deliveries.
+
+**Why:** Clerk user-update payloads do not supply an independently verified
+operator or a before/after role diff, and deliveries can arrive out of order.
+
+**How to apply:** Present webhook evidence as unknown-actor observations, even
+when the snapshot matches an app request. Keep original attempts unchanged.

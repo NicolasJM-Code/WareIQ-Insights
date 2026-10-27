@@ -9,6 +9,7 @@ import { SQL } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { getTableConfig, PgDialect } from "drizzle-orm/pg-core";
 import {
+  accessHistoryTable,
   clientsTable,
   membersTable,
   ownReportsTable,
@@ -48,11 +49,14 @@ export const db = drizzle(pool);
 let started = false;
 let stopped = false;
 
-export function configureReportFixtureSuite(value: "own-reports-api" | "own-reports-origin") {
+export function configureReportFixtureSuite(value: "own-reports-api" | "own-reports-origin" | "provider-evidence") {
   suiteId = value;
-  peerSuiteId = value === "own-reports-api" ? "own-reports-origin" : "own-reports-api";
+  // Only the two report-isolation suites participate in the peer handshake.
+  // Evidence persistence must also run alone with its own registry identity.
+  peerSuiteId = value === "own-reports-api" ? "own-reports-origin"
+    : value === "own-reports-origin" ? "own-reports-api" : undefined;
   registrationPath = join(registryDirectory, `${suiteId}.json`);
-  peerRegistrationPath = join(registryDirectory, `${peerSuiteId}.json`);
+  peerRegistrationPath = peerSuiteId ? join(registryDirectory, `${peerSuiteId}.json`) : undefined;
 }
 
 const quoteIdentifier = (value: string) => `"${value.replaceAll('"', '""')}"`;
@@ -76,6 +80,7 @@ function renderDefault(value: unknown): string {
 }
 
 type FixtureTable =
+  | typeof accessHistoryTable
   | typeof clientsTable
   | typeof sitesTable
   | typeof rolesTable
@@ -186,6 +191,7 @@ export async function startDatabase(options: { afterStart?: () => void | Promise
     // Generate every table from the production schema so column, default,
     // foreign-key, check, and index changes cannot silently drift in tests.
     for (const table of [
+      accessHistoryTable,
       clientsTable,
       sitesTable,
       rolesTable,

@@ -6,7 +6,7 @@ import { RefreshCw, ScrollText } from 'lucide-react';
 import { Pill } from '@/components/report-kit';
 
 const roles: Record<string, string> = { admin: 'Administrator', supervisor: 'Legacy Supervisor', unassigned: 'No platform role' };
-const outcomes = { succeeded: 'Confirmed', unchanged: 'No change needed', denied: 'Denied', failed: 'Not attempted', unconfirmed: 'Unconfirmed' };
+const outcomes = { succeeded: 'Confirmed', unchanged: 'No change needed', denied: 'Denied', failed: 'Not attempted', unconfirmed: 'Unconfirmed', observed: 'Provider role observed' };
 const reasons: Record<string, string> = {
   confirmation_pending: 'Confirmation is pending or was interrupted. Refresh accounts before retrying.',
   provider_outcome_unknown: 'The provider did not confirm the outcome. Refresh accounts before retrying.',
@@ -21,6 +21,7 @@ const reasons: Record<string, string> = {
   role_confirmed: 'Provider confirmed the requested role',
   policy_denied: 'Access policy denied this change',
   command_target_ineligible: 'Recovery command requires one verified, unrestricted target account',
+  provider_role_observed: 'Signed Clerk user-update snapshot; not proof of a role transition, dashboard edit, or earlier attempt outcome.',
 };
 
 export function AccessHistory() {
@@ -44,7 +45,7 @@ export function AccessHistory() {
         </button>
       </header>
       <div className="space-y-3 p-5">
-        <p className="text-[12px] text-muted-foreground">Application-database records of platform role attempts made through Settings and the approved recovery command, including policy denials. Account IDs identify authenticated Settings actors; operator: IDs identify terminal operators by their declared non-personal identifier, not a verified app administrator. No email addresses or provider metadata are retained. Reporting membership changes, settings, exports, direct Clerk edits and other tools are not included. Earlier activity is not backfilled.</p>
+        <p className="text-[12px] text-muted-foreground">Application-database records of platform role attempts made through Settings and the approved recovery command, including policy denials. Account IDs identify authenticated Settings actors; operator: IDs identify terminal operators by their declared non-personal identifier, not a verified app administrator. Signed provider observations, when event capture is configured, show external role evidence with an unknown actor; they can also reflect Settings or command updates and do not prove a dashboard edit. No email addresses or arbitrary provider metadata are retained. Reporting membership changes, settings, exports and earlier activity are not included.</p>
         <p className="text-[12px] text-muted-foreground">Unconfirmed means the attempt may still be running or its outcome could not be saved. It does not prove a role changed. Check the current account list before retrying. Old and confirmed roles are shown only when known; denied requests from non-administrators omit target details.</p>
         {history.isPending ? <p role="status" className="text-[13px]">Loading access history…</p> : history.isError ? (
           <div role="alert" className="text-[13px] text-destructive">
@@ -55,14 +56,18 @@ export function AccessHistory() {
         {!!history.data?.entries.length && <div className="overflow-x-auto rounded-md border">
           <table className="w-full text-left text-[12px]" data-testid="table-access-history">
             <thead className="border-b bg-muted/50"><tr>
-              {['Time', 'Changed by', 'Account', 'Old role', 'Requested role', 'Confirmed role', 'Outcome'].map((h) => <th key={h} className="whitespace-nowrap p-3 font-medium">{h}</th>)}
+              {['Time', 'Changed by / evidence', 'Account', 'Old role', 'Requested role', 'Confirmed / observed role', 'Outcome'].map((h) => <th key={h} className="whitespace-nowrap p-3 font-medium">{h}</th>)}
             </tr></thead>
             <tbody className="divide-y">
               {history.data.entries.map((entry) => <tr key={entry.id}>
                 <td className="p-3 whitespace-nowrap"><time dateTime={entry.createdAt}>{new Date(entry.createdAt).toLocaleString()}</time>
                   {entry.finishedAt && <div className="mt-1 text-[11px] text-muted-foreground">Finished {new Date(entry.finishedAt).toLocaleString()}</div>}
+                  {entry.providerOccurredAt && <div className="mt-1 text-[11px] text-muted-foreground">Provider event {new Date(entry.providerOccurredAt).toLocaleString()} · received at the time above</div>}
                 </td>
-                <td className="p-3 font-mono break-all">{entry.actorId}</td>
+                <td className="p-3 font-mono break-all">{entry.outcome === 'observed' ? <>
+                  <div>External provider · actor unknown</div>
+                  <div className="mt-1 text-[11px]">{entry.providerEnvironment} · {entry.providerEventId}</div>
+                </> : entry.actorId}</td>
                 <td className="p-3 font-mono break-all">{entry.targetId ?? 'Not retained'}</td>
                 <td className="p-3">{entry.previousRole ? roles[entry.previousRole] : 'Unknown'}</td>
                 <td className="p-3">{entry.requestedRole ? roles[entry.requestedRole] : 'Not retained'}</td>

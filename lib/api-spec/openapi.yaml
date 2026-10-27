@@ -13,6 +13,46 @@ tags:
 security:
   - clerkSession: []
 paths:
+  /webhooks/clerk/{environment}:
+    post:
+      operationId: ingestClerkRoleEvidence
+      summary: Receive signature-verified Clerk role observations
+      description: Raw JSON is authenticated by the Svix signature and delivery timestamp, not a browser session. Instance and environment must match server configuration. No historical attempt is reconciled.
+      security: []
+      parameters:
+        - in: path
+          name: environment
+          required: true
+          schema: { type: string, enum: [development, production] }
+        - in: header
+          name: svix-id
+          required: true
+          schema: { type: string }
+        - in: header
+          name: svix-timestamp
+          required: true
+          schema: { type: string }
+        - in: header
+          name: svix-signature
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClerkEventEnvelope"
+      responses:
+        "204":
+          description: Evidence stored, duplicate delivery, or event outside the allowlist
+        "400":
+          description: Invalid signature, stale delivery timestamp, or malformed evidence
+        "403":
+          description: Environment or instance mismatch
+        "413":
+          description: Raw payload exceeds the size limit
+        "503":
+          description: Capture not configured or evidence storage unavailable; retry delivery
   /admin/access-history:
     get:
       operationId: listAccessHistory
@@ -416,6 +456,10 @@ components:
           schema:
             $ref: "#/components/schemas/AccessError"
   schemas:
+    ClerkEventEnvelope:
+      type: object
+      description: Opaque provider envelope; authenticate the original bytes before parsing or projecting allowlisted evidence.
+      additionalProperties: true
     AccessHistoryEntry:
       type: object
       required: [id, createdAt, finishedAt, actorId, targetId, previousRole, requestedRole, resultingRole, outcome, reason]
@@ -428,7 +472,11 @@ components:
         previousRole: { type: [string, "null"], enum: [admin, supervisor, unassigned, null] }
         requestedRole: { type: [string, "null"], enum: [admin, supervisor, unassigned, null] }
         resultingRole: { type: [string, "null"], enum: [admin, supervisor, unassigned, null] }
-        outcome: { type: string, enum: [succeeded, unchanged, denied, failed, unconfirmed] }
+        providerEventId: { type: [string, "null"] }
+        providerInstanceId: { type: [string, "null"] }
+        providerEnvironment: { type: [string, "null"], enum: [development, production, null] }
+        providerOccurredAt: { type: [string, "null"] }
+        outcome: { type: string, enum: [succeeded, unchanged, denied, failed, unconfirmed, observed] }
         reason: { type: string }
     AccessHistoryPage:
       type: object

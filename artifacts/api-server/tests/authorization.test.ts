@@ -43,6 +43,14 @@ import app from "../src/app";
 import router from "../src/routes";
 import { appRole, requireAdministrator, requireReporter } from "../src/middlewares/access";
 
+it("keeps only the signed provider POST independent of cookie and origin guards", async () => {
+  // Unconfigured capture is explicit, not an anonymous mutation or a CSRF
+  // exception for unrelated APIs. No provider request or database write occurs.
+  expect((await request(app).post("/api/webhooks/clerk/development").send({})).status).toBe(503);
+  expect((await request(app).post("/api/admin/webhooks/clerk/development").send({})).status).toBe(403);
+  expect((await request(app).put("/api/webhooks/clerk/development").send({})).status).toBe(403);
+});
+
 // Test-only handlers are appended AFTER the actual central guards. This catches
 // ordering regressions without adding dummy reporting APIs to production.
 const reached = vi.fn();

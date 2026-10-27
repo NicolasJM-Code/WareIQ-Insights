@@ -6,6 +6,11 @@
  * OpenAPI spec version: 0.1.0
  */
 /**
+ * Opaque provider envelope; authenticate the original bytes before parsing or projecting allowlisted evidence.
+ */
+export interface ClerkEventEnvelope { [key: string]: unknown }
+
+/**
  * @nullable
  */
 export type AccessHistoryEntryPreviousRole = typeof AccessHistoryEntryPreviousRole[keyof typeof AccessHistoryEntryPreviousRole] | null;
@@ -41,6 +46,17 @@ export const AccessHistoryEntryResultingRole = {
   unassigned: 'unassigned',
 } as const;
 
+/**
+ * @nullable
+ */
+export type AccessHistoryEntryProviderEnvironment = typeof AccessHistoryEntryProviderEnvironment[keyof typeof AccessHistoryEntryProviderEnvironment] | null;
+
+
+export const AccessHistoryEntryProviderEnvironment = {
+  development: 'development',
+  production: 'production',
+} as const;
+
 export type AccessHistoryEntryOutcome = typeof AccessHistoryEntryOutcome[keyof typeof AccessHistoryEntryOutcome];
 
 
@@ -50,6 +66,7 @@ export const AccessHistoryEntryOutcome = {
   denied: 'denied',
   failed: 'failed',
   unconfirmed: 'unconfirmed',
+  observed: 'observed',
 } as const;
 
 export interface AccessHistoryEntry {
@@ -66,6 +83,14 @@ export interface AccessHistoryEntry {
   requestedRole: AccessHistoryEntryRequestedRole;
   /** @nullable */
   resultingRole: AccessHistoryEntryResultingRole;
+  /** @nullable */
+  providerEventId?: string | null;
+  /** @nullable */
+  providerInstanceId?: string | null;
+  /** @nullable */
+  providerEnvironment?: AccessHistoryEntryProviderEnvironment;
+  /** @nullable */
+  providerOccurredAt?: string | null;
   outcome: AccessHistoryEntryOutcome;
   reason: string;
 }

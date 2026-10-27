@@ -9,8 +9,10 @@ the operational WMS connection.
 This history covers platform role attempts through `/admin/users/:userId/role`,
 including administrator policy denials, stale confirmations, and authenticated
 non-administrator/restricted-account denials at the central guards. It does not
-cover client reporting memberships, other settings, exports, direct Clerk
-dashboard edits, or unapproved role-assignment tools. The approved
+cover client reporting memberships, other settings, or exports. Signed Clerk
+user-update role observations can capture provider-side evidence, including
+updates outside WareIQ, only after each environment's endpoint is configured.
+They do not prove that a dashboard edit occurred. The approved
 `pnpm --filter @workspace/scripts wareiq:role` command is covered, including
 bootstrap grants, revocations, unchanged roles and failed attempts. It starts when this feature is
 installed; it does not backfill earlier activity.
@@ -87,23 +89,105 @@ The original committed intent remains unconfirmed if completion cannot be saved.
 Check current permissions and history before retrying; do not infer that a
 nonzero exit means the role did not change.
 
-## External changes: explicitly outside application history
+## Verified external provider evidence
 
-Direct Clerk dashboard edits and other provider tools do not acquire this
-application's lock or pass through its audit writer. No webhook is installed by
-this feature. The Settings account list is a **current external-state view**:
-it reads present Clerk roles, not historical evidence of who changed them.
-The access-history coverage notice makes this boundary explicit. An unexplained
-current-role difference must not be attributed to an app administrator, assigned
-an invented timestamp, backfilled as a successful attempt, or used to resolve an
-unconfirmed historical attempt. Use separately available provider-side audit
-evidence to investigate external edits. Prefer the approved command for recovery
-so future attempts have application evidence.
+### Provider support and environment readiness
 
-Any future webhook capture must verify its signature, handle replay/delivery
-duplicates and environment routing, retain only allowlisted role data, and label
-the actor unknown/external unless independent evidence identifies the operator.
-An ordinary user-update payload or metadata value alone is not actor evidence.
+Clerk documents `user.updated` webhooks, delivered by Svix with signed raw
+payloads, an event timestamp, instance ID, and a stable `svix-id` across retries.
+Delivery is asynchronous, may be duplicated, and is not ordered. An ordinary
+user-update contains a user snapshot, **not** a before/after role diff or a
+verified dashboard operator identity. Neither public/private metadata nor
+`event_attributes` is independently verified actor evidence for this feature.
+There is no supported causal identifier here linking a webhook to an interrupted
+WareIQ request. We therefore record **observations**, not proven role transitions.
+
+Provider references checked for this implementation:
+- https://clerk.com/docs/guides/development/webhooks/overview
+- https://clerk.com/docs/reference/backend/verify-webhook
+- https://docs.replit.com/features/auth-and-identity/clerk-auth
+
+This project uses Replit-managed Clerk with separate Development and Production
+instances; management access was authorized when checked. Replit-managed internal
+webhook infrastructure does not establish that this application's evidence
+endpoint is subscribed. Readiness inspection found **no** application signing
+secret, pinned instance ID, or environment setting in **either Development or
+Production**. No delivery was attested or configured by this code change, and no
+deployment or provider mutation was made. Until setup is completed, the endpoint
+returns 503 and the existing history remains available. This is not a historical
+backfill or a claim of complete external coverage.
+
+### Endpoint setup, separately in each environment
+
+An authorized owner must configure an application-specific Clerk webhook
+subscription to `user.updated` for the matching Clerk instance. Use the
+Replit-managed Clerk dashboard's environment selector; do not reuse signing
+secrets or instance IDs across environments, and do not modify Replit's internal
+subscriptions. If the managed dashboard does not expose this capability, leave
+capture disabled and resolve that prerequisite rather than substituting
+unsigned ingestion or current-state polling.
+
+Set these server-side values using Replit Secrets/environment settings:
+
+| Environment | Endpoint path | CLERK_WEBHOOK_ENVIRONMENT | Clerk key mode |
+| --- | --- | --- | --- |
+| Development | `/api/webhooks/clerk/development` | `development` | `sk_test_` |
+| Production | `/api/webhooks/clerk/production` | `production` | `sk_live_` |
+
+- `CLERK_WEBHOOK_INSTANCE_ID`: the exact `ins_*` of that environment's instance.
+- `CLERK_WEBHOOK_SIGNING_SECRET`: that endpoint's `whsec_*` signing secret.
+- `CLERK_WEBHOOK_ENVIRONMENT`: the exact environment from the table.
+
+Use the actual matching application's reachable origin plus the path above;
+obtain the published origin from the deployment settings, not the preview URL.
+Apply the application schema before enabling deliveries. Test a delivery and a
+replay in each instance, confirm an administrator sees one observation with the
+correct environment and provider event time, and confirm unrelated requests
+still require their normal session. Never put a secret in a URL, log, or browser.
+This setup is intentionally not auto-enabled from shared secrets. Key mode,
+configured route and signed payload instance ID must all match. Endpoint
+signature verification uses the existing Clerk SDK, including its delivery-time
+tolerance. An old *event* may legitimately arrive with a fresh signed *delivery*
+timestamp during provider retries/replay.
+
+### Evidence, privacy and ordering
+
+`POST /api/webhooks/clerk/:environment` is mounted before cookie authentication,
+same-origin mutation checks, and JSON parsing; **only this exact POST pattern**
+uses signature authentication instead. It accepts raw JSON up to 256 KiB.
+No ordinary Settings/reporting guard is bypassed. Invalid signatures, stale
+delivery timestamps, environment mismatches and instance mismatches never write
+evidence. Configuration and database failures return 503 so delivery can retry;
+duplicates are acknowledged only after the atomic database insert completes.
+
+Only valid `user.updated` snapshots with an allowlisted platform role
+(`admin`, `supervisor`, `unassigned`, or missing/null role meaning unassigned)
+are persisted. Unknown role values and unrelated event types are ignored.
+Malformed user-update evidence is rejected. Records contain only the stable
+target account ID, allowlisted role, event ID, instance ID, routed environment,
+provider event timestamp and server receipt timestamp, plus fixed provenance/
+outcome/reason codes. Payloads, names, emails, arbitrary metadata, attributes,
+signatures and secrets are never stored or logged.
+
+Each observation is a new row with `actorId = external:clerk`, outcome
+`observed`, and reason `provider_role_observed`. The UI says **External provider ·
+actor unknown** and **Provider role observed**, distinct from authenticated
+Settings actors and terminal-attested `operator:*` recovery operators. Old and
+requested roles are unknown. The resulting-role column is a role **observed at
+the provider event time**, not a current authorization decision or confirmation
+of a WareIQ attempt. Webhooks can also reflect Settings/recovery changes;
+unknown provenance must not be labelled as a proven external dashboard edit.
+
+The unique `(environment, instance ID, event ID)` database index deduplicates
+concurrent delivery, process restarts and signed replays. Late events remain
+independent historical evidence: they never overwrite a newer observation,
+mutate permissions, invent a previous role or update/reconcile any earlier
+attempt. The history remains receipt-time newest-first for stable pagination;
+provider event time is displayed separately, so late delivery does not imply
+event order. The current account list remains a separate current-state view.
+Matching current roles or signed snapshots never prove which earlier request
+succeeded. Prefer the approved command for recoveries requiring operator
+attestation. Absence of an observation is not proof that no external edit occurred.
 
 ## Schema and checks
 
@@ -117,6 +201,8 @@ Focused isolated checks (no live Clerk or WMS):
 ```
 pnpm exec vitest run --config vitest.config.ts artifacts/api-server/tests/access-history.test.ts
 pnpm exec vitest run --config vitest.config.ts scripts/src/role-command.test.ts
+pnpm exec vitest run --config vitest.config.ts artifacts/api-server/tests/clerk-events.test.ts artifacts/wareiq/tests/access-history.test.tsx
+pnpm exec vitest run --config vitest.reports.config.ts artifacts/api-server/tests/reports/provider-evidence.test.ts
 pnpm --filter @workspace/scripts run typecheck
 pnpm test:auth:typecheck
 ```

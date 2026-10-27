@@ -7,6 +7,7 @@
  */
 import type { AccessHistoryEntryOutcome } from './accessHistoryEntryOutcome';
 import type { AccessHistoryEntryPreviousRole } from './accessHistoryEntryPreviousRole';
+import type { AccessHistoryEntryProviderEnvironment } from './accessHistoryEntryProviderEnvironment';
 import type { AccessHistoryEntryRequestedRole } from './accessHistoryEntryRequestedRole';
 import type { AccessHistoryEntryResultingRole } from './accessHistoryEntryResultingRole';
 
@@ -24,6 +25,14 @@ export interface AccessHistoryEntry {
   requestedRole: AccessHistoryEntryRequestedRole;
   /** @nullable */
   resultingRole: AccessHistoryEntryResultingRole;
+  /** @nullable */
+  providerEventId?: string | null;
+  /** @nullable */
+  providerInstanceId?: string | null;
+  /** @nullable */
+  providerEnvironment?: AccessHistoryEntryProviderEnvironment;
+  /** @nullable */
+  providerOccurredAt?: string | null;
   outcome: AccessHistoryEntryOutcome;
   reason: string;
 }
