@@ -45,12 +45,19 @@ vi.mock("../../src/lib/logger", () => ({ logger: {} }));
 import app from "../../src/app";
 
 const path = "/api/access/own-reports";
+const importPath = `${path}/import`;
 const definition = {
   section: "inbound",
   dataset: "receipts",
   fields: ["id", "supplier"],
   name: "Same-origin report",
   description: "Created through the full application",
+};
+const importBody = {
+  expectedOwnerId: "owner-a",
+  expectedClientId: "client-a",
+  confirmedOwnership: true,
+  reports: [{ ...definition, name: "Imported report" }],
 };
 const snapshot = async () =>
   (await pool.query("SELECT * FROM wareiq_own_reports ORDER BY id")).rows;
@@ -105,6 +112,15 @@ describe("full-app origin protection for saved reports", () => {
   it.each(rejectedRequests)("blocks POST with %s and preserves every report row", async (_label, options) => {
     const before = await snapshot();
     const response = await mutation("post", path, options).send(definition);
+
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({ error: "A same-origin request is required." });
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it.each(rejectedRequests)("blocks report import with %s and preserves every report row", async (_label, options) => {
+    const before = await snapshot();
+    const response = await mutation("post", importPath, options).send(importBody);
 
     expect(response.status).toBe(403);
     expect(response.body).toEqual({ error: "A same-origin request is required." });
