@@ -9,6 +9,7 @@ Warehouse reporting and product traceability for management, supervisors, and op
 - `pnpm test:auth` — isolated API and UI authorization regressions (no live accounts or WMS)
 - `pnpm test:auth:typecheck` — typecheck authorization test code; see `docs/authorization-regression-tests.md`
 - `pnpm test:reports` — isolated saved-report persistence and storage-failure regressions; see `docs/saved-report-regression-tests.md`
+- `pnpm test:access-history` — opt-in private PostgreSQL audit durability and shared-lock regressions; see `docs/access-history-integration-tests.md`
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
