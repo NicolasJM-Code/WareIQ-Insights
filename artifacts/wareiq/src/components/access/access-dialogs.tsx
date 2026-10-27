@@ -133,8 +133,12 @@ export function UserDialog({ open, onOpenChange, user, dir, onSave }: { open: bo
   const [name, setName] = useState(user?.name ?? '');
   const [clientId, setClientId] = useState(user?.clientId ?? '');
   const [roleId, setRoleId] = useState(user?.roleId ?? '');
-  const [siteIds, setSiteIds] = useState<string[]>(user?.siteIds ?? []);
-  const [primary, setPrimary] = useState<string | null>(user?.primarySiteId ?? null);
+  const availableAssigned = (user?.siteIds ?? []).filter((id) =>
+    dir.sites.some((site) => site.id === id && site.clientId === user?.clientId && site.active));
+  const removedAssignments = (user?.siteIds.length ?? 0) - availableAssigned.length;
+  const [siteIds, setSiteIds] = useState<string[]>(availableAssigned);
+  const [primary, setPrimary] = useState<string | null>(
+    user?.primarySiteId && availableAssigned.includes(user.primarySiteId) ? user.primarySiteId : null);
   const [active, setActive] = useState(user?.active ?? true);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -152,8 +156,8 @@ export function UserDialog({ open, onOpenChange, user, dir, onSave }: { open: bo
     if (!name.trim()) return setErr('Name is required.');
     if (!clientId) return setErr('Choose a client.');
     if (!roleId) return setErr('Choose a role from the selected client.');
-    if (siteIds.length > 0 && !primary) return setErr('Choose a primary site from the selected sites.');
-    if (primary && !siteIds.includes(primary)) return setErr('Primary site must be one of the selected sites.');
+    if (siteIds.length > 0 && !primary) return setErr('Choose a primary warehouse from the selected warehouses.');
+    if (primary && !siteIds.includes(primary)) return setErr('Primary warehouse must be one of the selected warehouses.');
     setBusy(true); setErr(null);
     try { await onSave({ id: user?.id, email: em, name: name.trim(), clientId, roleId, siteIds, primarySiteId: primary, active }); onOpenChange(false); }
     catch (e) { setErr(errorMessage(e)); } finally { setBusy(false); }
@@ -187,11 +191,16 @@ export function UserDialog({ open, onOpenChange, user, dir, onSave }: { open: bo
             </div>
           </div>
           <div>
-            <FieldLabel hint="Imported from WMS only">Sites</FieldLabel>
-            {!clientId ? <p className="text-sm text-muted-foreground">Choose a client to see its sites.</p> : sites.length === 0 ? (
+            <FieldLabel hint="Active warehouses of this client">Warehouses</FieldLabel>
+            {removedAssignments > 0 && clientId === user?.clientId && (
+              <p role="status" className="mb-2 rounded border border-amber-400/40 bg-amber-50 p-2 text-xs text-amber-900">
+                {removedAssignments} inactive or unavailable warehouse assignment(s) will be removed when you save. Choose a primary warehouse from the remaining selections.
+              </p>
+            )}
+            {!clientId ? <p className="text-sm text-muted-foreground">Choose a client to see its warehouses.</p> : sites.length === 0 ? (
               <div className="flex gap-2 rounded-md border border-dashed p-3 text-sm text-muted-foreground">
                 <Info className="h-4 w-4 shrink-0" />
-                <span>No sites have been imported from the WMS for this client yet. You can save this user now as pending; their reports stay blocked until an imported site is assigned.</span>
+                <span>This client has no active warehouses yet. Add one on the Warehouses tab, or save this user now as pending; their reports stay blocked until a warehouse is assigned.</span>
               </div>
             ) : (
               <div className="divide-y rounded-md border">
@@ -206,7 +215,7 @@ export function UserDialog({ open, onOpenChange, user, dir, onSave }: { open: bo
                 ))}
               </div>
             )}
-            {clientId && siteIds.length === 0 && sites.length > 0 && <p className="mt-1.5 text-xs text-muted-foreground">Saved without sites, this user will be pending and blocked from reports.</p>}
+            {clientId && siteIds.length === 0 && sites.length > 0 && <p className="mt-1.5 text-xs text-muted-foreground">Saved without warehouses, this user will be pending and blocked from reports. Users never see unassigned warehouses.</p>}
           </div>
           <label className="flex items-center justify-between rounded-md border p-3">
             <span className="text-sm"><b>Active</b><br /><span className="text-muted-foreground">Disabled users cannot open any report.</span></span>

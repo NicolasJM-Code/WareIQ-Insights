@@ -49,6 +49,24 @@ export interface AccessClient {
   active: boolean;
 }
 
+export interface AccessWarehouseInput {
+  /** @minLength 1 */
+  id?: string;
+  /** @minLength 1 */
+  clientId: string;
+  /**
+     * @minLength 1
+     * @maxLength 100
+     */
+  sourceId: string;
+  /**
+     * @minLength 1
+     * @maxLength 100
+     */
+  name: string;
+  active: boolean;
+}
+
 export interface AccessSite {
   id: string;
   clientId: string;

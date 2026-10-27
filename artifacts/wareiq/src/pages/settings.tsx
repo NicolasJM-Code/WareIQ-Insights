@@ -317,11 +317,11 @@ ALTER ROLE wms_reporting_ro
           <Section icon={Users} title="User roles" aside={<Pill tone="good">Server enforced</Pill>}>
             <p className="text-[12.5px] text-muted-foreground mb-3">Managed sign-in verifies identity. The API checks the current, server-owned account role for every request. New accounts have no access until the application owner assigns a role.</p>
             <table className="w-full text-[12.5px]"><tbody className="divide-y">
-              {[['Platform administrator', 'Client, role and user access management plus settings'], ['Client reporting role', 'Selected reports and optional own-report development, for assigned sites'], ['Unassigned', 'No reporting access until approved for a client and role']].map(([r, d]) => <tr key={r}><td className="py-2 font-medium pr-4">{r}</td><td className="text-muted-foreground">{d}</td></tr>)}
+              {[['Platform administrator', 'Client, role and user access management plus settings'], ['Client reporting role', 'Selected reports and optional own-report development, for assigned warehouses'], ['Unassigned', 'No reporting access until approved for a client and role']].map(([r, d]) => <tr key={r}><td className="py-2 font-medium pr-4">{r}</td><td className="text-muted-foreground">{d}</td></tr>)}
             </tbody></table>
           </Section>
           <Section icon={KeyRound} title="Access permissions">
-            <p className="text-[12.5px] text-muted-foreground">Manage clients, reporting roles, approved login emails and assigned sites in <Link href="/user-access" className="underline text-primary">User access</Link>. Permissions are checked on the server. Sites must be imported from WMS; until then, users may be approved as pending but cannot run reports. Schedules, alerts, and live reporting remain unavailable.</p>
+            <p className="text-[12.5px] text-muted-foreground">Manage clients, reporting roles, approved login emails and assigned warehouses in <Link href="/user-access" className="underline text-primary">User access</Link>. Permissions are checked on the server. Set up a client first, then its warehouses (stored in WareIQ only, no WMS data is changed), then roles and users. Users see only warehouses explicitly assigned to them; without one they stay pending and cannot run reports. Schedules, alerts, and live reporting remain unavailable.</p>
           </Section>
           <Section icon={CalendarClock} title="Report scheduling" aside={<Unavailable />}>
             <p className="text-[12.5px] text-muted-foreground">Scheduled delivery (for example, a 06:00 daily dashboard summary to site managers) needs a server-side scheduler and mail service. Use the CSV buttons on each report for ad-hoc exports in the meantime.</p>

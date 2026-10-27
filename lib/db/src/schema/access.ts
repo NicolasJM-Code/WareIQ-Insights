@@ -13,7 +13,10 @@ export const sitesTable = pgTable("wareiq_sites", {
   sourceId: text("source_id").notNull(),
   name: text("name").notNull(),
   active: boolean("active").notNull().default(true),
-});
+}, (table) => [
+  uniqueIndex("wareiq_site_source_per_client_unique").on(table.clientId, sql`lower(trim(${table.sourceId}))`),
+  uniqueIndex("wareiq_site_name_per_client_unique").on(table.clientId, sql`lower(trim(${table.name}))`),
+]);
 export const rolesTable = pgTable("wareiq_roles", {
   id: text("id").primaryKey(),
   clientId: text("client_id").notNull().references(() => clientsTable.id),

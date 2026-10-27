@@ -6,6 +6,7 @@ import {
   GetAccessSessionResponse, GetAccessAdminResponse,
   SaveAccessClientBody, SaveAccessClientResponse, SaveAccessRoleBody, SaveAccessRoleResponse,
   SaveAccessUserBody, SaveAccessUserResponse, DeleteAccessEntryParams,
+  SaveAccessWarehouseBody, SaveAccessWarehouseResponse,
   SaveAccessOwnReportBody, SaveAccessOwnReportResponse, ListAccessOwnReportsResponse,
   DeleteAccessOwnReportParams, RunAccessReportParams, RunAccessReportBody, RunAccessReportResponse,
 } from "@workspace/api-zod";
@@ -69,6 +70,35 @@ router.post("/access/clients", handler(async (req, res) => {
     : await db.insert(clientsTable).values({ id: randomUUID(), ...values }).returning();
   if (!result) throw new AccessError(404, "Client not found.");
   res.json(SaveAccessClientResponse.parse(result));
+}));
+router.post("/access/warehouses", handler(async (req, res) => {
+  await requireAccessAdmin(req);
+  const input = parsed(SaveAccessWarehouseBody.strict(), req.body);
+  const name = input.name.trim();
+  const sourceId = input.sourceId.trim();
+  if (!name || !sourceId || /[\u0000-\u001f\u007f]/.test(name + sourceId))
+    throw new AccessError(400, "Warehouse name and WMS warehouse code are required and cannot contain control characters.");
+  const result = await db.transaction(async (tx) => {
+    const [client] = await tx.select().from(clientsTable).where(eq(clientsTable.id, input.clientId)).for("update");
+    if (!client) throw new AccessError(400, "Choose an existing client.");
+    if (!input.id && !client.active) throw new AccessError(400, "Enable the client before adding a warehouse.");
+    const values = { name, active: input.active };
+    if (input.id) {
+      const [warehouse] = await tx.select().from(sitesTable).where(eq(sitesTable.id, input.id)).for("update");
+      if (!warehouse) throw new AccessError(404, "Warehouse not found.");
+      // Tenant and source identity are immutable: existing assignments must never
+      // acquire access to a different client's or operational warehouse's records.
+      if (warehouse.clientId !== input.clientId || warehouse.sourceId !== sourceId)
+        throw new AccessError(409, "A warehouse's client and WMS code cannot be changed. Create a separate warehouse instead.");
+      const [updated] = await tx.update(sitesTable).set(values).where(eq(sitesTable.id, warehouse.id)).returning();
+      return updated;
+    }
+    const [created] = await tx.insert(sitesTable).values({
+      id: randomUUID(), clientId: client.id, sourceId, ...values,
+    }).returning();
+    return created;
+  });
+  res.json(SaveAccessWarehouseResponse.parse(result));
 }));
 router.post("/access/roles", handler(async (req, res) => {
   await requireAccessAdmin(req);

@@ -81,6 +81,22 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AccessClient" }
+  /access/warehouses:
+    post:
+      operationId: saveAccessWarehouse
+      summary: Create or update a warehouse within one client
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccessWarehouseInput" }
+      responses:
+        default: { $ref: "#/components/responses/AccessFailure" }
+        "200":
+          description: Saved warehouse configuration; no WMS records modified
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessSite" }
   /access/roles:
     post:
       operationId: saveAccessRole
@@ -306,6 +322,15 @@ components:
       properties:
         id: { type: string }
         name: { type: string }
+        active: { type: boolean }
+    AccessWarehouseInput:
+      type: object
+      required: [clientId, sourceId, name, active]
+      properties:
+        id: { type: string, minLength: 1 }
+        clientId: { type: string, minLength: 1 }
+        sourceId: { type: string, minLength: 1, maxLength: 100 }
+        name: { type: string, minLength: 1, maxLength: 100 }
         active: { type: boolean }
     AccessSite:
       type: object

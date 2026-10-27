@@ -100,6 +100,34 @@ export const SaveAccessClientResponse = zod.object({
 })
 
 
+/**
+ * @summary Create or update a warehouse within one client
+ */
+
+
+export const saveAccessWarehouseBodySourceIdMax = 100;
+
+export const saveAccessWarehouseBodyNameMax = 100;
+
+
+
+export const SaveAccessWarehouseBody = zod.object({
+  "id": zod.string().min(1).optional(),
+  "clientId": zod.string().min(1),
+  "sourceId": zod.string().min(1).max(saveAccessWarehouseBodySourceIdMax),
+  "name": zod.string().min(1).max(saveAccessWarehouseBodyNameMax),
+  "active": zod.boolean()
+})
+
+export const SaveAccessWarehouseResponse = zod.object({
+  "id": zod.string(),
+  "clientId": zod.string(),
+  "sourceId": zod.string(),
+  "name": zod.string(),
+  "active": zod.boolean()
+})
+
+
 export const saveAccessRoleBodyNameMax = 80;
 
 export const saveAccessRoleBodyReportIdsMax = 200;

@@ -4,7 +4,7 @@ WareIQ uses Replit-managed Clerk, not application-managed passwords. New account
 have no reporting access. The first signup is **not** automatically an administrator.
 Trusted Clerk `admin` metadata grants platform administration. Reporting users are
 approved by verified email in **User access**, assigned to one client, a client-specific
-role, and one or more imported WMS sites. Own-report creation is a separate permission.
+role, and one or more explicitly assigned warehouses. Own-report creation is a separate permission.
 The former global `supervisor` role does not bypass these client/site assignments.
 
 ## Establish the first administrator or change a role
@@ -62,9 +62,13 @@ by running the command in development.
 - Logout uses Clerk's session revocation, returns to the public landing page,
   clears cached queries, and unmounts reporting state when the identity changes.
 
-Site and report permissions are enforced server-side. Users may be approved as
-pending without sites, but cannot run reports until real WMS sites are imported
-and assigned. Live report mappings, schedules, alerts and durable audit history
+Warehouse and report permissions are enforced server-side. Set up a client first,
+then add its warehouses under **User access → Warehouses**, then configure roles
+and assign users to selected warehouses. A client may have multiple warehouses.
+Warehouse names and WMS source codes are application configuration, not verified
+imports. Source code and client ownership cannot be changed after creation;
+deactivation removes that warehouse from user access. Users without active
+assignments stay pending. Live report mappings, schedules, alerts and durable audit history
 are not implemented.
 
 ## WMS credential destination approval

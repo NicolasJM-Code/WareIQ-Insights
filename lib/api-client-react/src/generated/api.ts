@@ -36,8 +36,10 @@ import type {
   AccessRunInput,
   AccessRunResult,
   AccessSession,
+  AccessSite,
   AccessUser,
   AccessUserInput,
+  AccessWarehouseInput,
   AuthSession,
   AuthUnavailableResponse,
   ForbiddenResponse,
@@ -548,6 +550,94 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
         TContext
       > => {
       return useMutation(getSaveAccessClientMutationOptions(options), queryClient);
+    }
+
+export const getSaveAccessWarehouseUrl = () => {
+
+
+
+
+  return `/api/access/warehouses`
+}
+
+/**
+ * @summary Create or update a warehouse within one client
+ */
+export const saveAccessWarehouse = async (accessWarehouseInput: AccessWarehouseInput, options?: Parameters<typeof customFetch>[1]): Promise<AccessSite> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AccessSite>(getSaveAccessWarehouseUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(accessWarehouseInput)
+  }
+);}
+
+
+
+
+
+export const getSaveAccessWarehouseMutationKey = () => ['saveAccessWarehouse'] as const;
+
+export const getSaveAccessWarehouseMutationOptions = <TError = ErrorType<AccessFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveAccessWarehouse>>, TError,SaveAccessWarehouseMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof saveAccessWarehouse>>, TError,SaveAccessWarehouseMutationVariables, TContext> => {
+
+const mutationKey = getSaveAccessWarehouseMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveAccessWarehouse>>, SaveAccessWarehouseMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveAccessWarehouse(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveAccessWarehouseMutationResult = NonNullable<Awaited<ReturnType<typeof saveAccessWarehouse>>>
+    export type SaveAccessWarehouseMutationBody = BodyType<AccessWarehouseInput>
+    export type SaveAccessWarehouseMutationError = ErrorType<AccessFailureResponse>
+    export type SaveAccessWarehouseMutationVariables = {data: BodyType<AccessWarehouseInput>}
+
+    /**
+ * @summary Create or update a warehouse within one client
+ */
+export const useSaveAccessWarehouse = <TError = ErrorType<AccessFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveAccessWarehouse>>, TError,SaveAccessWarehouseMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof saveAccessWarehouse>>,
+        TError,
+        SaveAccessWarehouseMutationVariables,
+        TContext
+      > => {
+      return useMutation(getSaveAccessWarehouseMutationOptions(options), queryClient);
     }
 
 export const getSaveAccessRoleUrl = () => {

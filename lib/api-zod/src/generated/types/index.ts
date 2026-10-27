@@ -25,6 +25,7 @@ export * from './accessSessionStatus';
 export * from './accessSite';
 export * from './accessUser';
 export * from './accessUserInput';
+export * from './accessWarehouseInput';
 export * from './authSession';
 export * from './authSessionRole';
 export * from './authUnavailableResponse';
