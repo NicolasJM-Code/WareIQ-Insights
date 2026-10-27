@@ -150,13 +150,16 @@ trades provider availability/latency for prompt revocation.
 
 ### Generated-account cleanup
 
-The runner keeps JWTs only in memory. It writes a mode-0600, git-ignored journal
-under `.cache/clerk-provider/<uuid>.json` containing only its generated user ID,
-email and run marker. The journal path is printed, but provider error details,
-tokens and credentials are not. A shared lifecycle helper uses `finally` to
-delete the generated account (and its sessions) even after application setup,
-journal persistence or assertion failures, then removes the journal. A failure
-is always nonzero, even if cleanup succeeds.
+The runner keeps JWTs only in memory. Before contacting Clerk to create an
+account, it writes a mode-0600, git-ignored intent journal under
+`.cache/clerk-provider/<uuid>.json` containing only the generated email and
+private run marker. After Clerk returns an ID, the runner atomically replaces
+the intent with an ID-scoped record containing the generated user ID, email and
+run marker. The journal path is printed, but provider error details, tokens and
+credentials are not. A shared lifecycle helper uses `finally` to delete only
+the verified generated account (and its sessions) after application setup,
+journal update or assertion failures, then removes the journal. A failure is
+always nonzero, even if cleanup succeeds.
 
 If a process is killed or Clerk is unavailable during teardown, retain the
 journal and rerun **against the same Development instance**:
@@ -167,29 +170,29 @@ CLERK_PROVIDER_CLEANUP_MANIFEST=.cache/clerk-provider/<uuid>.json \
 pnpm test:auth:provider
 ```
 
-Recovery mode does not create accounts or run access checks. It first verifies
-that the account's private run marker and sole generated email match the
-journal, then deletes only that account and removes the journal. Any mismatch
-fails without deletion; do not alter the journal to target another account.
-If the account was already deleted, confirm its absence in Development before
-manually removing the journal. If provider deletion succeeds but journal removal
-fails, the runner explicitly reports that the account **was deleted** and tells
-you to confirm absence and remove the journal manually, not rerun recovery.
+Recovery mode does not create accounts or run access checks. For an ID-scoped
+record, it fetches only that ID and verifies the private run marker and sole
+generated email before deletion. For an intent record, it asks Clerk for users
+matching only the exact generated email, requires exactly one result, and
+verifies that result's private run marker and sole email before saving its ID
+and proceeding with ID-scoped cleanup. If no account matches, it removes the
+intent journal without changing any account. A provider lookup failure, multiple
+matches, or any ownership mismatch fails closed and retains the journal; do not
+edit it to target another account. If an account was already deleted, confirm
+its absence in the same Development instance before manually removing an
+ID-scoped journal. If provider deletion succeeds but journal removal fails, the
+runner explicitly reports that the account **was deleted** and tells you to
+confirm absence and remove the journal manually, not rerun recovery.
 
-If journal persistence fails, access checks never run and cleanup is still
-attempted. If that cleanup also fails, there is no reliable journal for recovery:
-the error identifies the exact generated user ID, email and private run marker
-for manual verification/deletion in the same Development instance. Any partial
-journal must not be used for recovery; remove it after confirming deletion.
-If creation fails before returning an ID (for example, a timed-out response), the
-account's existence is unknown: the error supplies the exact generated email and
-private run marker to check manually before retrying creation. The runner never
-guesses an ID or searches for and deletes accounts on a failed creation.
-
-An abrupt kill between provider creation and journal persistence can still leave
-an unjournaled account without a printed recovery instruction: use Development
-account management to verify the exact generated email/private run marker and
-delete only that fixture. Never bulk-delete or target customer accounts.
+If creation fails before returning an ID (for example, a timed-out response),
+the account's existence is unknown. The prewritten intent journal remains
+available; explicitly run the recovery command above against the same
+Development instance. Recovery checks the exact generated email and private
+marker and never creates a replacement account. An abrupt kill after the
+provider creates the account but before the ID is journaled is handled the same
+way. If exact-email recovery confirms there is no account, it removes the
+orphaned intent record so a later, separate test run can proceed. Never
+bulk-delete or target customer accounts.
 
 No live provider tests are reachable from `vitest.config.ts`; their separate
 config is `vitest.provider.config.ts`. The offline tests import only the shared

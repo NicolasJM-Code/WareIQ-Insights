@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
 export type Manifest = { userId: string; runId: string; email: string };
+type CreationIntent = { state: "intent"; runId: string; email: string };
+type RecoveryRecord = Manifest | CreationIntent;
 type TestUser = {
   id: string;
   privateMetadata: Record<string, unknown>;
@@ -16,9 +18,13 @@ export type ProviderUsers = {
     privateMetadata: { wareiqProviderTest: string };
   }): Promise<TestUser>;
   getUser(id: string): Promise<TestUser>;
+  getUserList(params: {
+    emailAddress: string[];
+    limit: number;
+  }): Promise<{ data: TestUser[]; totalCount: number }>;
   deleteUser(id: string): Promise<unknown>;
 };
-export const journalIO = { mkdir, readFile, unlink, writeFile };
+export const journalIO = { mkdir, readFile, rename, unlink, writeFile };
 type Dependencies = {
   users: ProviderUsers;
   journal?: typeof journalIO;
@@ -42,16 +48,30 @@ export async function provider<T>(label: string, action: () => Promise<T>): Prom
   catch { throw new Error(`Clerk development check failed during ${label}; provider details suppressed.`); }
 }
 
-function parseManifest(text: string): Manifest {
+function parseRecoveryRecord(text: string): RecoveryRecord {
   const value: unknown = JSON.parse(text);
   if (!value || typeof value !== "object") throw new Error("Invalid manifest");
-  const { userId, runId, email } = value as Partial<Manifest>;
-  if (typeof userId !== "string" || !userId
-    || typeof runId !== "string" || !/^[a-f0-9-]+$/.test(runId)
+  const { userId, runId, email, state } = value as Partial<Manifest & CreationIntent>;
+  if (typeof runId !== "string"
+    || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(runId)
     || email !== `wareiq-provider-${runId}@example.com`) {
     throw new Error("Invalid manifest");
   }
-  return { userId, runId, email };
+  if (state === "intent" && userId === undefined) return { state, runId, email };
+  if (state === undefined && typeof userId === "string" && userId)
+    return { userId, runId, email };
+  throw new Error("Invalid manifest");
+}
+
+async function persistManifest(path: string, manifest: Manifest, journal: typeof journalIO) {
+  const temporaryPath = `${path}.${randomUUID()}.tmp`;
+  try {
+    await journal.writeFile(temporaryPath, JSON.stringify(manifest), { mode: 0o600, flag: "wx" });
+    await journal.rename(temporaryPath, path);
+  } catch {
+    try { await journal.unlink(temporaryPath); } catch { /* Preserve the original intent. */ }
+    throw new Error("Cleanup journal update failed; the original intent journal was retained.");
+  }
 }
 
 // Shared by the opt-in live command and the offline fault-injection suite.
@@ -77,11 +97,7 @@ export async function runProviderCheck(
     let deleted = false;
     try {
       const user = await provider("cleanup ownership check", () => users.getUser(manifest!.userId));
-      if (user.id !== manifest.userId
-        || user.privateMetadata.wareiqProviderTest !== manifest.runId
-        || user.emailAddresses.length !== 1
-        || user.emailAddresses[0].emailAddress !== manifest.email
-        || !/^wareiq-provider-[a-f0-9-]+@example\.com$/.test(manifest.email)) {
+      if (!ownsFixture(user, manifest)) {
         throw new Error("Cleanup refused: account does not match this generated test manifest.");
       }
       await provider("generated account deletion", () => users.deleteUser(user.id));
@@ -99,22 +115,57 @@ export async function runProviderCheck(
       }
       const instruction = journalWritten
         ? `Retain ${path}. Retry against the same Development instance with CLERK_PROVIDER_TESTS=isolated-development-only CLERK_PROVIDER_CLEANUP_MANIFEST=${JSON.stringify(path)} pnpm test:auth:provider. If ownership differs, do not alter the journal or delete the account. If already absent, confirm absence before manually removing the journal.`
-        : `No reliable recovery journal was saved. In the same Development instance, locate only generated user ${target.userId}, email ${target.email}, private run marker ${target.runId}; verify all three before manual deletion. Do not run journal recovery or bulk-delete accounts. Remove any partial journal at ${path} only after confirming deletion.`;
+        : `No reliable recovery journal was saved. In the same Development instance, verify only generated user ${target.userId}, email ${target.email}, private run marker ${target.runId} before manual deletion. Do not bulk-delete accounts. Remove any partial journal at ${path} only after confirming deletion.`;
       throw new Error(`Cleanup failed or ownership check refused deletion. ${instruction} Provider details suppressed.`);
     }
   }
 
   try {
     if (recovery) {
-      try { manifest = parseManifest(await journal.readFile(path, "utf8")); }
+      let record: RecoveryRecord;
+      try { record = parseRecoveryRecord(await journal.readFile(path, "utf8")); }
       catch {
         throw new Error("Recovery journal is unreadable or invalid; no provider calls made. Retain the journal and verify the original generated fixture in the same Development instance; do not retarget it.");
       }
       journalWritten = true;
-      return; // finally cleans up; no account creation or access checks.
+      if ("state" in record) {
+        let result: { data: TestUser[]; totalCount: number };
+        try {
+          result = await provider("creation recovery lookup", () =>
+            users.getUserList({ emailAddress: [record.email], limit: 2 }));
+        } catch {
+          throw new Error("Recovery lookup failed; no account was changed. Retain the intent journal and retry explicitly against the same Development instance. Provider details suppressed.");
+        }
+        if (!result || !Array.isArray(result.data) || !Number.isInteger(result.totalCount)) {
+          throw new Error("Recovery refused: provider returned an invalid exact-email result. Retain the intent journal; no account was changed.");
+        }
+        if (result.totalCount === 0 && result.data.length === 0) {
+          try { await journal.unlink(path); }
+          catch {
+            throw new Error(`No account matched the exact generated email. The intent journal could not be removed; confirm absence in the same Development instance, then manually remove ${path}. No account was changed.`);
+          }
+          return;
+        }
+        if (result.totalCount !== 1 || result.data.length !== 1
+          || !ownsFixture(result.data[0], { userId: result.data[0].id, runId: record.runId, email: record.email })) {
+          throw new Error("Recovery refused: the exact generated email did not identify one account with the matching private run marker. Retain the intent journal; no account was changed.");
+        }
+        manifest = { userId: result.data[0].id, runId: record.runId, email: record.email };
+        await persistManifest(path, manifest, journal);
+      } else {
+        manifest = record;
+      }
+      return; // finally performs ID-scoped cleanup; no account creation or access checks.
     }
     await journal.mkdir(dirname(path), { recursive: true, mode: 0o700 });
     const email = `wareiq-provider-${runId}@example.com`;
+    const intent: CreationIntent = { state: "intent", runId, email };
+    try {
+      await journal.writeFile(path, JSON.stringify(intent), { mode: 0o600, flag: "wx" });
+      journalWritten = true;
+    } catch {
+      throw new Error("Development check stopped: private creation intent could not be saved; no provider account was created.");
+    }
     let user: TestUser;
     try {
       user = await provider("disposable account creation", () => users.createUser({
@@ -124,18 +175,27 @@ export async function runProviderCheck(
         privateMetadata: { wareiqProviderTest: runId },
       }));
     } catch {
-      throw new Error(`Account creation did not return an ID; its outcome is unknown. No recovery journal was saved. In the same Development instance, check exact generated email ${email} and private run marker ${runId} before any manual deletion. Do not retry creation until absence is confirmed. Provider details suppressed.`);
+      throw new Error(`Account creation did not return an ID; its outcome is unknown. The private intent journal is ${path}. Explicitly recover it against the same Development instance with CLERK_PROVIDER_TESTS=isolated-development-only CLERK_PROVIDER_CLEANUP_MANIFEST=${JSON.stringify(path)} pnpm test:auth:provider. Recovery checks only exact generated email ${email} and private run marker ${runId}; it never creates another account. Do not retry creation until recovery confirms absence or deletes the verified fixture. Provider details suppressed.`);
     }
     manifest = { userId: user.id, runId, email };
     try {
-      await journal.writeFile(path, JSON.stringify(manifest), { mode: 0o600, flag: "wx" });
-      journalWritten = true;
+      await persistManifest(path, manifest, journal);
     } catch {
-      throw new Error("Development check stopped: cleanup journal persistence failed; provider details suppressed.");
+      throw new Error("Development check stopped: cleanup journal update failed; ID-scoped cleanup was attempted; provider details suppressed.");
     }
     info(`Disposable account cleanup manifest: ${path}`);
     await check(manifest);
   } finally {
     await cleanup();
   }
+}
+
+function ownsFixture(user: TestUser, manifest: Manifest) {
+  return typeof user.id === "string"
+    && user.id.length > 0
+    && user.id === manifest.userId
+    && user.privateMetadata.wareiqProviderTest === manifest.runId
+    && user.emailAddresses.length === 1
+    && user.emailAddresses[0].emailAddress === manifest.email
+    && /^wareiq-provider-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}@example\.com$/.test(manifest.email);
 }

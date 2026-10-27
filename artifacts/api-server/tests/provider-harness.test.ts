@@ -34,6 +34,7 @@ describe("offline provider harness safety", () => {
   let users: {
     createUser: ReturnType<typeof vi.fn<ProviderUsers["createUser"]>>;
     getUser: ReturnType<typeof vi.fn<ProviderUsers["getUser"]>>;
+    getUserList: ReturnType<typeof vi.fn<ProviderUsers["getUserList"]>>;
     deleteUser: ReturnType<typeof vi.fn<ProviderUsers["deleteUser"]>>;
   };
   const check = vi.fn<(manifest: Manifest) => Promise<void>>();
@@ -69,6 +70,10 @@ describe("offline provider harness safety", () => {
         return user;
       }),
       getUser: vi.fn(async () => user),
+      getUserList: vi.fn(async ({ emailAddress }) => ({
+        data: emailAddress.includes(user.emailAddresses[0]?.emailAddress) ? [user] : [],
+        totalCount: emailAddress.includes(user.emailAddresses[0]?.emailAddress) ? 1 : 0,
+      })),
       deleteUser: vi.fn(async () => undefined),
     };
     check.mockReset().mockResolvedValue(undefined);
@@ -101,6 +106,22 @@ describe("offline provider harness safety", () => {
   });
 
   it("creates only a generated fixture, persists a private journal, and deletes after success", async () => {
+    users.createUser.mockImplementation(async (params) => {
+      const intentPath = join(directory, `${params.privateMetadata.wareiqProviderTest}.json`);
+      const intent = JSON.parse(await readFile(intentPath, "utf8"));
+      expect(intent).toEqual({
+        state: "intent",
+        runId: params.privateMetadata.wareiqProviderTest,
+        email: params.emailAddress[0],
+      });
+      expect((await stat(intentPath)).mode & 0o777).toBe(0o600);
+      user = {
+        id: saved.userId,
+        privateMetadata: params.privateMetadata,
+        emailAddresses: params.emailAddress.map((emailAddress) => ({ emailAddress })),
+      };
+      return user;
+    });
     check.mockImplementation(async (manifest) => {
       expect(manifest.email).toBe(`wareiq-provider-${manifest.runId}@example.com`);
       expect(manifest.runId).toMatch(/^[a-f0-9-]{36}$/);
@@ -186,6 +207,153 @@ describe("offline provider harness safety", () => {
     expect(await readdir(directory)).toEqual([]);
   });
 
+  it("recovers an interrupted creation by exact email and marker without creating an account", async () => {
+    const path = join(directory, "interrupted.json");
+    const intent = { state: "intent", runId: saved.runId, email: saved.email };
+    await writeFile(path, JSON.stringify(intent), { mode: 0o600 });
+    const env = { ...safeEnv, CLERK_PROVIDER_CLEANUP_MANIFEST: path };
+    await runProviderCheck(env, dependencies(), check);
+    expect(users.getUserList).toHaveBeenCalledExactlyOnceWith({
+      emailAddress: [saved.email],
+      limit: 2,
+    });
+    expect(users.getUser).toHaveBeenCalledExactlyOnceWith(saved.userId);
+    expect(users.deleteUser).toHaveBeenCalledExactlyOnceWith(saved.userId);
+    expect(users.createUser).not.toHaveBeenCalled();
+    expect(check).not.toHaveBeenCalled();
+    expect(await readdir(directory)).toEqual([]);
+  });
+
+  it("preserves and explicitly recovers the intent after an ambiguous create response", async () => {
+    users.createUser.mockImplementationOnce(async (params) => {
+      user = {
+        id: saved.userId,
+        privateMetadata: params.privateMetadata,
+        emailAddresses: params.emailAddress.map((emailAddress) => ({ emailAddress })),
+      };
+      throw outage();
+    });
+    const message = await failure(runProviderCheck(safeEnv, dependencies(), check));
+    expect(message).toContain("outcome is unknown");
+    expect(message).toContain("CLERK_PROVIDER_CLEANUP_MANIFEST=");
+    expect(users.getUserList).not.toHaveBeenCalled();
+    expect(users.getUser).not.toHaveBeenCalled();
+    expect(users.deleteUser).not.toHaveBeenCalled();
+    expect(check).not.toHaveBeenCalled();
+    const [filename] = await readdir(directory);
+    const path = join(directory, filename);
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
+      state: "intent",
+      runId: users.createUser.mock.calls[0][0].privateMetadata.wareiqProviderTest,
+      email: users.createUser.mock.calls[0][0].emailAddress[0],
+    });
+
+    await runProviderCheck({ ...safeEnv, CLERK_PROVIDER_CLEANUP_MANIFEST: path }, dependencies(), check);
+    expect(users.createUser).toHaveBeenCalledOnce();
+    expect(users.getUserList).toHaveBeenCalledExactlyOnceWith({
+      emailAddress: [users.createUser.mock.calls[0][0].emailAddress[0]],
+      limit: 2,
+    });
+    expect(users.deleteUser).toHaveBeenCalledExactlyOnceWith(saved.userId);
+    expect(check).not.toHaveBeenCalled();
+    expect(await readdir(directory)).toEqual([]);
+  });
+
+  it("recovers when the ID journal replacement fails and ID-scoped cleanup is interrupted", async () => {
+    const failingJournal = {
+      ...journalIO,
+      rename: vi.fn<typeof journalIO.rename>().mockRejectedValue(outage()),
+    };
+    users.getUser.mockRejectedValueOnce(outage());
+    const message = await failure(runProviderCheck(
+      safeEnv,
+      { ...dependencies(), journal: failingJournal, journalDirectory: directory },
+      check,
+    ));
+    expect(message).toContain("Cleanup failed or ownership check refused deletion");
+    const runId = users.createUser.mock.calls[0][0].privateMetadata.wareiqProviderTest;
+    const journalPath = join(directory, `${runId}.json`);
+    expect(JSON.parse(await readFile(journalPath, "utf8"))).toEqual({
+      state: "intent",
+      runId,
+      email: users.createUser.mock.calls[0][0].emailAddress[0],
+    });
+    await runProviderCheck(
+      { ...safeEnv, CLERK_PROVIDER_CLEANUP_MANIFEST: journalPath },
+      dependencies(),
+      check,
+    );
+    expect(users.createUser).toHaveBeenCalledOnce();
+    expect(users.deleteUser).toHaveBeenCalledExactlyOnceWith(saved.userId);
+    expect(check).not.toHaveBeenCalled();
+    expect(await readdir(directory)).toEqual([]);
+  });
+
+  it("removes only an absent intent after an exact recovery lookup returns no account", async () => {
+    const path = join(directory, "absent-intent.json");
+    await writeFile(path, JSON.stringify({ state: "intent", runId: saved.runId, email: saved.email }), { mode: 0o600 });
+    users.getUserList.mockResolvedValueOnce({ data: [], totalCount: 0 });
+    await runProviderCheck({ ...safeEnv, CLERK_PROVIDER_CLEANUP_MANIFEST: path }, dependencies(), check);
+    expect(users.getUserList).toHaveBeenCalledExactlyOnceWith({ emailAddress: [saved.email], limit: 2 });
+    expect(users.deleteUser).not.toHaveBeenCalled();
+    expect(users.createUser).not.toHaveBeenCalled();
+    expect(check).not.toHaveBeenCalled();
+    expect(await readdir(directory)).toEqual([]);
+  });
+
+  it("retains an intent when exact-email recovery cannot reach the provider", async () => {
+    const path = join(directory, "lookup-outage-intent.json");
+    await writeFile(path, JSON.stringify({ state: "intent", runId: saved.runId, email: saved.email }), { mode: 0o600 });
+    users.getUserList.mockRejectedValueOnce(outage());
+    const env = { ...safeEnv, CLERK_PROVIDER_CLEANUP_MANIFEST: path };
+    const message = await failure(runProviderCheck(env, dependencies(), check));
+    expect(message).toContain("Recovery lookup failed");
+    expect(await readFile(path, "utf8")).toContain('"state":"intent"');
+    expect(users.createUser).not.toHaveBeenCalled();
+    expect(users.getUser).not.toHaveBeenCalled();
+    expect(users.deleteUser).not.toHaveBeenCalled();
+    expect(check).not.toHaveBeenCalled();
+
+    await runProviderCheck(env, dependencies(), check);
+    expect(users.deleteUser).toHaveBeenCalledExactlyOnceWith(saved.userId);
+    expect(users.createUser).not.toHaveBeenCalled();
+    expect(check).not.toHaveBeenCalled();
+    expect(await readdir(directory)).toEqual([]);
+  });
+
+  it("retains an intent when the exact-email recovery response is incomplete", async () => {
+    const path = join(directory, "incomplete-result-intent.json");
+    const intent = { state: "intent", runId: saved.runId, email: saved.email };
+    await writeFile(path, JSON.stringify(intent), { mode: 0o600 });
+    users.getUserList.mockResolvedValueOnce({ data: [user], totalCount: undefined } as never);
+    const message = await failure(runProviderCheck(
+      { ...safeEnv, CLERK_PROVIDER_CLEANUP_MANIFEST: path }, dependencies(), check,
+    ));
+    expect(message).toContain("invalid exact-email result");
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual(intent);
+    expect(users.getUser).not.toHaveBeenCalled();
+    expect(users.deleteUser).not.toHaveBeenCalled();
+    expect(users.createUser).not.toHaveBeenCalled();
+    expect(check).not.toHaveBeenCalled();
+  });
+
+  it.each(["wrong marker", "multiple matches"])("retains intent if recovery finds %s", async (issue) => {
+    const path = join(directory, "unverified-intent.json");
+    const intent = { state: "intent", runId: saved.runId, email: saved.email };
+    await writeFile(path, JSON.stringify(intent), { mode: 0o600 });
+    if (issue === "wrong marker") user.privateMetadata.wareiqProviderTest = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";
+    else users.getUserList.mockResolvedValueOnce({ data: [user, user], totalCount: 2 });
+    const message = await failure(runProviderCheck(
+      { ...safeEnv, CLERK_PROVIDER_CLEANUP_MANIFEST: path }, dependencies(), check,
+    ));
+    expect(message).toContain("Recovery refused");
+    expect(users.getUser).not.toHaveBeenCalled();
+    expect(users.deleteUser).not.toHaveBeenCalled();
+    expect(users.createUser).not.toHaveBeenCalled();
+    expect(check).not.toHaveBeenCalled();
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual(intent);
+  });
+
   it.each(["ownership lookup", "deletion"])("retains recovery evidence on provider %s outage, then recovers", async (stage) => {
     const env = await seed();
     const call = stage === "ownership lookup" ? users.getUser : users.deleteUser;
@@ -201,40 +369,56 @@ describe("offline provider harness safety", () => {
     expect(check).not.toHaveBeenCalled();
   });
 
-  it("cleans up after a failed journal write without running application checks", async () => {
-    const journal = { ...journalIO, writeFile: vi.fn<typeof journalIO.writeFile>().mockRejectedValue(outage()) };
+  it("cleans up after a failed journal update without running application checks", async () => {
+    let writes = 0;
+    const journal = {
+      ...journalIO,
+      writeFile: vi.fn<typeof journalIO.writeFile>().mockImplementation(async (...args) => {
+        writes++;
+        if (writes === 1) return journalIO.writeFile(...args);
+        throw outage();
+      }),
+    };
     const message = await failure(runProviderCheck(safeEnv, { ...dependencies(), journal }, check));
-    expect(message).toContain("journal persistence failed");
+    expect(message).toContain("journal update failed");
     expect(users.deleteUser).toHaveBeenCalledExactlyOnceWith(saved.userId);
     expect(check).not.toHaveBeenCalled();
     expect(await readdir(directory)).toEqual([]);
   });
 
-  it("removes a partially written journal after safely deleting the fixture", async () => {
+  it("removes a partially written journal update after safely deleting the fixture", async () => {
+    let writes = 0;
     const journal = {
       ...journalIO,
-      writeFile: vi.fn<typeof journalIO.writeFile>().mockImplementation(async (path) => {
-        await writeFile(path, "{partial");
+      writeFile: vi.fn<typeof journalIO.writeFile>().mockImplementation(async (path, content, options) => {
+        writes++;
+        if (writes === 1) return journalIO.writeFile(path, content, options);
+        await writeFile(path, "{partial", { mode: 0o600, flag: "wx" });
         throw outage();
       }),
     };
     await expect(runProviderCheck(safeEnv, { ...dependencies(), journal }, check))
-      .rejects.toThrow("journal persistence failed");
+      .rejects.toThrow("journal update failed");
     expect(users.deleteUser).toHaveBeenCalledOnce();
     expect(await readdir(directory)).toEqual([]);
   });
 
-  it.each(["lookup", "deletion"])("gives manual exact-fixture instructions if journal write and cleanup %s fail", async (stage) => {
-    const journal = { ...journalIO, writeFile: vi.fn<typeof journalIO.writeFile>().mockRejectedValue(outage()) };
+  it.each(["lookup", "deletion"])("retains intent recovery instructions if journal update and cleanup %s fail", async (stage) => {
+    let writes = 0;
+    const journal = {
+      ...journalIO,
+      writeFile: vi.fn<typeof journalIO.writeFile>().mockImplementation(async (...args) => {
+        writes++;
+        if (writes === 1) return journalIO.writeFile(...args);
+        throw outage();
+      }),
+    };
     if (stage === "lookup") users.getUser.mockRejectedValue(outage());
     else users.deleteUser.mockRejectedValue(outage());
     const message = await failure(runProviderCheck(safeEnv, { ...dependencies(), journal }, check));
-    expect(message).toContain("No reliable recovery journal was saved");
-    expect(message).toContain(saved.userId);
-    expect(message).toContain(user.emailAddresses[0].emailAddress);
-    expect(message).toContain(user.privateMetadata.wareiqProviderTest);
-    expect(message).toContain("Do not run journal recovery");
-    expect(message).not.toContain("CLERK_PROVIDER_CLEANUP_MANIFEST=");
+    expect(message).toContain("Retain ");
+    expect(message).toContain("CLERK_PROVIDER_CLEANUP_MANIFEST=");
+    expect(message).toContain("same Development instance");
     expect(users.deleteUser).toHaveBeenCalledTimes(stage === "lookup" ? 0 : 1);
     expect(check).not.toHaveBeenCalled();
   });
@@ -274,14 +458,20 @@ describe("offline provider harness safety", () => {
     users.createUser.mockRejectedValue(outage());
     const message = await failure(runProviderCheck(safeEnv, dependencies(), check));
     expect(message).toContain("outcome is unknown");
-    expect(message).toContain("No recovery journal was saved");
+    expect(message).toContain("private intent journal");
+    expect(message).toContain("Explicitly recover");
     expect(message).toContain(users.createUser.mock.calls[0][0].emailAddress[0]);
     expect(message).toContain(users.createUser.mock.calls[0][0].privateMetadata.wareiqProviderTest);
-    expect(message).toContain("Do not retry creation until absence is confirmed");
+    expect(message).toContain("Do not retry creation until recovery confirms absence or deletes the verified fixture");
     expect(users.getUser).not.toHaveBeenCalled();
     expect(users.deleteUser).not.toHaveBeenCalled();
     expect(check).not.toHaveBeenCalled();
-    expect(await readdir(directory)).toEqual([]);
+    const [file] = await readdir(directory);
+    expect(JSON.parse(await readFile(join(directory, file), "utf8"))).toEqual({
+      state: "intent",
+      runId: users.createUser.mock.calls[0][0].privateMetadata.wareiqProviderTest,
+      email: users.createUser.mock.calls[0][0].emailAddress[0],
+    });
   });
 
   it("retains a normal run's journal when setup and teardown both fail", async () => {
