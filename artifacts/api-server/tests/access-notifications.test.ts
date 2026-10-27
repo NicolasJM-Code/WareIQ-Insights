@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import express from "express";
+import request from "supertest";
 import { reportingChangeNotices } from "../src/lib/reporting-notification-change";
 import { notificationMessage, notificationSender } from "../src/lib/access-notification-message";
 import { changeRole } from "../src/lib/role-management";
 
 const mocks = vi.hoisted(() => ({
   query: vi.fn(), poolQuery: vi.fn(), release: vi.fn(), send: vi.fn(), getUser: vi.fn(),
-  insert: vi.fn(), update: vi.fn(), warn: vi.fn(), summaryQuery: vi.fn(),
+  insert: vi.fn(), update: vi.fn(), select: vi.fn(), warn: vi.fn(), summaryQuery: vi.fn(),
+  authUserId: null as string | null,
 }));
 vi.mock("@workspace/db", async () => ({
   ...(await import("../../../lib/db/src/schema")),
@@ -14,12 +17,15 @@ vi.mock("@workspace/db", async () => ({
     query: (sql: string, ...params: unknown[]) =>
       sql.includes("count(*) FILTER") ? mocks.summaryQuery(sql, ...params) : mocks.poolQuery(sql, ...params),
   },
-  db: { insert: mocks.insert, update: mocks.update },
+  db: { insert: mocks.insert, update: mocks.update, select: mocks.select },
 }));
 vi.mock("@replit/connectors-sdk", () => ({
   ReplitConnectors: class { createProxyFetch() { return mocks.send; } },
 }));
-vi.mock("@clerk/express", () => ({ clerkClient: { users: { getUser: mocks.getUser } } }));
+vi.mock("@clerk/express", () => ({
+  getAuth: () => ({ userId: mocks.authUserId }),
+  clerkClient: { users: { getUser: mocks.getUser } },
+}));
 vi.mock("../src/lib/role-lock", () => ({ withRoleLock: async (fn: () => Promise<unknown>) => fn() }));
 vi.mock("../src/lib/logger", () => ({ logger: { warn: mocks.warn } }));
 
@@ -28,6 +34,10 @@ import {
   queueAccessNotifications, retryAllowed, retryConfirmedFailedAccessNotification,
   preparePlatformNotification, confirmPlatformNotification,
 } from "../src/lib/access-notifications";
+import accessRouter from "../src/routes/access";
+
+const accessApp = express();
+accessApp.use("/api", accessRouter);
 
 const member = {
   email: "account@example.test", active: true, roleId: "role-a", clientId: "client-a",
@@ -128,6 +138,11 @@ describe("durable delivery and duplicate protection", () => {
     mocks.summaryQuery.mockResolvedValue({ rows: [] });
     mocks.query.mockImplementation(async (sql: string) => ({ rows: sql.startsWith("SELECT *") ? [{ ...job }] : [] }));
     mocks.send.mockResolvedValue({ ok: true, json: async () => ({ id: "provider-email-id" }) });
+    mocks.authUserId = null;
+    mocks.getUser.mockReset();
+    mocks.select.mockImplementation(() => ({
+      from: () => ({ orderBy: async () => [] }),
+    }));
   });
   it("exposes only aggregate delivery counts to administrator views", async () => {
     mocks.summaryQuery.mockResolvedValue({ rows: [{
@@ -166,6 +181,51 @@ describe("durable delivery and duplicate protection", () => {
     expect(params).toEqual([90, 500]);
     expect(statement).not.toMatch(/state\s+IN\s*\([^)]*pending/i);
     expect(statement).not.toMatch(/state\s+IN\s*\([^)]*failed/i);
+  });
+  it("denies delivery-summary access to signed-out and non-admin users", async () => {
+    expect((await request(accessApp).get("/api/access/admin")).status).toBe(401);
+
+    mocks.authUserId = "regular-user";
+    mocks.getUser.mockResolvedValue({
+      publicMetadata: { role: "supervisor" }, banned: false, locked: false,
+      primaryEmailAddressId: "primary",
+      emailAddresses: [{ id: "primary", emailAddress: "user@example.test", verification: { status: "verified" } }],
+    });
+    expect((await request(accessApp).get("/api/access/admin")).status).toBe(403);
+
+    mocks.authUserId = "unverified-admin";
+    mocks.getUser.mockResolvedValue({
+      publicMetadata: { role: "admin" }, banned: false, locked: false,
+      primaryEmailAddressId: "primary",
+      emailAddresses: [{ id: "primary", emailAddress: "admin@example.test", verification: { status: "unverified" } }],
+    });
+    expect((await request(accessApp).get("/api/access/admin")).status).toBe(403);
+    expect(mocks.select).not.toHaveBeenCalled();
+    expect(mocks.summaryQuery).not.toHaveBeenCalled();
+  });
+  it("returns only aggregate delivery fields to a verified administrator", async () => {
+    mocks.authUserId = "admin-user";
+    mocks.getUser.mockResolvedValue({
+      publicMetadata: { role: "admin" }, banned: false, locked: false,
+      primaryEmailAddressId: "primary",
+      emailAddresses: [{ id: "primary", emailAddress: "admin@example.test", verification: { status: "verified" } }],
+    });
+    mocks.summaryQuery.mockResolvedValue({
+      rows: [{ queued: "2", retrying: "1", accepted: "4", failed: "3" }],
+    });
+
+    const response = await request(accessApp).get("/api/access/admin");
+
+    expect(response.status).toBe(200);
+    expect(response.body.notificationSummary).toEqual({
+      status: "available", queued: 2, retrying: 1, accepted: 4, failed: 3,
+    });
+    expect(Object.keys(response.body.notificationSummary).sort()).toEqual([
+      "accepted", "failed", "queued", "retrying", "status",
+    ]);
+    expect(JSON.stringify(response.body.notificationSummary)).not.toMatch(
+      /recipient|role.?name|notification.?id|provider|admin@example\.test/i,
+    );
   });
   it("commits an attempt before sending and uses a stable provider idempotency key across retries", async () => {
     await deliverAccessNotifications();
