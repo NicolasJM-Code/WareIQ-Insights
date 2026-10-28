@@ -53,13 +53,20 @@ const definition = {
   name: "Same-origin report",
   description: "Created through the full application",
 };
+const inventoryDefinition = {
+  section: "inventory",
+  dataset: "stock",
+  fields: ["sku", "name"],
+  name: "Same-origin inventory report",
+  description: "Created through the full application",
+};
 const importBody = {
   expectedOwnerId: "owner-a",
   expectedClientId: "client-a",
   confirmedOwnership: true,
   reports: [
     { ...definition, name: "Imported report A" },
-    { ...definition, name: "Imported report B" },
+    { ...inventoryDefinition, name: "Imported report B" },
     { ...definition, name: "Imported report C" },
   ],
 };
@@ -103,7 +110,8 @@ beforeEach(async () => {
     TRUNCATE wareiq_own_reports, wareiq_members, wareiq_sites, wareiq_roles, wareiq_clients;
     INSERT INTO wareiq_clients VALUES ('client-a', 'Synthetic A', true), ('client-b', 'Synthetic B', true);
     INSERT INTO wareiq_sites VALUES ('site-a', 'client-a', 'test', 'Synthetic site', true);
-    INSERT INTO wareiq_roles VALUES ('role-a', 'client-a', 'Builder', ARRAY['inbound-1'], true, ARRAY['inbound']);
+    INSERT INTO wareiq_roles VALUES ('role-a', 'client-a', 'Builder',
+      ARRAY['inbound-1', 'inventory-1'], true, ARRAY['inbound', 'inventory']);
     INSERT INTO wareiq_members VALUES ('member-a', 'reporter@example.test', 'Synthetic reporter',
       'client-a', 'role-a', ARRAY['site-a'], 'site-a', true);
   `);
