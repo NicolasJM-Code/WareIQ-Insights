@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { Pool } from "pg";
 import { SQL } from "drizzle-orm";
 import { getTableConfig, PgDialect } from "drizzle-orm/pg-core";
-import { accessHistoryTable, captureDiagnosticsTable } from "@workspace/db/schema";
+import { accessHistoryTable, accessNotificationsTable, captureDiagnosticsTable } from "@workspace/db/schema";
 
 // No caller-provided URL, path, PG* variable or application/WMS credential is
 // accepted. Every connection, including children, uses this private Unix socket.
@@ -46,8 +46,8 @@ export class PrivateDatabase {
       this.run("initdb", ["-D", this.data, "-U", "audit_test",
         "--auth-local=trust", "--auth-host=reject", "--no-locale"]);
       this.startPostgres();
-      // Render the actual history schema, not a second handwritten table.
-      for (const table of [accessHistoryTable, captureDiagnosticsTable]) {
+      // Render the actual production schemas, not handwritten test tables.
+      for (const table of [accessHistoryTable, captureDiagnosticsTable, accessNotificationsTable]) {
       const config = getTableConfig(table);
       const dialect = new PgDialect();
       const quote = (s: string) => `"${s.replaceAll('"', '""')}"`;
@@ -62,15 +62,18 @@ export class PrivateDatabase {
             definition += ` DEFAULT ${query.sql}`;
           } else if (typeof column.default === "string") {
             definition += ` DEFAULT '${column.default.replaceAll("'", "''")}'`;
-          } else throw new Error("Unsupported history schema default");
+          } else if (typeof column.default === "number" && Number.isFinite(column.default)) {
+            definition += ` DEFAULT ${column.default}`;
+          } else if (typeof column.default === "boolean") {
+            definition += ` DEFAULT ${column.default}`;
+          } else throw new Error("Unsupported production schema default");
         }
         return definition;
       });
       const primaryKeys = config.primaryKeys.map((key) =>
         `PRIMARY KEY (${key.columns.map((column) => quote(column.name)).join(", ")})`);
       await this.pool.query(`CREATE TABLE ${quote(config.name)} (${[...columns, ...primaryKeys].join(", ")})`);
-      // The production provider writer uses ON CONFLICT on this key. Render
-      // unique indexes too, otherwise valid captures falsely look like failures.
+      // Render unique indexes used by production writers.
       for (const index of config.indexes.filter((entry) => entry.config.unique)) {
         const names = index.config.columns.map((column) => {
           if (!("name" in column) || typeof column.name !== "string") throw new Error("Unsupported unique index expression");
