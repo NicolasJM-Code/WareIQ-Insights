@@ -10,13 +10,17 @@ type Entry = {
   requestedRole: string; resultingRole: string | null; outcome: string;
   reason: string; finishedAt: string | null; createdAt: string;
 };
-type Message = { event: string; id?: string; page?: { entries: Entry[] } };
+type Cursor = { beforeTime: string; beforeId: string };
+type Page = { entries: Entry[]; nextCursor: Cursor | null };
+type Message = { event: string; id?: string; page?: Page };
 const database = new PrivateDatabase();
 const children: ChildProcess[] = [];
 const tsx = createRequire(new URL("../../../scripts/package.json", import.meta.url)).resolve("tsx");
 
-function launch(kind: Kind | "history", fault = "") {
-  const child = fork(fileURLToPath(new URL("./worker.ts", import.meta.url)), [kind, fault], {
+function launch(kind: Kind | "history", fault = "", cursor?: Cursor) {
+  const child = fork(fileURLToPath(new URL("./worker.ts", import.meta.url)), [
+    kind, fault, JSON.stringify(cursor ?? null),
+  ], {
     execArgv: ["--import", tsx],
     // Never inherit secrets or PG connection overrides into the worker.
     env: { NODE_ENV: "test", DATABASE_URL: database.connectionString },
@@ -40,11 +44,16 @@ function launch(kind: Kind | "history", fault = "") {
   return { child, messages, wait, exited, release: () => child.send({ resume: true }) };
 }
 
-async function history() {
-  const reader = launch("history");
+async function historyPage(cursor?: Cursor) {
+  const reader = launch("history", "", cursor);
   const message = await reader.wait("history");
   await reader.exited;
-  return message.page!.entries;
+  expect(reader.child.exitCode).toBe(0);
+  return message.page!;
+}
+
+async function history() {
+  return (await historyPage()).entries;
 }
 
 async function pending(worker: ReturnType<typeof launch>, kind: Kind) {
@@ -82,6 +91,62 @@ afterEach(async () => {
   await database.pool.query("DROP TRIGGER IF EXISTS reject_finish ON access_change_history");
 });
 afterAll(() => database.stop());
+
+it("resumes cursor pagination without missing or duplicated history after PostgreSQL recovery", async () => {
+  // Insert IDs in ascending order, opposite the required descending tie-break.
+  // Both page boundaries lie inside timestamp ties (32 newer + 31 older rows).
+  const fixtures = Array.from({ length: 63 }, (_, index) => ({
+    id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    createdAt: index < 32 ? "2026-01-02T12:00:00.123Z" : "2026-01-01T12:00:00.456Z",
+    finishedAt: "2026-01-03T12:00:00.789Z",
+  }));
+  await database.pool.query(`
+    INSERT INTO access_change_history
+      (id, created_at, finished_at, actor_id, target_id, previous_role,
+       requested_role, resulting_role, outcome, reason)
+    SELECT id::uuid, created_at::timestamptz, finished_at::timestamptz,
+      'operator:pagination-fixture', 'user_synthetic', 'unassigned',
+      'supervisor', 'supervisor', 'succeeded', 'confirmed'
+    FROM jsonb_to_recordset($1::jsonb)
+      AS fixture(id text, created_at text, finished_at text)`,
+  [JSON.stringify(fixtures.map((row) => ({
+    id: row.id, created_at: row.createdAt, finished_at: row.finishedAt,
+  })))]);
+  // Independently derive the expected order and exact timestamps, rather than
+  // using another call to the pagination implementation as the oracle.
+  const expected = [...fixtures].sort((a, b) =>
+    b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
+  const identity = (entry: Entry) => ({
+    id: entry.id, createdAt: entry.createdAt, finishedAt: entry.finishedAt,
+  });
+  const first = await historyPage();
+  expect(first.entries.map(identity)).toEqual(expected.slice(0, 25));
+  const savedCursor = {
+    beforeTime: expected[24]!.createdAt, beforeId: expected[24]!.id,
+  };
+  expect(first.nextCursor).toEqual(savedCursor);
+
+  const recoveryLog = await database.crashAndRestart();
+  expect(recoveryLog).toContain("database system was interrupted");
+  expect(recoveryLog).toContain("automatic recovery in progress");
+  expect(await historyPage()).toEqual(first);
+
+  // Replay the pre-crash cursor twice. Each page comes from a fresh application
+  // process, so no old pool or in-memory cursor state can conceal lost evidence.
+  for (let replay = 0; replay < 2; replay++) {
+    const second = await historyPage(savedCursor);
+    expect(second.entries.map(identity)).toEqual(expected.slice(25, 50));
+    expect(second.nextCursor).toEqual({
+      beforeTime: expected[49]!.createdAt, beforeId: expected[49]!.id,
+    });
+    const third = await historyPage(second.nextCursor!);
+    expect(third.entries.map(identity)).toEqual(expected.slice(50));
+    expect(third.nextCursor).toBeNull();
+    const all = [...first.entries, ...second.entries, ...third.entries];
+    expect(all.map(identity)).toEqual(expected);
+    expect(new Set(all.map((entry) => entry.id)).size).toBe(fixtures.length);
+  }
+});
 
 it.each<Kind>(["api", "command"])("%s shares the advisory lock with the other entry point", async (kind) => {
   const first = launch(kind);

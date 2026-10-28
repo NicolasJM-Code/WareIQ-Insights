@@ -32,7 +32,9 @@ const fakeUsers = {
 
 try {
   if (kind === "history") {
-    process.send?.({ event: "history", page: await accessHistoryPage() });
+    const cursor = JSON.parse(process.argv[4] ?? "null") as
+      { beforeTime: string; beforeId: string } | null;
+    process.send?.({ event: "history", page: await accessHistoryPage(cursor ?? undefined) });
   } else {
     // Only observe the committed ID; all writes and locking are production code.
     const store = {
