@@ -1,6 +1,10 @@
 services:
   mysql: &mysql
     image: mysql:8.4
+    labels:
+      com.wareiq.mysql-tls.fixture: "true"
+      com.wareiq.mysql-tls.owner-pid: "${WMS_MYSQL_TLS_FIXTURE_PID:?fixture pid is required}"
+      com.wareiq.mysql-tls.fixture-dir: "${WMS_MYSQL_TLS_FIXTURE_DIR:?fixture directory is required}"
     environment:
       MYSQL_ROOT_PASSWORD: disposable-fixture-root-password
     command:
