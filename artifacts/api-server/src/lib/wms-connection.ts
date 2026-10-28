@@ -78,30 +78,98 @@ function reportingPassword(input: WmsConnectionInput): string {
   return password;
 }
 
-async function publicAddress(host: string): Promise<string> {
+export type WmsAddressResolver = (host: string) => Promise<Array<{ address: string; family: number }>>;
+
+const privateNetworkBlocks = [
+  ipaddr.parseCIDR("10.0.0.0/8"),
+  ipaddr.parseCIDR("172.16.0.0/12"),
+  ipaddr.parseCIDR("192.168.0.0/16"),
+  ipaddr.parseCIDR("fc00::/7"),
+];
+
+function privateNetworkPolicy(env: NodeJS.ProcessEnv) {
+  const enabledValue = env.WMS_PRIVATE_NETWORK_ENABLED;
+  if (enabledValue !== undefined && enabledValue !== "true" && enabledValue !== "false")
+    throw new ConnectionFailure("NETWORK_POLICY_INVALID",
+      "The private network setting must be explicitly true or false. An owner must configure it on the server.");
+  if (enabledValue !== "true") return { enabled: false, networks: [] as ReturnType<typeof ipaddr.parseCIDR>[] };
+
+  const entries = env.WMS_PRIVATE_NETWORK_CIDRS?.split(",").map((entry) => entry.trim());
+  if (!entries?.length || entries.length > 64 || entries.some((entry) => !entry))
+    throw new ConnectionFailure("PRIVATE_NETWORK_NOT_CONFIGURED",
+      "Private WMS networking requires approved private CIDR ranges configured by an owner on the server.");
+  try {
+    const networks = entries.map((entry) => ipaddr.parseCIDR(entry));
+    const onlyPrivateRanges = networks.every(([network, prefix]) =>
+      privateNetworkBlocks.some(([privateNetwork, privatePrefix]) =>
+        network.kind() === privateNetwork.kind() &&
+        prefix >= privatePrefix &&
+        network.match(privateNetwork, privatePrefix),
+      ),
+    );
+    if (!onlyPrivateRanges) throw new Error("CIDR outside private address space");
+    return { enabled: true, networks };
+  } catch {
+    throw new ConnectionFailure("NETWORK_POLICY_INVALID",
+      "The approved private network policy is invalid. Configure only RFC1918 IPv4 or IPv6 unique-local CIDR ranges on the server.");
+  }
+}
+
+async function approvedAddress(
+  host: string,
+  env: NodeJS.ProcessEnv,
+  resolver: WmsAddressResolver,
+): Promise<string> {
+  const policy = privateNetworkPolicy(env);
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const addresses = await Promise.race([
-      lookup(host, { all: true }),
+      resolver(host),
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new ConnectionFailure("TIMEOUT", "Hostname lookup timed out.")), 5000);
       }),
     ]);
-    // Pin the resolved address to avoid DNS rebinding / internal network probes.
-    if (!addresses.length || addresses.some(({ address }) => ipaddr.process(address).range() !== "unicast"))
-      throw new ConnectionFailure("HOST_NOT_ALLOWED", "This test supports publicly routable database addresses only. Private networks require a separately approved server-side network configuration.");
-    return addresses[0].address;
+    if (!addresses.length)
+      throw new ConnectionFailure("HOST_NOT_ALLOWED", "The database hostname has no approved network addresses.");
+    let parsedAddresses: Array<{ address: string; range: string; parsed: ReturnType<typeof ipaddr.process> }>;
+    try {
+      parsedAddresses = addresses.map(({ address }) => {
+        const parsed = ipaddr.process(address);
+        return { address: parsed.toString(), range: parsed.range(), parsed };
+      });
+    } catch {
+      throw new ConnectionFailure("HOST_NOT_ALLOWED", "The database hostname returned an invalid network address.");
+    }
+
+    // Accept an all-public answer set by default, or an all-private set inside
+    // the explicit owner-approved CIDRs. Reject mixed sets and pin the selected
+    // numeric address so the PostgreSQL driver cannot perform another DNS lookup.
+    if (parsedAddresses.every(({ range }) => range === "unicast"))
+      return parsedAddresses[0].address;
+    const allPrivateAndApproved = policy.enabled && parsedAddresses.every(({ parsed, range }) =>
+      (range === "private" || range === "uniqueLocal") &&
+      policy.networks.some(([network, prefix]) =>
+        parsed.kind() === network.kind() && parsed.match(network, prefix),
+      ),
+    );
+    if (allPrivateAndApproved) return parsedAddresses[0].address;
+    throw new ConnectionFailure("HOST_NOT_ALLOWED",
+      "This WMS address is outside the server-approved network policy. Private VPN addresses require explicit server configuration, and every DNS answer must match it.");
   } finally {
     clearTimeout(timer);
   }
 }
 
-export async function testConnection(input: WmsConnectionInput): Promise<WmsConnectionResult> {
+export async function testConnection(
+  input: WmsConnectionInput,
+  dependencies: { resolveHost?: WmsAddressResolver } = {},
+): Promise<WmsConnectionResult> {
   let pool: pg.Pool | undefined;
   let client: pg.PoolClient | undefined;
   try {
     const password = reportingPassword(input);
-    const address = await publicAddress(input.host);
+    const address = await approvedAddress(input.host, process.env,
+      dependencies.resolveHost ?? ((host) => lookup(host, { all: true })));
     const timeout = Math.min(input.queryTimeoutSec * 1000, 15000);
     pool = new pg.Pool({
       host: address, port: input.port, database: input.database, user: input.username, password,

@@ -122,3 +122,40 @@ Explicit approval settings must be complete; mismatches and missing approval
 fail before DNS lookup or creating a PostgreSQL pool. Changing browser fields
 does not approve a new endpoint. Owners must make destination changes securely
 on the server; do not disable TLS verification to make a test pass.
+
+## WMS network reachability
+
+Network reachability is configured outside WareIQ. A successful connection test
+does not create a firewall exception, static egress address, VPN, or private route.
+
+- **WMS firewall allowlisting:** the API runtime must have a fixed outbound IP,
+  and the WMS owner must allowlist that source address and PostgreSQL port. Replit
+  documents that its Autoscale and Reserved VM deployments do not provide a
+  static outbound egress IP. Use a hosting/network setup that supplies fixed
+  egress if the WMS requires source-IP allowlisting; do not assume this Repl has
+  a stable IP. See [Replit deployment types](https://docs.replit.com/features/publishing/deployment-types)
+  and [Replit deployments](https://docs.replit.com/learn/projects-and-artifacts/replit-deployments).
+- **Existing VPN/private route:** the application cannot create a VPN or route.
+  Replit's published documentation does not describe attaching a deployment to
+  a private VPN/VPC route. A private WMS address is reachable only if the runtime
+  already has a route provisioned by its hosting/network environment and the
+  WMS firewall permits it.
+- **Opt-in private destination policy:** public unicast DNS results remain the
+  default. To allow a private VPN endpoint, an owner must set server-only
+  `WMS_PRIVATE_NETWORK_ENABLED=true` and `WMS_PRIVATE_NETWORK_CIDRS` to a
+  comma-separated list of the smallest required RFC1918 IPv4 or IPv6 unique-local
+  CIDR ranges, for example `10.40.0.0/16,fd42:1234::/48`. Private ranges are
+  rejected unless both settings are valid. The policy rejects public, loopback,
+  link-local, reserved, carrier-grade NAT, and other non-private ranges in this
+  list; CIDRs broader than the private address blocks are invalid.
+- The browser cannot set these controls. The test first checks that host, port,
+  database, and username match server approval, resolves the approved hostname
+  once, and connects to the selected numeric address. Every DNS result must be
+  public unicast or every result must be inside the approved private ranges;
+  mixed public/private and any out-of-policy result are rejected. TLS continues
+  to verify the original approved hostname, and connection timeout, read-only
+  role checks, and sanitized errors remain enforced.
+
+If Replit or the selected hosting environment does not provide the required
+source IP or private route, these settings do not create it. Arrange deployment
+networking and the customer's firewall/VPN access separately before testing.

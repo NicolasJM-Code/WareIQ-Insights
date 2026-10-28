@@ -275,6 +275,15 @@ export default function Settings() {
                   <li><span className="font-semibold">5. Safe errors.</span> Users see actionable, sanitized messages. Passwords, connection strings and raw SQL errors are never logged.</li>
                 </ol>
               </Section>
+              <Section icon={Server} title="Deployment network access">
+                <div className="space-y-3 text-[12.5px]">
+                  <p><span className="font-semibold">Fixed outbound IP allowlisting.</span> Run the API in an environment that provides a fixed outbound IP, then have the WMS owner allowlist that IP in the database firewall. Replit deployments do not provide a static outbound IP, so this Repl cannot supply one.</p>
+                  <p><span className="font-semibold">Existing private VPN route.</span> The app cannot create a VPN or private route. Replit documents no deployment option for attaching one; this works only in a runtime where the network route is already established outside the app. An owner must then set these server-only values:</p>
+                  <pre className="rounded bg-muted p-2.5 font-mono text-[11px] leading-relaxed overflow-x-auto">WMS_PRIVATE_NETWORK_ENABLED=true{'\n'}WMS_PRIVATE_NETWORK_CIDRS=10.40.0.0/16,fd42:1234::/48</pre>
+                  <p>Use only the specific RFC1918 IPv4 or IPv6 unique-local ranges routed to the WMS. Every DNS answer must be inside the same approved private policy; mixed public/private or out-of-range answers are rejected. The test pins the resolved IP and still verifies TLS against the approved hostname.</p>
+                  <p className="text-muted-foreground">The approved host, port, database and username must still match the server configuration. Firewall rules, fixed-egress infrastructure and VPN routes are configured outside WareIQ.</p>
+                </div>
+              </Section>
               <Section icon={Database} title="Example read-only role">
                 <pre className="rounded bg-muted p-2.5 font-mono text-[11px] leading-relaxed overflow-x-auto whitespace-pre">{`CREATE ROLE wms_reporting_ro LOGIN;
 GRANT CONNECT ON DATABASE wms_prod

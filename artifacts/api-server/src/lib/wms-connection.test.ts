@@ -8,8 +8,9 @@ const input = { host: "8.8.8.8", port: 5432, database: "wms", schema: "reporting
   username: "reporter", sslMode: "verify-full" as const, queryTimeoutSec: 30 };
 const originalPool = pg.Pool;
 const destinationKeys = ["WMS_APPROVED_HOST", "WMS_APPROVED_PORT", "WMS_APPROVED_DATABASE", "WMS_APPROVED_USERNAME"] as const;
-const secretKeys = ["WMS_PGPASSWORD", "WMS_DATABASE_URL", "WMS_CA_CERT", ...destinationKeys] as const;
-let saved: Partial<Record<typeof secretKeys[number], string | undefined>>;
+const envKeys = ["WMS_PGPASSWORD", "WMS_DATABASE_URL", "WMS_CA_CERT", ...destinationKeys,
+  "WMS_PRIVATE_NETWORK_ENABLED", "WMS_PRIVATE_NETWORK_CIDRS"] as const;
+let saved: Partial<Record<typeof envKeys[number], string | undefined>>;
 let configuration: pg.PoolConfig | undefined;
 let queries: string[];
 let released: boolean;
@@ -31,8 +32,8 @@ class FakePool {
 }
 
 beforeEach(() => {
-  saved = Object.fromEntries(secretKeys.map((key) => [key, process.env[key]]));
-  for (const key of secretKeys) delete process.env[key];
+  saved = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+  for (const key of envKeys) delete process.env[key];
   process.env.WMS_PGPASSWORD = "unit-test-placeholder-not-a-real-password";
   process.env.WMS_APPROVED_HOST = input.host;
   process.env.WMS_APPROVED_PORT = String(input.port);
@@ -45,7 +46,7 @@ beforeEach(() => {
 
 afterEach(() => {
   pg.Pool = originalPool;
-  for (const key of secretKeys) {
+  for (const key of envKeys) {
     if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key];
   }
 });
@@ -83,12 +84,82 @@ test("missing schema access and missing reporting views cannot pass", async () =
   assert.equal((await testConnection(input)).code, "REPORTING_VIEWS_REQUIRED");
 });
 
-test("private and loopback destinations are rejected before opening a pool", async () => {
+test("private and loopback destinations stay blocked by default before opening a pool", async () => {
   for (const host of ["127.0.0.1", "10.0.0.1", "169.254.169.254"]) {
     process.env.WMS_APPROVED_HOST = host;
-    assert.equal((await testConnection({ ...input, host })).code, "HOST_NOT_ALLOWED");
+    assert.equal((await testConnection({ ...input, host }, {
+      resolveHost: async () => [{ address: host, family: 4 }],
+    })).code, "HOST_NOT_ALLOWED");
     assert.equal(configuration, undefined);
   }
+});
+
+test("explicit private-network policy permits and pins only approved private VPN addresses", async () => {
+  const host = "wms-db.vpn.example";
+  process.env.WMS_APPROVED_HOST = host;
+  process.env.WMS_PRIVATE_NETWORK_ENABLED = "true";
+  process.env.WMS_PRIVATE_NETWORK_CIDRS = "10.40.0.0/16,fd42:1234::/48";
+  const result = await testConnection({ ...input, host }, {
+    resolveHost: async (resolvedHost) => {
+      assert.equal(resolvedHost, host);
+      return [
+        { address: "10.40.12.34", family: 4 },
+        { address: "fd42:1234::9", family: 6 },
+      ];
+    },
+  });
+  assert.equal(result.status, "connected");
+  assert.equal(configuration?.host, "10.40.12.34", "the driver receives a pinned numeric address, not a hostname");
+  assert.equal((configuration?.ssl as { servername: string }).servername, host, "TLS still verifies the approved hostname");
+});
+
+test("private mode refuses missing or unsafe network ranges before DNS lookup", async () => {
+  process.env.WMS_PRIVATE_NETWORK_ENABLED = "true";
+  for (const cidrs of [undefined, "", "0.0.0.0/0", "10.0.0.0/7", "127.0.0.0/8",
+    "100.64.0.0/10", "fc00::/6", "not-a-cidr"]) {
+    if (cidrs === undefined) delete process.env.WMS_PRIVATE_NETWORK_CIDRS;
+    else process.env.WMS_PRIVATE_NETWORK_CIDRS = cidrs;
+    let lookups = 0;
+    const result = await testConnection(input, {
+      resolveHost: async () => { lookups += 1; return [{ address: "10.40.1.4", family: 4 }]; },
+    });
+    assert.equal(result.code, cidrs === undefined || cidrs === "" ? "PRIVATE_NETWORK_NOT_CONFIGURED" : "NETWORK_POLICY_INVALID");
+    assert.equal(lookups, 0);
+    assert.equal(configuration, undefined);
+  }
+});
+
+test("private mode rejects mixed and out-of-policy DNS answer sets", async () => {
+  process.env.WMS_PRIVATE_NETWORK_ENABLED = "true";
+  process.env.WMS_PRIVATE_NETWORK_CIDRS = "10.40.0.0/16";
+  for (const addresses of [
+    ["10.40.1.1", "10.41.1.1"],
+    ["10.40.1.1", "8.8.8.8"],
+    ["10.40.1.1", "127.0.0.1"],
+  ]) {
+    const result = await testConnection(input, {
+      resolveHost: async () => addresses.map((address) => ({ address, family: 4 })),
+    });
+    assert.equal(result.code, "HOST_NOT_ALLOWED");
+    assert.equal(configuration, undefined, "no PostgreSQL pool is opened for a mixed or unapproved answer");
+  }
+});
+
+test("DNS answers are resolved once and the approved address stays pinned", async () => {
+  const host = "wms-db.vpn.example";
+  process.env.WMS_APPROVED_HOST = host;
+  process.env.WMS_PRIVATE_NETWORK_ENABLED = "true";
+  process.env.WMS_PRIVATE_NETWORK_CIDRS = "10.40.0.0/16";
+  let lookups = 0;
+  const result = await testConnection({ ...input, host }, {
+    resolveHost: async () => {
+      lookups += 1;
+      return [{ address: lookups === 1 ? "10.40.5.8" : "10.41.5.8", family: 4 }];
+    },
+  });
+  assert.equal(result.status, "connected");
+  assert.equal(lookups, 1);
+  assert.equal(configuration?.host, "10.40.5.8");
 });
 
 test("missing or malformed server-side credentials fail without network activity", async () => {
