@@ -25,3 +25,14 @@ state after its caller has already finalized the attempt as failed.
 **How to apply:** Record asynchronous connection failure immediately, check it
 before accepting the callback result or transaction commit, and discard the
 failed connection. Keep uncertain outcomes distinct from confirmed success.
+
+Callbacks that finalize evidence through a different database connection must
+check lock health themselves before committing that evidence.
+
+**Why:** The outer lock helper can reject correctly but too late: an inner
+transaction may already have committed a confirmed outcome after losing the lock.
+
+**How to apply:** Pass a lock-health assertion into callbacks with independent
+transactions, and check it after provider awaits and before final evidence writes.
+Keep the durable attempt time and provider idempotency key when rolling back an
+uncertain delivery.

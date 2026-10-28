@@ -66,7 +66,7 @@ export const accessAuditStore: AccessAuditStore & {
 };
 
 // Shared by Settings and the owner-operated recovery command. Never WMS.
-export async function withRoleLock<T>(operation: () => Promise<T>): Promise<T> {
+export async function withRoleLock<T>(operation: (assertConnected: () => void) => Promise<T>): Promise<T> {
   const connection = await pool.connect();
   let connectionError: Error | undefined;
   // Checked-out clients have no pool error listener. PostgreSQL can disconnect
@@ -83,7 +83,7 @@ export async function withRoleLock<T>(operation: () => Promise<T>): Promise<T> {
     assertConnected();
     // Let dispatched work settle: rejecting a race cannot cancel a provider
     // write and would leave that callback running after its caller has failed.
-    const result = await operation();
+    const result = await operation(assertConnected);
     assertConnected();
     await connection.query("COMMIT");
     assertConnected();

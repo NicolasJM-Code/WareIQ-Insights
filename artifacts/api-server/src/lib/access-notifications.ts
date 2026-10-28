@@ -338,9 +338,10 @@ export async function deliverAccessNotifications(): Promise<void> {
     await connection.query("COMMIT");
     // Concurrent workers may reclaim after two minutes. They use the same key.
     try {
-      const deliver = async () => {
+      const deliver = async (assertRoleLockConnected: () => void = () => undefined) => {
         if (row.kind === "vpn_outage" || row.kind === "vpn_recovery") {
           const user = await clerkClient.users.getUser(row.target_id!);
+          assertRoleLockConnected();
           const email = user.emailAddresses.find((e) => e.id === user.primaryEmailAddressId);
           if (appRole(user.publicMetadata.role) !== "admin" || user.banned || user.locked ||
               !verifiedPrimaryEmail(user) || email?.emailAddress !== row.recipient) {
@@ -350,6 +351,7 @@ export async function deliverAccessNotifications(): Promise<void> {
         }
         if (row.kind === "platform") {
           const user = await clerkClient.users.getUser(row.target_id!);
+          assertRoleLockConnected();
           if (user.privateMetadata.wareiqRoleNotificationId !== row.id ||
               user.publicMetadata.role !== row.platform_role) {
             await connection.query("BEGIN");
@@ -374,6 +376,7 @@ export async function deliverAccessNotifications(): Promise<void> {
           await connection.query("COMMIT");
           return;
         }
+        assertRoleLockConnected();
         const response = await connectors.createProxyFetch("resend")("https://api.resend.com/emails", {
           method: "POST",
           headers: { "Content-Type": "application/json", "Idempotency-Key": `wareiq-access/${row.id}` },
@@ -381,12 +384,17 @@ export async function deliverAccessNotifications(): Promise<void> {
             ...notificationMessage(row.kind, row.role_name) }),
           signal: AbortSignal.timeout(15_000),
         });
+        // The role lock uses a different connection from this outbox row.
+        // Its loss must abort this transaction before a provider result can
+        // become confirmed evidence, not merely reject after we commit it.
+        assertRoleLockConnected();
         if (!response.ok) {
           if (response.status >= 400 && response.status < 500 && response.status !== 408) {
             await connection.query(
               "UPDATE wareiq_access_notifications SET state = 'confirmed_failed' WHERE id = $1 AND state = 'pending'",
               [row.id],
             );
+            assertRoleLockConnected();
             await connection.query("COMMIT");
             logger.warn({ event: "access_notification_provider_rejected" }, "Access email was rejected by the provider");
             return;
@@ -394,8 +402,10 @@ export async function deliverAccessNotifications(): Promise<void> {
           throw new Error("Delivery rejected");
         }
         const result = await response.json() as { id?: string };
+        assertRoleLockConnected();
         if (!result.id) throw new Error("Delivery not confirmed");
         await connection.query("UPDATE wareiq_access_notifications SET state = 'sent' WHERE id = $1", [row.id]);
+        assertRoleLockConnected();
         await connection.query("COMMIT");
       };
       if (row.kind === "platform" || row.kind === "vpn_outage" || row.kind === "vpn_recovery") await withRoleLock(deliver);

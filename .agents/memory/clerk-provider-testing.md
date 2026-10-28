@@ -9,6 +9,19 @@ Do not equate a bare `__session` cookie with a complete signed-in development br
 
 **How to apply:** Keep provider-token checks distinct from browser sign-in/handshake checks. When adding another transport, prove a valid request works through that transport before asserting denial of altered, expired, or revoked credentials.
 
+## Credential-free Clerk substitutes
+
+When replacing Clerk in an offline subprocess, verify the replacement persists
+across repeated property reads without introducing a credential.
+
+**Why:** The credential-free Express client proxy can create a fresh backend
+client on each property read and reject direct property assignment. Replacing a
+method on a temporary client does not necessarily replace the production boundary.
+
+**How to apply:** Inspect the installed proxy before choosing a substitute and
+require a successful dispatch control. Never fix an offline substitute by passing
+real Clerk credentials into the subprocess.
+
 ## Ambiguous fixture creation
 
 Treat a failed account-creation response without a returned ID as an unknown outcome, not proof that nothing was created. Do not automatically retry creation or guess an account to delete.
