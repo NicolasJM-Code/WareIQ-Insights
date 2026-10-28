@@ -241,6 +241,30 @@ describe("full-app origin protection for saved reports", () => {
     }
   });
 
+  it.each([
+    ["owner", { expectedOwnerId: "stale-owner" }],
+    ["client", { expectedClientId: "client-b" }],
+  ] as const)("rejects a same-origin import preview with a stale %s and preserves every report", async (_label, staleContext) => {
+    const before = await snapshot();
+    const response = await mutation("post", importPath, {
+      origin: "https://wareiq.test",
+      fetchSite: "same-origin",
+    }).send({
+      ...importBody,
+      ...staleContext,
+      reports: importBody.reports.map((report) => ({
+        ...report,
+        name: `Stale preview ${report.name}`,
+      })),
+    });
+
+    expect(response.status).toBe(409);
+    expect(response.body).toEqual({
+      error: "Your account or client changed. Close the import and preview again.",
+    });
+    expect(await snapshot()).toEqual(before);
+  });
+
   it("rejects a conflicting same-origin batch without persisting any reports", async () => {
     const before = await snapshot();
     const response = await mutation("post", importPath, {
