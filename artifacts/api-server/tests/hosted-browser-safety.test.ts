@@ -1,5 +1,8 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { createKeyPairAttestation } from "../provider-tests/harness";
 
 const fake = vi.hoisted(() => ({
@@ -12,7 +15,8 @@ vi.mock("@clerk/express", () => ({
     createUser: fake.createUser, getUser: fake.getUser, getUserList: fake.getUserList, deleteUser: fake.deleteUser,
   } },
 }));
-vi.mock("node:fs/promises", () => ({
+vi.mock("node:fs/promises", async importOriginal => ({
+  ...await importOriginal<typeof import("node:fs/promises")>(),
   writeFile: fake.writeFile, mkdir: fake.mkdir, readFile: fake.readFile, rename: fake.rename, unlink: fake.unlink,
 }));
 
@@ -316,3 +320,182 @@ it("selects the longer two-tab outage only through its dedicated live command", 
   expect(offline).not.toContain("browser-tests");
   expect(offline).not.toContain("multitab");
 });
+
+it.each([
+  ["ticket", "artifacts/api-server/browser-tests/clerk.test.ts"],
+  ["hosted", "artifacts/api-server/browser-tests/hosted.test.ts"],
+])("stops the %s runner on missing or stale attestations before startup", async (runner, entrypoint) => {
+  const workspaceRoot = resolve(process.cwd());
+  const tempRoot = join(workspaceRoot, "tmp");
+  await mkdir(tempRoot, { recursive: true });
+  const directory = await mkdtemp(join(tempRoot, "wareiq-browser-entrypoint-"));
+  const configPath = join(directory, "vitest.config.ts");
+  const setupPath = join(directory, "setup.ts");
+  const networkBlockerPath = join(directory, "block-network.cjs");
+  const fakePlaywrightPath = join(directory, "fake-playwright.ts");
+  const fakeVitePath = join(directory, "fake-vite.ts");
+  const fakeReactPath = join(directory, "fake-react.ts");
+  const fakeClerkPath = join(directory, "fake-clerk.ts");
+  const blockedAppPath = join(directory, "blocked-app.ts");
+  const sideEffectLog = join(directory, "side-effects.jsonl");
+  const journalPath = join(workspaceRoot, ".cache/clerk-browser/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa.json");
+  const browserOptIn = runner === "ticket"
+    ? { CLERK_BROWSER_TESTS: "isolated-development-only" }
+    : { CLERK_HOSTED_TESTS: "isolated-development-only" };
+
+  try {
+    writeFileSync(networkBlockerPath, networkBlockerModule);
+    writeFileSync(fakePlaywrightPath, fakeModule("playwright.launch"));
+    writeFileSync(fakeVitePath, fakeModule("vite.createServer"));
+    writeFileSync(fakeReactPath, `
+import { appendFileSync } from "node:fs";
+export default () => {
+  appendFileSync(process.env.WAREIQ_BROWSER_SIDE_EFFECT_LOG!, "react.plugin\\\\n");
+  return {};
+};
+`);
+    writeFileSync(fakeClerkPath, `
+import { appendFileSync } from "node:fs";
+function called(name: string) {
+  appendFileSync(process.env.WAREIQ_BROWSER_SIDE_EFFECT_LOG!, name + "\\\\n");
+  throw new Error("fake Clerk call");
+}
+export const clerkClient = {
+  users: {
+    createUser: () => called("clerk.users.createUser"),
+    getUser: () => called("clerk.users.getUser"),
+    getUserList: () => called("clerk.users.getUserList"),
+    deleteUser: () => called("clerk.users.deleteUser"),
+  },
+  sessions: {
+    revokeSession: () => called("clerk.sessions.revokeSession"),
+  },
+  signInTokens: {
+    createSignInToken: () => called("clerk.signInTokens.createSignInToken"),
+  },
+};
+`);
+    writeFileSync(blockedAppPath, `
+import { appendFileSync } from "node:fs";
+appendFileSync(process.env.WAREIQ_BROWSER_SIDE_EFFECT_LOG!, "app.import\\\\n");
+throw new Error("FORBIDDEN_BROWSER_APP_IMPORT");
+export default {};
+`);
+    writeFileSync(setupPath, `
+import { appendFileSync } from "node:fs";
+import { vi } from "vitest";
+const record = (name: string) => appendFileSync(process.env.WAREIQ_BROWSER_SIDE_EFFECT_LOG!, name + "\\\\n");
+vi.mock("node:fs/promises", () => ({
+  mkdir: async (...args: unknown[]) => { record("journal.mkdir"); throw new Error("fake journal"); },
+  readFile: async (...args: unknown[]) => { record("journal.readFile"); throw new Error("fake journal"); },
+  writeFile: async (...args: unknown[]) => { record("journal.writeFile"); throw new Error("fake journal"); },
+  rename: async (...args: unknown[]) => { record("journal.rename"); throw new Error("fake journal"); },
+  unlink: async (...args: unknown[]) => { record("journal.unlink"); throw new Error("fake journal"); },
+}));
+`);
+    writeFileSync(configPath, `
+import { defineConfig } from "vitest/config";
+export default defineConfig({
+  plugins: [{
+    name: "block-browser-app-imports",
+    enforce: "pre",
+    resolveId(source) {
+      if (source.includes("../src/app") || source.includes("../src/routes")) return ${JSON.stringify(blockedAppPath)};
+      return null;
+    },
+  }],
+  resolve: { alias: [
+    { find: "playwright", replacement: ${JSON.stringify(fakePlaywrightPath)} },
+    { find: "vite", replacement: ${JSON.stringify(fakeVitePath)} },
+    { find: "@vitejs/plugin-react", replacement: ${JSON.stringify(fakeReactPath)} },
+    { find: "@clerk/express", replacement: ${JSON.stringify(fakeClerkPath)} },
+  ] },
+  test: {
+    environment: "node",
+    include: [${JSON.stringify(entrypoint)}],
+    setupFiles: [${JSON.stringify(setupPath)}],
+    fileParallelism: false,
+  },
+});
+`);
+
+    for (const attestation of ["missing", "stale"] as const) {
+      const validPairSecret = "sk_test_synthetic_original";
+      const currentSecret = attestation === "stale" ? "sk_test_synthetic_changed" : validPairSecret;
+      const currentPublishable = "pk_test_synthetic";
+      const result = spawnSync(process.execPath, [
+        join(workspaceRoot, "node_modules/vitest/vitest.mjs"),
+        "run", "--config", configPath, "--root", workspaceRoot, "--reporter=verbose",
+      ], {
+        cwd: workspaceRoot,
+        env: {
+          PATH: process.env.PATH,
+          HOME: directory,
+          TMPDIR: directory,
+          NODE_OPTIONS: `--require=${networkBlockerPath}`,
+          NODE_ENV: "test",
+          CLERK_SECRET_KEY: currentSecret,
+          CLERK_PUBLISHABLE_KEY: currentPublishable,
+          CLERK_PROVIDER_KEY_PAIR_ATTESTATION: attestation === "missing"
+            ? ""
+            : createKeyPairAttestation(validPairSecret, currentPublishable),
+          CLERK_BROWSER_CLEANUP_MANIFEST: journalPath,
+          WAREIQ_BROWSER_SIDE_EFFECT_LOG: sideEffectLog,
+          ...browserOptIn,
+        },
+        encoding: "utf8",
+        timeout: 45_000,
+      });
+      const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+      expect(result.error, output).toBeUndefined();
+      expect(result.status, output).not.toBe(0);
+      expect(output).toContain("local pairing attestation");
+      expect(output).not.toContain("FORBIDDEN_BROWSER_APP_IMPORT");
+      expect(output).not.toContain("FORBIDDEN_OFFLINE_NETWORK");
+      expect(existsSync(sideEffectLog), `${runner} ${attestation} attestation caused a startup side effect`)
+        .toBe(false);
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 120_000);
+
+const networkBlockerModule = `
+const net = require("node:net");
+const tls = require("node:tls");
+const http = require("node:http");
+const https = require("node:https");
+const forbidden = () => { throw new Error("FORBIDDEN_OFFLINE_NETWORK"); };
+const localOnly = (original) => function (...args) {
+  const parameters = Array.isArray(args[0]) ? args[0] : args;
+  const options = parameters[0];
+  const host = typeof options === "object" && options !== null
+    ? options.host ?? options.hostname
+    : typeof parameters[1] === "string" ? parameters[1] : undefined;
+  const port = typeof options === "object" && options !== null ? options.port
+    : typeof options === "number" ? options : undefined;
+  if (!["localhost", "127.0.0.1", "::1"].includes(host) || Number(port) === 1) return forbidden();
+  return Reflect.apply(original, this, args);
+};
+net.connect = localOnly(net.connect);
+net.createConnection = localOnly(net.createConnection);
+net.Socket.prototype.connect = localOnly(net.Socket.prototype.connect);
+tls.connect = forbidden;
+http.request = localOnly(http.request);
+http.get = localOnly(http.get);
+https.request = forbidden;
+https.get = forbidden;
+globalThis.fetch = forbidden;
+`;
+
+function fakeModule(event: string) {
+  return `
+import { appendFileSync } from "node:fs";
+const called = () => {
+  appendFileSync(process.env.WAREIQ_BROWSER_SIDE_EFFECT_LOG!, ${JSON.stringify(event + "\\n")});
+  throw new Error("fake browser startup");
+};
+export const chromium = { launch: called };
+export const createServer = called;
+`;
+}
