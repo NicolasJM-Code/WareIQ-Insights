@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
+import { PgDialect } from "drizzle-orm/pg-core";
 
 const provider = vi.hoisted(() => ({
   userId: "reporter-a",
@@ -38,7 +39,7 @@ vi.mock("pino-http", () => ({
 }));
 vi.mock("../../src/lib/logger", () => ({ logger: {} }));
 
-import { clientsTable, membersTable, rolesTable, sitesTable } from "@workspace/db/schema";
+import { clientsTable, membersTable, ownReportsTable, rolesTable, sitesTable } from "@workspace/db/schema";
 import app from "../../src/app";
 
 const member = {
@@ -49,6 +50,11 @@ const member = {
   siteIds: ["site-a"],
   primarySiteId: "site-a",
   active: true,
+};
+const otherMember = {
+  ...member,
+  email: "reporter-b@example.test",
+  name: "Synthetic second reporter",
 };
 const client = {
   id: "client-a",
@@ -68,7 +74,8 @@ const role = {
   clientId: "client-a",
   name: "Synthetic reporter",
   reportIds: ["inbound-1"],
-  canCreateOwnReports: false,
+  ownReportSections: ["inbound"],
+  canCreateOwnReports: true,
   active: true,
 };
 const site = {
@@ -78,11 +85,34 @@ const site = {
   name: "Synthetic site",
   active: true,
 };
-const path = "/api/access/reports/inbound-1/run";
 const body = { siteId: "site-a" };
+const privateReports = [
+  {
+    id: "another-owner-report",
+    ownerId: "reporter-a",
+    clientId: "client-a",
+    definition: { section: "inbound", dataset: "receipts", fields: ["id"], name: "Private to reporter A" },
+  },
+  {
+    id: "another-client-report",
+    ownerId: "reporter-a",
+    clientId: "client-b",
+    definition: { section: "inbound", dataset: "receipts", fields: ["id"], name: "Private to client B" },
+  },
+  {
+    id: "reporter-a-report",
+    ownerId: "reporter-a",
+    clientId: "client-a",
+    definition: { section: "inbound", dataset: "receipts", fields: ["id"], name: "Reporter A report" },
+  },
+];
+const emailByUserId: Record<string, string> = {
+  "reporter-a": member.email,
+  "reporter-b": otherMember.email,
+};
 
-function runRequest(options: { origin?: string; fetchSite?: string } = {}) {
-  let req = request(app).post(path)
+function runRequest(options: { origin?: string; fetchSite?: string; reportId?: string } = {}) {
+  let req = request(app).post(`/api/access/reports/${options.reportId ?? "inbound-1"}/run`)
     .set("Host", "wareiq.test")
     .set("X-Forwarded-Proto", "https");
   if (options.origin !== undefined) req = req.set("Origin", options.origin);
@@ -92,25 +122,44 @@ function runRequest(options: { origin?: string; fetchSite?: string } = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  provider.getUser.mockResolvedValue({
+  provider.userId = "reporter-a";
+  provider.sessionId = "session-a";
+  provider.getUser.mockImplementation(async () => ({
     banned: false,
     locked: false,
     publicMetadata: {},
     primaryEmailAddressId: "verified",
     emailAddresses: [{
       id: "verified",
-      emailAddress: "reporter@example.test",
+      emailAddress: emailByUserId[provider.userId] ?? member.email,
       verification: { status: "verified" },
     }],
-  });
-  provider.getSession.mockResolvedValue({ status: "active", userId: provider.userId });
+  }));
+  provider.getSession.mockImplementation(async () => ({ status: "active", userId: provider.userId }));
   database.select.mockImplementation(() => ({
     from: (table: unknown) => ({
-      where: async () => {
-        if (table === membersTable) return [member];
+      where: async (condition: Parameters<PgDialect["sqlToQuery"]>[0]) => {
+        if (table === membersTable) {
+          const email = emailByUserId[provider.userId] ?? member.email;
+          return [member, otherMember].filter((candidate) => candidate.email === email);
+        }
         if (table === clientsTable) return [client];
         if (table === rolesTable) return [role];
         if (table === sitesTable) return [site];
+        if (table === ownReportsTable) {
+          const query = new PgDialect().sqlToQuery(condition);
+          const constraints = new Map<string, unknown>();
+          for (const match of query.sql.matchAll(/"[^"]+"\."([^"]+)"\s*=\s*\$(\d+)/g)) {
+            constraints.set(match[1], query.params[Number(match[2]) - 1]);
+          }
+          const rowValues: Record<string, (row: typeof privateReports[number]) => unknown> = {
+            id: (row) => row.id,
+            owner_id: (row) => row.ownerId,
+            client_id: (row) => row.clientId,
+          };
+          return privateReports.filter((row) => [...constraints].every(([column, value]) =>
+            !rowValues[column] || rowValues[column](row) === value));
+        }
         throw new Error("Unexpected database table in isolated report-run security test");
       },
     }),
@@ -144,6 +193,47 @@ describe("full-app origin protection for report runs", () => {
     expect(provider.getSession).toHaveBeenCalledOnce();
     expect(provider.getUser).toHaveBeenCalledOnce();
     expect(database.select).toHaveBeenCalledTimes(4);
+    expect(poolConstructor).not.toHaveBeenCalled();
+  });
+
+  it("denies another user from running the report owner's personal report", async () => {
+    provider.userId = "reporter-b";
+
+    const response = await runRequest({
+      reportId: "another-owner-report",
+      origin: "https://wareiq.test",
+      fetchSite: "same-origin",
+    });
+
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({ error: "Your role does not grant access to this report." });
+    expect(poolConstructor).not.toHaveBeenCalled();
+  });
+
+  it("denies an owner from running their personal report under another client", async () => {
+    const response = await runRequest({
+      reportId: "another-client-report",
+      origin: "https://wareiq.test",
+      fetchSite: "same-origin",
+    });
+
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({ error: "Your role does not grant access to this report." });
+    expect(poolConstructor).not.toHaveBeenCalled();
+  });
+
+  it("allows an eligible owner to run their own report without opening a WMS connection", async () => {
+    const response = await runRequest({
+      reportId: "reporter-a-report",
+      origin: "https://wareiq.test",
+      fetchSite: "same-origin",
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ status: "not_connected" });
+    expect(provider.getSession).toHaveBeenCalledOnce();
+    expect(provider.getUser).toHaveBeenCalledOnce();
+    expect(database.select).toHaveBeenCalledTimes(5);
     expect(poolConstructor).not.toHaveBeenCalled();
   });
 });
