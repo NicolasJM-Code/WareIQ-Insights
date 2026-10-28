@@ -20,9 +20,37 @@ export type CaptureDiagnostic = {
   attemptedAt: Date;
 } | null | "unavailable";
 
+// A total storage outage can prevent even the pending marker from committing.
+// Retain that authenticated failure in this process, scoped independently of
+// signing-key rotation. This is not evidence of persistence across app restarts.
+let attemptSequence = 0;
+const processDeliveries = new Map<string, { sequence: number; failure: CaptureDiagnostic }>();
+function processScope(configuration: Configuration) {
+  return JSON.stringify([configuration.environment, configuration.instanceId]);
+}
+export function beginProcessCaptureDelivery(configuration: Configuration) {
+  const key = processScope(configuration);
+  const sequence = ++attemptSequence;
+  const attemptedAt = new Date();
+  return (succeeded: boolean) => {
+    const previous = processDeliveries.get(key);
+    // A delayed completion must not erase a newer failure or restore an older
+    // warning after a later delivery has succeeded.
+    if (previous && previous.sequence > sequence) return;
+    processDeliveries.set(key, {
+      sequence, failure: succeeded ? null : { status: "failed", attemptedAt },
+    });
+  };
+}
+
 export function captureReadiness(
   configuration: Configuration, lastVerifiedDeliveryAt: string | null, diagnostic: CaptureDiagnostic = null,
 ) {
+  // Historical durable success cannot disprove a later failure which storage
+  // was unable to record. Only a subsequent completed delivery clears it here.
+  if (diagnostic !== "unavailable") {
+    diagnostic = processDeliveries.get(processScope(configuration))?.failure ?? diagnostic;
+  }
   return {
     configuration: configuration.configured ? "configured" as const : "not_configured" as const,
     signing: configuration.signing ? "configured" as const : "not_configured" as const,

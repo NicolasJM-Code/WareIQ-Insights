@@ -1,7 +1,7 @@
 import { Router, raw, type ErrorRequestHandler, type IRouter } from "express";
 import { verifyWebhook } from "@clerk/express/webhooks";
 import { recordProviderRoleObservation } from "@workspace/db/access-audit";
-import { captureConfiguration } from "../lib/capture-readiness";
+import { beginProcessCaptureDelivery, captureConfiguration } from "../lib/capture-readiness";
 import { beginCaptureDelivery, finishCaptureDelivery } from "@workspace/db/capture-diagnostics";
 
 const router: IRouter = Router();
@@ -61,6 +61,7 @@ router.post("/webhooks/clerk/:environment", raw({ type: "application/json", limi
     return;
   }
   const scope = { environment: environment as "development" | "production", instanceId: instanceId! };
+  const finishProcessDelivery = beginProcessCaptureDelivery(configuration);
   let attemptId: string | undefined;
   try {
     attemptId = await beginCaptureDelivery(scope);
@@ -71,8 +72,10 @@ router.post("/webhooks/clerk/:environment", raw({ type: "application/json", limi
       role: role == null ? "unassigned" : role,
     });
     await finishCaptureDelivery(scope, attemptId, true);
+    finishProcessDelivery(true);
     res.sendStatus(204);
   } catch {
+    finishProcessDelivery(false);
     // If the database is unavailable the committed pending marker survives.
     // Do not let a failed diagnostics write acknowledge the provider delivery.
     if (attemptId) await finishCaptureDelivery(scope, attemptId, false).catch(() => undefined);

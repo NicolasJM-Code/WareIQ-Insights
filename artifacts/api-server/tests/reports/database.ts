@@ -10,6 +10,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { getTableConfig, PgDialect } from "drizzle-orm/pg-core";
 import {
   accessHistoryTable,
+  captureDiagnosticsTable,
   clientsTable,
   membersTable,
   ownReportsTable,
@@ -81,6 +82,7 @@ function renderDefault(value: unknown): string {
 
 type FixtureTable =
   | typeof accessHistoryTable
+  | typeof captureDiagnosticsTable
   | typeof clientsTable
   | typeof sitesTable
   | typeof rolesTable
@@ -192,6 +194,7 @@ export async function startDatabase(options: { afterStart?: () => void | Promise
     // foreign-key, check, and index changes cannot silently drift in tests.
     for (const table of [
       accessHistoryTable,
+      captureDiagnosticsTable,
       clientsTable,
       sitesTable,
       rolesTable,

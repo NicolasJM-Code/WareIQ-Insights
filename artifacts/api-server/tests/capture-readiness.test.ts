@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { captureConfiguration, captureReadiness } from "../src/lib/capture-readiness";
+import { beginProcessCaptureDelivery, captureConfiguration, captureReadiness } from "../src/lib/capture-readiness";
 
 beforeEach(() => {
   vi.stubEnv("CLERK_WEBHOOK_ENVIRONMENT", "development");
@@ -44,4 +44,36 @@ it("keeps durable failures, interrupted attempts and unavailable diagnostics dis
   expect(captureReadiness(configuration, null, { status: "pending", attemptedAt }).delivery).toBe("delivery_unknown");
   expect(captureReadiness(configuration, "2020-01-01T00:00:00.000Z", "unavailable").delivery).toBe("diagnostics_unavailable");
   expect(captureReadiness(configuration, null, { status: "succeeded", attemptedAt }).lastDeliveryFailureAt).toBeNull();
+});
+
+it("retains outage failures through key rotation without leaking them to other instances", () => {
+  vi.stubEnv("CLERK_WEBHOOK_INSTANCE_ID", "ins_processScope");
+  const configuration = captureConfiguration();
+  const finish = beginProcessCaptureDelivery(configuration);
+  finish(false);
+  const failure = captureReadiness(configuration, "2020-01-01T00:00:00.000Z");
+  expect(failure.delivery).toBe("delivery_problem");
+  vi.stubEnv("CLERK_WEBHOOK_SIGNING_SECRET", "whsec_rotated");
+  expect(captureReadiness(captureConfiguration(), failure.lastVerifiedDeliveryAt)).toEqual(failure);
+  vi.stubEnv("CLERK_WEBHOOK_INSTANCE_ID", "ins_otherProcessScope");
+  expect(captureReadiness(captureConfiguration(), null).delivery).toBe("unknown");
+  beginProcessCaptureDelivery(configuration)(true);
+  expect(captureReadiness(configuration, failure.lastVerifiedDeliveryAt).delivery).toBe("verified_delivery");
+});
+
+it("does not let delayed earlier completions replace a newer process delivery outcome", () => {
+  vi.stubEnv("CLERK_WEBHOOK_INSTANCE_ID", "ins_processOrder");
+  const configuration = captureConfiguration();
+  const earlierSuccess = beginProcessCaptureDelivery(configuration);
+  const laterFailure = beginProcessCaptureDelivery(configuration);
+  laterFailure(false);
+  const warning = captureReadiness(configuration, "2020-01-01T00:00:00.000Z");
+  earlierSuccess(true);
+  expect(captureReadiness(configuration, warning.lastVerifiedDeliveryAt)).toEqual(warning);
+  const earlierFailure = beginProcessCaptureDelivery(configuration);
+  beginProcessCaptureDelivery(configuration)(true);
+  earlierFailure(false);
+  expect(captureReadiness(configuration, warning.lastVerifiedDeliveryAt)).toMatchObject({
+    delivery: "verified_delivery", lastDeliveryFailureAt: null,
+  });
 });

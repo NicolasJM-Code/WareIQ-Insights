@@ -62,12 +62,12 @@ const secretBytes = Buffer.from("private-capture-outage-signing-fixture");
 const eventId = "msg_outageReplay";
 const webhookPath = "/api/webhooks/clerk/development";
 const historyPath = "/api/admin/access-history";
-function send(raw: string, signatureOverride?: string) {
+function send(raw: string, signatureOverride?: string, deliveryId = eventId) {
   const timestamp = String(Math.floor(Date.now() / 1000));
   const signature = signatureOverride ?? `v1,${createHmac("sha256", secretBytes)
-    .update(`${eventId}.${timestamp}.${raw}`).digest("base64")}`;
+    .update(`${deliveryId}.${timestamp}.${raw}`).digest("base64")}`;
   return request(app).post(webhookPath).set("Content-Type", "application/json")
-    .set("svix-id", eventId).set("svix-timestamp", timestamp)
+    .set("svix-id", deliveryId).set("svix-timestamp", timestamp)
     .set("svix-signature", signature).send(raw);
 }
 async function readReadiness() {
@@ -77,7 +77,7 @@ async function readReadiness() {
   return response.body;
 }
 
-it("recovers signed capture after a private PostgreSQL outage without losing warnings or duplicating evidence", async () => {
+it("does not let earlier verified evidence hide a later signed delivery failure after storage recovers", async () => {
   vi.stubEnv("CLERK_WEBHOOK_ENVIRONMENT", "development");
   vi.stubEnv("CLERK_WEBHOOK_INSTANCE_ID", "ins_outage");
   vi.stubEnv("CLERK_WEBHOOK_SIGNING_SECRET", `whsec_${secretBytes.toString("base64")}`);
@@ -96,11 +96,31 @@ it("recovers signed capture after a private PostgreSQL outage without losing war
   const raw = JSON.stringify(payload, null, 2);
   expect((await readReadiness()).captureReadiness).toMatchObject({
     configuration: "configured", delivery: "unknown", lastVerifiedDeliveryAt: null,
-    lastDeliveryFailureAt: null, failureScope: "current_process",
+    lastDeliveryFailureAt: null, failureScope: "environment_instance",
+  });
+  const earlierEventId = "msg_earlierSuccess";
+  const earlierRaw = JSON.stringify({
+    ...payload, timestamp: occurredAt - 1_000,
+    data: { ...payload.data, public_metadata: { role: "supervisor" } },
+  });
+  provider.userId = null;
+  expect((await send(earlierRaw, undefined, earlierEventId)).status).toBe(204);
+  const earlierRows = await db.select().from(accessHistoryTable);
+  expect(earlierRows).toHaveLength(1);
+  expect(earlierRows[0]).toMatchObject({
+    providerEventId: earlierEventId, resultingRole: "supervisor", outcome: "observed",
+  });
+  provider.userId = "user_admin";
+  const earlierReadiness = (await readReadiness()).captureReadiness;
+  expect(earlierReadiness).toMatchObject({
+    delivery: "verified_delivery", lastVerifiedDeliveryAt: earlierRows[0]!.createdAt.toISOString(),
+    lastDeliveryFailureAt: null,
   });
   provider.userId = null;
   expect((await request(app).get(historyPath)).status).toBe(401);
 
+  let failureAt: string | null = null;
+  const failureStartedAt = Date.now();
   await pauseDatabase();
   try {
     // This is valid HMAC authentication without a session, and a real failed
@@ -112,11 +132,15 @@ it("recovers signed capture after a private PostgreSQL outage without losing war
     expect(provider.warn).toHaveBeenCalledExactlyOnceWith(
       { code: "provider_evidence_write_failed" }, "Provider role evidence could not be saved",
     );
-    const warning = captureReadiness(captureConfiguration(), null);
+    const warning = captureReadiness(captureConfiguration(), earlierReadiness.lastVerifiedDeliveryAt);
     expect(warning).toMatchObject({
-      delivery: "delivery_problem", lastVerifiedDeliveryAt: null, failureScope: "current_process",
+      delivery: "delivery_problem", lastVerifiedDeliveryAt: earlierReadiness.lastVerifiedDeliveryAt,
+      failureScope: "environment_instance",
     });
     expect(Number.isFinite(Date.parse(warning.lastDeliveryFailureAt!))).toBe(true);
+    failureAt = warning.lastDeliveryFailureAt;
+    expect(Date.parse(failureAt!)).toBeGreaterThanOrEqual(failureStartedAt);
+    expect(Date.parse(failureAt!)).toBeLessThanOrEqual(Date.now());
     provider.userId = "user_admin";
     // A database outage cannot be misreported as an empty, healthy history.
     const unavailable = await request(app).get(historyPath);
@@ -127,12 +151,12 @@ it("recovers signed capture after a private PostgreSQL outage without losing war
     provider.userId = "user_admin";
   }
 
-  expect(await db.select().from(accessHistoryTable)).toEqual([]);
+  expect(await db.select().from(accessHistoryTable)).toEqual(earlierRows);
   const beforeReplay = await readReadiness();
-  expect(beforeReplay.entries).toEqual([]);
+  expect(beforeReplay.entries).toHaveLength(1);
   expect(beforeReplay.captureReadiness).toMatchObject({
-    delivery: "delivery_problem", lastVerifiedDeliveryAt: null,
-    lastDeliveryFailureAt: expect.any(String), failureScope: "current_process",
+    delivery: "delivery_problem", lastVerifiedDeliveryAt: earlierReadiness.lastVerifiedDeliveryAt,
+    lastDeliveryFailureAt: failureAt, failureScope: "environment_instance",
   });
   // Storage recovery alone, invalid signatures and ignored signed events must
   // not clear the warning.
@@ -142,22 +166,26 @@ it("recovers signed capture after a private PostgreSQL outage without losing war
 
   expect((await send(raw)).status).toBe(204);
   const rows = await db.select().from(accessHistoryTable);
-  expect(rows).toHaveLength(1);
-  expect(rows[0]).toMatchObject({
+  expect(rows).toHaveLength(2);
+  const replayed = rows.find((row) => row.providerEventId === eventId)!;
+  expect(replayed).toMatchObject({
     actorId: "external:clerk", targetId: "user_target", outcome: "observed",
     reason: "provider_role_observed", resultingRole: "admin", previousRole: null,
     requestedRole: null, finishedAt: null, providerEventId: eventId,
     providerInstanceId: "ins_outage", providerEnvironment: "development",
     providerOccurredAt: new Date(occurredAt),
   });
+  expect(rows.find((row) => row.providerEventId === earlierEventId)).toEqual(earlierRows[0]);
+  expect(new Set(rows.map((row) => row.id)).size).toBe(2);
   expect(JSON.stringify(rows)).not.toMatch(/never-retain|claimedActor|email_addresses|private_metadata/);
   const verified = await readReadiness();
-  expect(verified.entries).toHaveLength(1);
+  expect(verified.entries).toHaveLength(2);
   expect(verified.captureReadiness).toMatchObject({
     delivery: "verified_delivery", lastDeliveryFailureAt: null,
-    lastVerifiedDeliveryAt: rows[0]!.createdAt.toISOString(), failureScope: "current_process",
+    lastVerifiedDeliveryAt: replayed.createdAt.toISOString(), failureScope: "environment_instance",
   });
-  expect((await Promise.all(Array.from({ length: 4 }, () => send(raw)))).map((r) => r.status))
+  expect((await Promise.all(Array.from({ length: 4 }, (_, index) => index % 2
+    ? send(raw) : send(earlierRaw, undefined, earlierEventId)))).map((r) => r.status))
     .toEqual([204, 204, 204, 204]);
   expect(await db.select().from(accessHistoryTable)).toEqual(rows);
 
