@@ -400,6 +400,65 @@ describe("offline provider harness safety", () => {
     await retained(env.CLERK_PROVIDER_CLEANUP_MANIFEST);
   });
 
+  it("excludes separate-process exact-email lookups for the same interrupted creation", async () => {
+    const journalPath = join(directory, "interrupted-creation.json");
+    const intent = { state: "intent", runId: saved.runId, email: saved.email };
+    await writeFile(journalPath, JSON.stringify(intent), { mode: 0o600 });
+    const pausedPath = join(directory, "holder-paused");
+    const releasePath = join(directory, "release-holder");
+    const holderResultPath = join(directory, "holder-result.json");
+    const contenderResultPath = join(directory, "contender-result.json");
+    const workerPath = fileURLToPath(new URL("../provider-tests/recovery-lock-worker.ts", import.meta.url));
+    const launch = (role: "holder" | "contender", resultPath: string) => {
+      const child = fork(workerPath, [
+        role,
+        journalPath,
+        directory,
+        resultPath,
+        pausedPath,
+        releasePath,
+        "intent",
+      ], {
+        execArgv: ["--import", tsx],
+        // Do not inherit workspace credentials; the worker uses synthetic keys.
+        env: { NODE_ENV: "test" },
+        stdio: ["ignore", "ignore", "pipe", "ipc"],
+      });
+      children.push(child);
+      let stderr = "";
+      child.stderr?.on("data", (chunk) => { stderr += chunk; });
+      const exited = new Promise<number | null>((resolve) => {
+        child.once("exit", (code) => resolve(code));
+      });
+      return { child, exited, getStderr: () => stderr };
+    };
+    const holder = launch("holder", holderResultPath);
+
+    await expect.poll(async () => {
+      if (holder.child.exitCode !== null) throw new Error(`Holder exited early: ${holder.getStderr()}`);
+      try { await readFile(pausedPath, "utf8"); return true; } catch { return false; }
+    }, { timeout: 10_000, interval: 25 }).toBe(true);
+    expect(JSON.parse(await readFile(join(directory, "holder-exact-email-lookup.json"), "utf8")))
+      .toEqual({ emailAddress: [saved.email], limit: 2 });
+
+    const contender = launch("contender", contenderResultPath);
+    expect(await contender.exited).toBe(0);
+    const contenderResult = JSON.parse(await readFile(contenderResultPath, "utf8"));
+    expect(contenderResult.error).toContain("Recovery already in progress");
+    expect(contenderResult.error).toContain("no provider calls made");
+    await expect(readFile(join(directory, "contender-provider-called"), "utf8"))
+      .rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(directory, "contender-exact-email-lookup.json"), "utf8"))
+      .rejects.toMatchObject({ code: "ENOENT" });
+    expect(JSON.parse(await readFile(journalPath, "utf8"))).toEqual(intent);
+
+    await writeFile(releasePath, "release");
+    expect(await holder.exited).toBe(0);
+    const holderResult = JSON.parse(await readFile(holderResultPath, "utf8"));
+    expect(holderResult.error).toContain("Recovery lookup failed");
+    expect(JSON.parse(await readFile(journalPath, "utf8"))).toEqual(intent);
+  });
+
   it("reports an active recovery and refuses to clear its lock", async () => {
     const inspectEnv = lockActionEnv("inspect");
     const lock = lockPath(inspectEnv);

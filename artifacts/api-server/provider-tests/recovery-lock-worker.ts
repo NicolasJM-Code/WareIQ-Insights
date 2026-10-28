@@ -1,9 +1,11 @@
 import { access, writeFile } from "node:fs/promises";
 import { createKeyPairAttestation, runProviderCheck, type ProviderUsers } from "./harness";
 
-const [role, journalPath, directory, resultPath, pausedPath, releasePath] = process.argv.slice(2);
+const [role, journalPath, directory, resultPath, pausedPath, releasePath, recoveryKind = "manifest"] =
+  process.argv.slice(2);
 if (!["holder", "contender"].includes(role ?? "")
-  || !journalPath || !directory || !resultPath || !pausedPath || !releasePath) {
+  || !journalPath || !directory || !resultPath || !pausedPath || !releasePath
+  || !["manifest", "intent"].includes(recoveryKind)) {
   throw new Error("Recovery lock worker received invalid arguments.");
 }
 
@@ -44,8 +46,22 @@ const users: ProviderUsers = {
     if (role === "holder") await waitForRelease();
     return fixture;
   },
-  async getUserList() {
+  async getUserList(params) {
     await recordProviderAccess();
+    if (recoveryKind === "intent") {
+      await writeFile(
+        `${directory}/${role}-exact-email-lookup.json`,
+        JSON.stringify(params),
+      );
+      if (params.limit !== 2 || params.emailAddress.length !== 1
+        || params.emailAddress[0] !== fixture.emailAddresses[0]?.emailAddress) {
+        throw new Error("Recovery worker received an unexpected exact-email lookup.");
+      }
+      if (role === "holder") {
+        await waitForRelease();
+        throw new Error("Synthetic provider outage during exact-email recovery lookup.");
+      }
+    }
     return { data: [fixture], totalCount: 1 };
   },
   async deleteUser() {
