@@ -3,7 +3,7 @@ import { createKeyPairAttestation, runProviderCheck, type ProviderUsers } from "
 
 const [role, journalPath, directory, resultPath, pausedPath, releasePath, recoveryKind = "manifest"] =
   process.argv.slice(2);
-if (!["holder", "contender"].includes(role ?? "")
+if (!["holder", "contender", "crash-holder", "inspect", "clear-abandoned"].includes(role ?? "")
   || !journalPath || !directory || !resultPath || !pausedPath || !releasePath
   || !["manifest", "intent"].includes(recoveryKind)) {
   throw new Error("Recovery lock worker received invalid arguments.");
@@ -43,6 +43,11 @@ const users: ProviderUsers = {
   },
   async getUser() {
     await recordProviderAccess();
+    if (role === "crash-holder") {
+      await writeFile(`${directory}/crash-provider-started`, "started", { flag: "wx" });
+      process.kill(process.pid, "SIGKILL");
+      throw new Error("The recovery crash signal was not delivered.");
+    }
     if (role === "holder") await waitForRelease();
     return fixture;
   },
@@ -77,11 +82,19 @@ const env = {
   CLERK_PUBLISHABLE_KEY: publishableKey,
   CLERK_PROVIDER_KEY_PAIR_ATTESTATION: createKeyPairAttestation(secretKey, publishableKey),
   CLERK_PROVIDER_CLEANUP_MANIFEST: journalPath,
+  ...(role === "inspect" || role === "clear-abandoned"
+    ? { CLERK_PROVIDER_RECOVERY_LOCK_ACTION: role }
+    : {}),
 };
 
+const messages: string[] = [];
 try {
-  await runProviderCheck(env, { users, journalDirectory: directory }, async () => {});
-  await writeFile(resultPath, JSON.stringify({ success: true }));
+  await runProviderCheck(
+    env,
+    { users, journalDirectory: directory, info: (message) => messages.push(message) },
+    async () => {},
+  );
+  await writeFile(resultPath, JSON.stringify({ success: true, messages }));
 } catch (error) {
-  await writeFile(resultPath, JSON.stringify({ error: String(error) }));
+  await writeFile(resultPath, JSON.stringify({ error: String(error), messages }));
 }

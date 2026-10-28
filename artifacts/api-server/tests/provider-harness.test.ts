@@ -460,6 +460,85 @@ describe("offline provider harness safety", () => {
     expect(JSON.parse(await readFile(journalPath, "utf8"))).toEqual(intent);
   });
 
+  it("inspects and explicitly clears a lock left by a crashed recovery process", async () => {
+    const env = await seed();
+    const pausedPath = join(directory, "unused-paused");
+    const releasePath = join(directory, "unused-release");
+    const workerPath = fileURLToPath(new URL("../provider-tests/recovery-lock-worker.ts", import.meta.url));
+    const launch = (role: string, resultPath: string) => {
+      const child = fork(workerPath, [
+        role,
+        env.CLERK_PROVIDER_CLEANUP_MANIFEST,
+        directory,
+        resultPath,
+        pausedPath,
+        releasePath,
+      ], {
+        execArgv: ["--import", tsx],
+        // Do not inherit workspace credentials; the worker uses synthetic keys.
+        env: { NODE_ENV: "test" },
+        stdio: ["ignore", "ignore", "pipe", "ipc"],
+      });
+      children.push(child);
+      const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+        child.once("exit", (code, signal) => resolve({ code, signal }));
+      });
+      return { child, exited };
+    };
+
+    const crashed = launch("crash-holder", join(directory, "crash-result.json"));
+    const crashExit = await crashed.exited;
+    expect(crashExit).toEqual({ code: null, signal: "SIGKILL" });
+    expect(await readFile(join(directory, "crash-provider-started"), "utf8")).toBe("started");
+
+    const lock = lockPath(env);
+    const lockContents = await readFile(lock, "utf8");
+    const ownerPid = JSON.parse(lockContents).pid as number;
+    expect(ownerPid).toBe(crashed.child.pid);
+    await retained(env.CLERK_PROVIDER_CLEANUP_MANIFEST);
+
+    const contenderResultPath = join(directory, "crash-contender-result.json");
+    const contender = launch("contender", contenderResultPath);
+    expect(await contender.exited).toEqual({ code: 0, signal: null });
+    const contenderResult = JSON.parse(await readFile(contenderResultPath, "utf8"));
+    expect(contenderResult.error).toContain("Recovery already in progress");
+    expect(contenderResult.error).toContain("no provider calls made");
+    expect(await readFile(lock, "utf8")).toBe(lockContents);
+    await retained(env.CLERK_PROVIDER_CLEANUP_MANIFEST);
+    await expect(readFile(join(directory, "contender-provider-called"), "utf8"))
+      .rejects.toMatchObject({ code: "ENOENT" });
+
+    const inspectResultPath = join(directory, "inspect-result.json");
+    const inspector = launch("inspect", inspectResultPath);
+    expect(await inspector.exited).toEqual({ code: 0, signal: null });
+    const inspectResult = JSON.parse(await readFile(inspectResultPath, "utf8"));
+    expect(inspectResult.success).toBe(true);
+    expect(inspectResult.messages).toEqual([
+      expect.stringContaining(`confirmed abandoned: process ${ownerPid} is not running`),
+    ]);
+    expect(await readFile(lock, "utf8")).toBe(lockContents);
+    await retained(env.CLERK_PROVIDER_CLEANUP_MANIFEST);
+
+    const clearResultPath = join(directory, "clear-result.json");
+    const directoryBeforeClear = await readdir(directory);
+    const clearer = launch("clear-abandoned", clearResultPath);
+    expect(await clearer.exited).toEqual({ code: 0, signal: null });
+    const clearResult = JSON.parse(await readFile(clearResultPath, "utf8"));
+    expect(clearResult.success).toBe(true);
+    expect(clearResult.messages).toEqual([
+      expect.stringContaining("Confirmed abandoned recovery lock removed"),
+    ]);
+    await expect(readFile(lock, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await retained(env.CLERK_PROVIDER_CLEANUP_MANIFEST);
+    expect(await readdir(directory)).toEqual(
+      [...directoryBeforeClear.filter((name) => name !== "recovery.json.recovery.lock"), "clear-result.json"].sort(),
+    );
+    for (const name of ["inspect", "clear-abandoned"]) {
+      await expect(readFile(join(directory, `${name}-provider-called`), "utf8"))
+        .rejects.toMatchObject({ code: "ENOENT" });
+    }
+  });
+
   it("reports an active recovery and refuses to clear its lock", async () => {
     const inspectEnv = lockActionEnv("inspect");
     const lock = lockPath(inspectEnv);
