@@ -10,7 +10,7 @@ vi.mock("@clerk/react", () => ({
 }));
 
 import {
-  createReport, updateReport, duplicateReport, deleteReport, useOwnReportsState,
+  createReport, updateReport, duplicateReport, deleteReport, importLegacyReports, useOwnReportsState,
   OWN_REPORTS_KEY, type OwnReport, type OwnReportInput, type SaveResult,
 } from "../../src/lib/own-reports-store";
 
@@ -73,6 +73,25 @@ beforeEach(() => {
     }
     if (path === endpoint && method === "GET") {
       return listFailure ? json({ error: "Unavailable" }, 503) : json([...saved.values()]);
+    }
+    if (path === `${endpoint}/import` && method === "POST") {
+      if (failure === "network") throw new TypeError("Network unavailable");
+      if (failure === "http") return json({ error: "The report could not be stored." }, 503);
+      const body = JSON.parse(String(init?.body)) as {
+        reports: AccessOwnReportInput[];
+      };
+      const reports = body.reports.map((definition) => {
+        const report: OwnReport = {
+          ...definition,
+          section: definition.section as OwnReport["section"],
+          id: `isolated-report-${++nextId}`,
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+        };
+        saved.set(report.id, report);
+        return report;
+      });
+      return json(reports);
     }
     if ((path === endpoint && method === "POST") ||
         (path.startsWith(`${endpoint}/`) && method === "DELETE")) {
@@ -170,6 +189,42 @@ describe("server-backed own report persistence", () => {
     } finally {
       window.removeEventListener("wareiq-own-reports-changed", changed);
     }
+  });
+
+  it("imports the complete selected batch and refreshes every imported report", async () => {
+    const view = mount();
+    await waitFor(() => expect(view.result.current.loading).toBe(false));
+    const reports: OwnReportInput[] = [
+      input,
+      { ...input, name: "Supplier receipts", description: "Second selected definition", fields: ["id"] },
+    ];
+
+    let result: SaveResult;
+    await act(async () => {
+      result = await importLegacyReports({
+        expectedOwnerId: "isolated-report-owner",
+        expectedClientId: "isolated-client",
+        confirmedOwnership: true,
+        reports,
+      });
+    });
+
+    expect(result!).toEqual({ ok: true });
+    const importRequest = vi.mocked(fetch).mock.calls.find(([url, init]) =>
+      String(url) === `${endpoint}/import` && init?.method === "POST");
+    expect(importRequest).toBeDefined();
+    expect(JSON.parse(String(importRequest?.[1]?.body))).toEqual({
+      expectedOwnerId: "isolated-report-owner",
+      expectedClientId: "isolated-client",
+      confirmedOwnership: true,
+      reports,
+    });
+    await waitFor(() => {
+      expect(view.result.current.reports.map(({ name }) => name)).toEqual([
+        "Receipts",
+        "Supplier receipts",
+      ]);
+    });
   });
 
   for (const mode of ["http", "network"] as const) {

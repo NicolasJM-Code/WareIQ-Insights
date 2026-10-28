@@ -155,6 +155,44 @@ describe("legacy report import consent", () => {
     expect(removeItem).not.toHaveBeenCalled();
   });
 
+  it("sends every selected report in one request and reports the full imported count", async () => {
+    mount();
+    await openImportDialog();
+
+    fireEvent.click(screen.getByTestId("checkbox-legacy-0"));
+    fireEvent.change(screen.getByTestId("input-import-name-0"), { target: { value: "My receiving report" } });
+    fireEvent.click(screen.getByTestId("checkbox-legacy-1"));
+    fireEvent.click(screen.getByTestId("checkbox-confirm-legacy-ownership"));
+    expect(screen.getByTestId("button-confirm-legacy-import")).toHaveTextContent("Import 2 selected");
+    fireEvent.click(screen.getByTestId("button-confirm-legacy-import"));
+
+    await waitFor(() => expect(state.importLegacyReports).toHaveBeenCalledOnce());
+    expect(state.importLegacyReports).toHaveBeenCalledWith({
+      expectedOwnerId: "account-a",
+      expectedClientId: "client-a",
+      confirmedOwnership: true,
+      reports: [
+        {
+          section: "inbound",
+          name: "My receiving report",
+          description: "Original A",
+          dataset: "receipts",
+          fields: ["supplier", "id"],
+        },
+        {
+          section: "inbound",
+          name: "Keep unselected",
+          description: "Original B",
+          dataset: "receipts",
+          fields: ["supplier", "id"],
+        },
+      ],
+    });
+    expect(await screen.findByTestId("status-import-success")).toHaveTextContent(
+      "2 reports imported into your account.",
+    );
+  });
+
   it("keeps a rejected report available for review and requires ownership confirmation again before retrying", async () => {
     const setItem = vi.spyOn(Storage.prototype, "setItem");
     const removeItem = vi.spyOn(Storage.prototype, "removeItem");
