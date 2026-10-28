@@ -332,6 +332,13 @@ describe("membership-based routes mounted ahead of legacy guards", () => {
       },
     },
     {
+      name: "with a partially completed profile",
+      details: {
+        companyNumber: "PARTIAL-456", addressLine1: "18 Partial Street", addressLine2: "",
+        city: "Partial City", region: null, postalCode: "", country: null, logoPath: null,
+      },
+    },
+    {
       name: "without branding",
       details: {
         companyNumber: null, addressLine1: null, addressLine2: null,
