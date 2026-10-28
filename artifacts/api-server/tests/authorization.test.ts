@@ -378,9 +378,17 @@ describe("membership-based routes mounted ahead of legacy guards", () => {
   });
 
   it("only exposes a signed-out summary from the intentionally public membership endpoint", async () => {
+    const expected = {
+      status: "signed_out", platformAdmin: false, canCreateOwnReports: false, ownReportSections: [],
+      clientId: null, clientName: null, clientCompanyNumber: null,
+      clientAddressLine1: null, clientAddressLine2: null, clientCity: null,
+      clientRegion: null, clientPostalCode: null, clientCountry: null, clientLogoUrl: null,
+      reportIds: [], sites: [],
+    } satisfies AccessSession;
     const summary = await request(app).get("/api/access/me");
     expect(summary.status).toBe(200);
-    expect(summary.body).toMatchObject({ status: "signed_out", platformAdmin: false, reportIds: [], sites: [] });
+    expect(GetAccessSessionResponse.safeParse(summary.body).success).toBe(true);
+    expect(summary.body).toStrictEqual(expected);
     expect(provider.getUser).not.toHaveBeenCalled();
     expect((await request(app).get("/api/access/admin")).status).toBe(401);
     expect((await request(app).get("/api/access/notifications/failed")).status).toBe(401);
@@ -389,9 +397,17 @@ describe("membership-based routes mounted ahead of legacy guards", () => {
 
   it("does not let a global supervisor claim bypass client membership approval", async () => {
     signIn("supervisor");
+    const expected = {
+      status: "unassigned", platformAdmin: false, canCreateOwnReports: false, ownReportSections: [],
+      clientId: null, clientName: null, clientCompanyNumber: null,
+      clientAddressLine1: null, clientAddressLine2: null, clientCity: null,
+      clientRegion: null, clientPostalCode: null, clientCountry: null, clientLogoUrl: null,
+      reportIds: [], sites: [],
+    } satisfies AccessSession;
     const summary = await request(app).get("/api/access/me");
     expect(summary.status).toBe(200);
-    expect(summary.body).toMatchObject({ status: "unassigned", platformAdmin: false, reportIds: [] });
+    expect(GetAccessSessionResponse.safeParse(summary.body).success).toBe(true);
+    expect(summary.body).toStrictEqual(expected);
     expect((await request(app).get("/api/access/admin")).status).toBe(403);
     expect((await request(app).get("/api/access/notifications/failed")).status).toBe(403);
     expect((await mutation("post", "/api/access/notifications/3ed2c922-b996-44e4-8d9f-929d522026b2/retry")
