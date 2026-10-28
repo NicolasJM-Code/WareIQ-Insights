@@ -38,6 +38,10 @@ import {
 import accessRouter from "../src/routes/access";
 
 const accessApp = express();
+accessApp.use((req, _res, next) => {
+  Object.assign(req, { log: { warn: mocks.warn, error: mocks.error } });
+  next();
+});
 accessApp.use("/api", accessRouter);
 
 const member = {
@@ -331,6 +335,33 @@ describe("durable delivery and duplicate protection", () => {
     expect(JSON.stringify(response.body.notificationSummary)).not.toMatch(
       /recipient|role.?name|notification.?id|provider|admin@example\.test/i,
     );
+  });
+  it("returns an unavailable zero-count summary without exposing query errors", async () => {
+    mocks.authUserId = "admin-user";
+    mocks.getUser.mockResolvedValue({
+      publicMetadata: { role: "admin" }, banned: false, locked: false,
+      primaryEmailAddressId: "primary",
+      emailAddresses: [{ id: "primary", emailAddress: "admin@example.test", verification: { status: "verified" } }],
+    });
+    mocks.summaryQuery.mockRejectedValue(
+      new Error("database connection failed: provider response contained private details"),
+    );
+
+    const response = await request(accessApp).get("/api/access/admin");
+
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    expect(response.body.notificationSummary).toEqual({
+      status: "unavailable",
+      queued: 0,
+      queuedOverThreshold: 0,
+      oldestQueuedAgeSeconds: null,
+      queueWarningAfterSeconds: 300,
+      retrying: 0,
+      accepted: 0,
+      failed: 0,
+      uncertain: 0,
+    });
+    expect(JSON.stringify(response.body)).not.toMatch(/database connection failed|provider response contained private details/i);
   });
   it("commits an attempt before sending and uses a stable provider idempotency key across retries", async () => {
     await deliverAccessNotifications();
