@@ -29,3 +29,14 @@ success even though a later authenticated delivery failed before any write.
 delivery succeeds, scope it by environment and instance rather than signing
 key, and reject out-of-order local completions. Do not describe this as a
 cross-process or restart durability guarantee.
+
+When testing process-local completion ordering, make the newer failure happen
+before its pending marker commits, and test both delayed success and delayed
+failure.
+
+**Why:** A durable failed diagnostic can conceal a broken local sequence guard;
+the history endpoint may still report the expected warning for the wrong reason.
+
+**How to apply:** Use deterministic barriers and private PostgreSQL failures,
+then read administrator history after each completion. A process-local warning
+must remain visible even when the durable diagnostic records success.
