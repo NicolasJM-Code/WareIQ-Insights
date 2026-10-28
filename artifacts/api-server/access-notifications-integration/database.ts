@@ -55,7 +55,7 @@ function tableSql() {
   });
   const statements = [`CREATE TABLE "${config.name}" (${definitions.join(", ")})`];
   for (const index of config.indexes) {
-    const { name, columns } = index.config;
+    const { name, columns, where } = index.config;
     if (!name) throw new Error("Access notification test schema index is unnamed");
     const indexedColumns = columns.map((column) => {
       const indexedColumn = column as { name?: string };
@@ -63,7 +63,9 @@ function tableSql() {
       return `"${indexedColumn.name}"`;
     });
     statements.push(
-      `CREATE INDEX "${name}" ON "${config.name}" (${indexedColumns.join(", ")})`,
+      `CREATE INDEX "${name}" ON "${config.name}" (${indexedColumns.join(", ")})${
+        where ? ` WHERE ${new PgDialect().sqlToQuery(where).sql}` : ""
+      }`,
     );
   }
   return statements.join(";\n");

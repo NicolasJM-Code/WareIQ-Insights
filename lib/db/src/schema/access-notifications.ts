@@ -1,4 +1,5 @@
 import { pgTable, text, timestamp, integer, index } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 
 // Application data only. Never store report rows, warehouse codes or credentials.
@@ -16,6 +17,11 @@ export const accessNotificationsTable = pgTable("wareiq_access_notifications", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   firstAttemptAt: timestamp("first_attempt_at", { withTimezone: true }),
   nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [index("wareiq_access_notifications_due").on(t.state, t.nextAttemptAt)]);
+}, (t) => [
+  index("wareiq_access_notifications_due").on(t.state, t.nextAttemptAt),
+  index("wareiq_access_notifications_confirmed_failed_page")
+    .on(t.createdAt, t.id)
+    .where(sql`${t.state} = 'confirmed_failed'`),
+]);
 export const insertAccessNotificationSchema = createInsertSchema(accessNotificationsTable);
 export type AccessNotification = typeof accessNotificationsTable.$inferSelect;

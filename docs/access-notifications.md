@@ -42,6 +42,9 @@ No real account role was changed and no test email was sent during development.
 The existing API service runs the worker; no separate process is required.
 Apply the application DB schema through the existing post-merge setup
 (`pnpm --filter @workspace/db run push`); never apply it to the operational WMS.
+That schema includes a partial `(created_at, id)` index for `confirmed_failed`
+notices, so administrator history pages can seek by cursor without indexing the
+other notice states.
 
 The application DB queue records `pending`, `confirming`, `sent`, `cancelled`,
 or `failed`. Each attempt uses the event's stable Resend idempotency key.

@@ -196,6 +196,54 @@ describe("access notification transaction ordering in private PostgreSQL", () =>
     `, [oldNotice.id, oldNotice.recipient, oldNotice.roleName, oldNotice.targetId]);
   });
 
+  it("seeks confirmed-failure cursor pages with a state-specific creation-order index", async () => {
+    await pool.query(`
+      INSERT INTO wareiq_access_notifications
+        (id, recipient, role_name, kind, state, created_at)
+      SELECT 'page-index-' || series,
+             'member@example.test',
+             'Supervisor',
+             'reporting',
+             CASE WHEN series % 100 = 0 THEN 'confirmed_failed' ELSE 'pending' END,
+             now() - series * interval '1 second'
+      FROM generate_series(1, 10000) AS series
+    `);
+    await pool.query("ANALYZE wareiq_access_notifications");
+
+    const index = await pool.query<{ indexdef: string }>(`
+      SELECT indexdef FROM pg_indexes
+      WHERE schemaname = current_schema()
+        AND tablename = 'wareiq_access_notifications'
+        AND indexname = 'wareiq_access_notifications_confirmed_failed_page'
+    `);
+    expect(index.rows[0]?.indexdef).toContain(
+      "USING btree (created_at, id) WHERE (state = 'confirmed_failed'::text)",
+    );
+
+    type QueryPlanNode = {
+      "Node Type": string;
+      "Index Name"?: string;
+      Plans?: QueryPlanNode[];
+    };
+    const explain = await pool.query<{
+      "QUERY PLAN": Array<{ Plan: QueryPlanNode }>;
+    }>(`
+      EXPLAIN (FORMAT JSON)
+      SELECT id, created_at
+      FROM wareiq_access_notifications
+      WHERE state = 'confirmed_failed'
+        AND (created_at, id) < (now() - interval '50 minutes', 'page-index-5000')
+      ORDER BY created_at DESC, id DESC
+      LIMIT 50
+    `);
+    const plan = explain.rows[0]?.["QUERY PLAN"]?.[0]?.Plan;
+    const findPageIndex = (node: QueryPlanNode | undefined): QueryPlanNode | undefined => {
+      if (node?.["Index Name"] === "wareiq_access_notifications_confirmed_failed_page") return node;
+      return node?.Plans?.map(findPageIndex).find(Boolean);
+    };
+    expect(findPageIndex(plan)?.["Node Type"]).toMatch(/^Index (Only )?Scan$/);
+  });
+
   it("skips a claimed notice when a newer access change cancels it first", async () => {
     expect(pool.options.host).toBe(socketDirectory);
     const settings = await pool.query<{ listen_addresses: string }>("SHOW listen_addresses");
