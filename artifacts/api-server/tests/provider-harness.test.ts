@@ -412,6 +412,55 @@ describe("offline provider harness safety", () => {
     expect(check).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["invalid JSON", "{"],
+    ["missing PID", JSON.stringify({ token: saved.runId })],
+    ["missing token", JSON.stringify({ pid: process.pid })],
+    ["invalid PID", JSON.stringify({ pid: 0, token: saved.runId })],
+    ["invalid token", JSON.stringify({ pid: process.pid, token: "not-a-uuid" })],
+  ])("inspects and refuses to clear a recovery lock with %s", async (_label, contents) => {
+    const env = lockActionEnv("inspect");
+    const manifestPath = env.CLERK_PROVIDER_CLEANUP_MANIFEST!;
+    const manifestContents = JSON.stringify(saved);
+    const lock = lockPath(env);
+    await writeFile(manifestPath, manifestContents, { mode: 0o600 });
+    await writeFile(lock, contents, { mode: 0o600 });
+
+    const processProbe = vi.fn(() => "abandoned" as const);
+    const journal = {
+      ...journalIO,
+      mkdir: vi.fn(),
+      rename: vi.fn(),
+      unlink: vi.fn(),
+      writeFile: vi.fn(),
+    };
+    const deps = { ...dependencies(), journal: journal as unknown as typeof journalIO, processProbe };
+
+    await runProviderCheck(env, deps, check);
+    expect(info).toHaveBeenCalledExactlyOnceWith(expect.stringContaining("status is uncertain"));
+    expect(await readFile(lock, "utf8")).toBe(contents);
+
+    info.mockClear();
+    await expect(runProviderCheck(
+      { ...env, CLERK_PROVIDER_RECOVERY_LOCK_ACTION: "clear-abandoned" },
+      deps,
+      check,
+    )).rejects.toThrow("status is uncertain");
+
+    expect(await readFile(lock, "utf8")).toBe(contents);
+    expect(await readFile(manifestPath, "utf8")).toBe(manifestContents);
+    expect(processProbe).not.toHaveBeenCalled();
+    expect(journal.mkdir).not.toHaveBeenCalled();
+    expect(journal.rename).not.toHaveBeenCalled();
+    expect(journal.unlink).not.toHaveBeenCalled();
+    expect(journal.writeFile).not.toHaveBeenCalled();
+    expect(users.getUser).not.toHaveBeenCalled();
+    expect(users.deleteUser).not.toHaveBeenCalled();
+    expect(users.getUserList).not.toHaveBeenCalled();
+    expect(users.createUser).not.toHaveBeenCalled();
+    expect(check).not.toHaveBeenCalled();
+  });
+
   it("recovers an interrupted creation by exact email and marker without creating an account", async () => {
     const path = join(directory, "interrupted.json");
     const intent = { state: "intent", runId: saved.runId, email: saved.email };
