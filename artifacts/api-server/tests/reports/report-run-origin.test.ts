@@ -123,13 +123,19 @@ const emailByUserId: Record<string, string> = {
 };
 let siteFixtures = [site];
 
-function runRequest(options: { origin?: string; fetchSite?: string; reportId?: string; siteId?: string } = {}) {
+function runRequest(options: {
+  origin?: string;
+  fetchSite?: string;
+  reportId?: string;
+  siteId?: string;
+  body?: Record<string, unknown>;
+} = {}) {
   let req = request(app).post(`/api/access/reports/${options.reportId ?? "inbound-1"}/run`)
     .set("Host", "wareiq.test")
     .set("X-Forwarded-Proto", "https");
   if (options.origin !== undefined) req = req.set("Origin", options.origin);
   if (options.fetchSite !== undefined) req = req.set("Sec-Fetch-Site", options.fetchSite);
-  return req.send({ siteId: options.siteId ?? "site-a" });
+  return req.send(options.body === undefined ? { siteId: options.siteId ?? "site-a" } : options.body);
 }
 
 beforeEach(() => {
@@ -248,6 +254,31 @@ describe("full-app authorization for report runs", () => {
     expect(provider.getSession).toHaveBeenCalledOnce();
     expect(provider.getUser).toHaveBeenCalledOnce();
     expect(database.select).toHaveBeenCalled();
+    expect(executeMysqlReport).not.toHaveBeenCalled();
+    expect(poolConstructor).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["an empty string", { siteId: "" }],
+    ["a number", { siteId: 42 }],
+    ["null", { siteId: null }],
+    ["an object", { siteId: { id: "site-a" } }],
+  ])("rejects %s site IDs before WMS access", async (_label, body) => {
+    vi.stubEnv("WMS_MYSQL_REPORT_MAPPINGS", JSON.stringify({
+      "inbound-1": {
+        view: "v_receipts", clientColumn: "client_code", siteColumn: "warehouse_code",
+        columns: { id: "receipt_id" },
+      },
+    }));
+
+    const response = await runRequest({
+      origin: "https://wareiq.test",
+      fetchSite: "same-origin",
+      body,
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({ error: "Check all required fields and selections." });
     expect(executeMysqlReport).not.toHaveBeenCalled();
     expect(poolConstructor).not.toHaveBeenCalled();
   });
