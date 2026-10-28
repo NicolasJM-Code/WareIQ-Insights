@@ -248,7 +248,7 @@ function Directory({ dir }: { dir: AccessDirectory }) {
                 <div className="min-w-0 text-sm">
                   <p className="font-medium">{notice.recipient}</p>
                   <p className="text-muted-foreground">
-                    {notice.kind === 'platform' ? 'Platform access' : 'Reporting access'} · {notice.roleName} · {notice.attempts} {notice.attempts === 1 ? 'attempt' : 'attempts'}
+                    {notice.kind === 'vpn_outage' ? 'VPN outage' : notice.kind === 'vpn_recovery' ? 'VPN recovery' : notice.kind === 'platform' ? 'Platform access' : 'Reporting access'} · {notice.roleName} · {notice.attempts} {notice.attempts === 1 ? 'attempt' : 'attempts'}
                   </p>
                   <p className="text-xs text-muted-foreground">Created {new Date(notice.createdAt).toLocaleString()}</p>
                 </div>
@@ -296,7 +296,7 @@ function Directory({ dir }: { dir: AccessDirectory }) {
               <li key={notice.id} data-testid={`row-uncertain-notification-${notice.id}`} className="py-3 text-sm">
                 <p className="font-medium">{notice.recipient}</p>
                 <p className="text-muted-foreground">
-                  {notice.kind === 'platform' ? 'Platform access' : 'Reporting access'} · {notice.roleName} · {notice.attempts} {notice.attempts === 1 ? 'attempt' : 'attempts'}
+                  {notice.kind === 'vpn_outage' ? 'VPN outage' : notice.kind === 'vpn_recovery' ? 'VPN recovery' : notice.kind === 'platform' ? 'Platform access' : 'Reporting access'} · {notice.roleName} · {notice.attempts} {notice.attempts === 1 ? 'attempt' : 'attempts'}
                 </p>
                 <p className="text-xs text-muted-foreground">Created {new Date(notice.createdAt).toLocaleString()}</p>
               </li>

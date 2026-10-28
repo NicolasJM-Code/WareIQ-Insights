@@ -81,7 +81,7 @@ function reportingPassword(input: WmsConnectionInput, requireCredentials = true)
 }
 
 /** Build report credentials only from the server's MySQL secret/approval settings. */
-function configuredMysqlReportInput(): WmsConnectionInput | undefined {
+export function configuredMysqlReportInput(): WmsConnectionInput | undefined {
   const keys = ["WMS_MYSQL_DATABASE_URL", "WMS_MYSQL_PASSWORD", "WMS_MYSQL_APPROVED_HOST",
     "WMS_MYSQL_APPROVED_PORT", "WMS_MYSQL_APPROVED_DATABASE", "WMS_MYSQL_APPROVED_USERNAME"];
   if (keys.every((key) => process.env[key] === undefined)) return undefined;

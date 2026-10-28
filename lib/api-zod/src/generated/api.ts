@@ -256,7 +256,7 @@ export const GetAccessAdminResponse = zod.object({
   "id": zod.string().uuid(),
   "recipient": zod.string().email(),
   "roleName": zod.string(),
-  "kind": zod.enum(['reporting', 'platform']),
+  "kind": zod.enum(['reporting', 'platform', 'vpn_outage', 'vpn_recovery']),
   "createdAt": zod.coerce.date(),
   "attempts": zod.number().int().min(1)
 })),
@@ -292,7 +292,7 @@ export const ListFailedAccessNotificationsResponse = zod.object({
   "id": zod.string().uuid(),
   "recipient": zod.string().email(),
   "roleName": zod.string(),
-  "kind": zod.enum(['reporting', 'platform']),
+  "kind": zod.enum(['reporting', 'platform', 'vpn_outage', 'vpn_recovery']),
   "createdAt": zod.coerce.date(),
   "attempts": zod.number().int().min(1)
 })),
@@ -665,7 +665,11 @@ export const RunAccessReportResponse = zod.object({
 export const GetWmsNetworkConfigResponse = zod.object({
   "path": zod.enum(['direct', 'openvpn']),
   "configured": zod.boolean(),
-  "message": zod.string()
+  "message": zod.string(),
+  "monitoring": zod.object({
+  "status": zod.enum(['healthy', 'unavailable', 'unknown', 'disabled']),
+  "checkedAt": zod.string().nullable()
+}).optional()
 })
 
 

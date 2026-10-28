@@ -32,7 +32,7 @@ beforeEach(() => {
     return req;
   });
 });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); });
 
 test("readiness is authenticated, DNS-pinned HTTPS and sends no SQL password", async () => {
   await checkOpenVpn(input);
@@ -97,4 +97,25 @@ test("an invalid path cannot silently fall back to direct access", async () => {
   expect(getWmsNetworkConfig()).toMatchObject({ path: "openvpn", configured: false });
   await expect(checkOpenVpn(input)).rejects.toMatchObject({ code: "VPN_CONFIGURATION_INVALID" });
   expect(fake.request).not.toHaveBeenCalled();
+});
+
+test("a stalled connector request times out and destroys transport without exposing secrets", async () => {
+  vi.useFakeTimers();
+  const destroy = vi.fn();
+  fake.request.mockReturnValue(Object.assign(new EventEmitter(), { end: vi.fn(), destroy }));
+  const check = expect(checkOpenVpn(input)).rejects.toMatchObject({ code: "VPN_NOT_READY" });
+  await vi.advanceTimersByTimeAsync(8000);
+  await check;
+  expect(destroy).toHaveBeenCalledOnce();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("gateway DNS has a finite timeout and never sends credentials after it expires", async () => {
+  vi.useFakeTimers();
+  fake.lookup.mockReturnValue(new Promise(() => {}));
+  const check = expect(checkOpenVpn(input)).rejects.toMatchObject({ code: "VPN_NOT_READY" });
+  await vi.advanceTimersByTimeAsync(5000);
+  await check;
+  expect(fake.request).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
 });

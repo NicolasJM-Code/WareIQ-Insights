@@ -5,3 +5,4 @@ export * from "./access";
 export * from "./access-history";
 export * from "./capture-diagnostics";
 export * from "./access-notifications";
+export * from "./wms-vpn-health";

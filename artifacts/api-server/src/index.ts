@@ -1,6 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { startAccessNotifications } from "./lib/access-notifications";
+import { startWarehouseVpnMonitor } from "./lib/wms-vpn-monitor";
 
 const rawPort = process.env["PORT"];
 
@@ -24,4 +25,5 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
   startAccessNotifications();
+  startWarehouseVpnMonitor();
 });

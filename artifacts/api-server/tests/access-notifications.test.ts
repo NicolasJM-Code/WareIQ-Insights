@@ -145,6 +145,43 @@ describe("durable delivery and duplicate protection", () => {
       from: () => ({ orderBy: async () => [] }),
     }));
   });
+  it.each(["vpn_outage", "vpn_recovery"])("delivers %s through the existing idempotent queue to a current administrator", async (kind) => {
+    mocks.query.mockImplementation(async (sql: string) => ({
+      rows: sql.startsWith("SELECT *") ? [{ ...job, kind, target_id: "admin-fixture" }] : [],
+    }));
+    mocks.getUser.mockResolvedValue({
+      publicMetadata: { role: "admin" }, banned: false, locked: false,
+      primaryEmailAddressId: "primary",
+      emailAddresses: [{ id: "primary", emailAddress: member.email, verification: { status: "verified" } }],
+    });
+    await deliverAccessNotifications();
+    expect(mocks.send).toHaveBeenCalledOnce();
+    const request = mocks.send.mock.calls[0][1];
+    expect(request.headers["Idempotency-Key"]).toBe("wareiq-access/event-one");
+    expect(JSON.parse(request.body).subject).toContain(kind === "vpn_outage" ? "unavailable" : "recovered");
+    expect(mocks.query).toHaveBeenCalledWith("UPDATE wareiq_access_notifications SET state = 'sent' WHERE id = $1", ["event-one"]);
+  });
+  it.each([
+    { role: "supervisor", banned: false, verified: true, email: member.email },
+    { role: "admin", banned: true, verified: true, email: member.email },
+    { role: "admin", banned: false, verified: false, email: member.email },
+    { role: "admin", banned: false, verified: true, email: "changed@example.test" },
+  ])("cancels VPN notices when the queued recipient is no longer eligible: %j", async (current) => {
+    mocks.query.mockImplementation(async (sql: string) => ({
+      rows: sql.startsWith("SELECT *") ? [{ ...job, kind: "vpn_outage", target_id: "admin-fixture" }] : [],
+    }));
+    mocks.getUser.mockResolvedValue({
+      publicMetadata: { role: current.role }, banned: current.banned, locked: false,
+      primaryEmailAddressId: "primary",
+      emailAddresses: [{ id: "primary", emailAddress: current.email,
+        verification: { status: current.verified ? "verified" : "unverified" } }],
+    });
+    await deliverAccessNotifications();
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(mocks.query).toHaveBeenCalledWith(
+      "UPDATE wareiq_access_notifications SET state = 'cancelled' WHERE id = $1 AND state = 'pending'", ["event-one"],
+    );
+  });
   it("exposes only aggregate delivery counts to administrator views", async () => {
     mocks.summaryQuery.mockResolvedValue({ rows: [{
       queued: "2", queued_over_threshold: "1", oldest_queued_age_seconds: "420",

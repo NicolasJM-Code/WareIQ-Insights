@@ -494,6 +494,8 @@ export type AccessUncertainNotificationKind = typeof AccessUncertainNotification
 export const AccessUncertainNotificationKind = {
   reporting: 'reporting',
   platform: 'platform',
+  vpn_outage: 'vpn_outage',
+  vpn_recovery: 'vpn_recovery',
 } as const;
 
 export interface AccessUncertainNotification {
@@ -522,6 +524,8 @@ export type AccessFailedNotificationKind = typeof AccessFailedNotificationKind[k
 export const AccessFailedNotificationKind = {
   reporting: 'reporting',
   platform: 'platform',
+  vpn_outage: 'vpn_outage',
+  vpn_recovery: 'vpn_recovery',
 } as const;
 
 export interface AccessFailedNotification {
@@ -687,10 +691,27 @@ export const WmsNetworkConfigPath = {
   openvpn: 'openvpn',
 } as const;
 
+export type WmsNetworkConfigMonitoringStatus = typeof WmsNetworkConfigMonitoringStatus[keyof typeof WmsNetworkConfigMonitoringStatus];
+
+
+export const WmsNetworkConfigMonitoringStatus = {
+  healthy: 'healthy',
+  unavailable: 'unavailable',
+  unknown: 'unknown',
+  disabled: 'disabled',
+} as const;
+
+export type WmsNetworkConfigMonitoring = {
+  status: WmsNetworkConfigMonitoringStatus;
+  /** @nullable */
+  checkedAt: string | null;
+};
+
 export interface WmsNetworkConfig {
   path: WmsNetworkConfigPath;
   configured: boolean;
   message: string;
+  monitoring?: WmsNetworkConfigMonitoring;
 }
 
 export type WmsNetworkResultStatus = typeof WmsNetworkResultStatus[keyof typeof WmsNetworkResultStatus];

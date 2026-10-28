@@ -8,7 +8,7 @@ export const accessNotificationsTable = pgTable("wareiq_access_notifications", {
   id: text("id").primaryKey(),
   recipient: text("recipient").notNull(),
   roleName: text("role_name").notNull(),
-  kind: text("kind").notNull(), // reporting | platform
+  kind: text("kind").notNull(), // reporting | platform | vpn_outage | vpn_recovery
   state: text("state").notNull().default("pending"),
   targetId: text("target_id"),
   platformRole: text("platform_role"),

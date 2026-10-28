@@ -15,6 +15,21 @@ export function createConnector(config, dependencies = {}) {
     socket.once("error", () => { clearTimeout(timer); reject(new Error("VPN_NOT_READY")); });
     socket.once("connect", () => { clearTimeout(timer); socket.destroy(); resolve(); });
   });
+  // Share in-flight readiness work across callers. Even if a dependency stalls,
+  // callers time out without launching additional route or TCP checks.
+  let readiness;
+  const readinessCheck = async () => {
+    if (!readiness) {
+      readiness = (async () => { await checkRoute(config); await probe(); })()
+        .finally(() => { readiness = undefined; });
+    }
+    let timer;
+    try {
+      await Promise.race([readiness, new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("VPN_NOT_READY")), dependencies.statusTimeoutMs ?? 8500);
+      })]);
+    } finally { clearTimeout(timer); }
+  };
   const server = createServer({
     cert: readFileSync(config.certFile), key: readFileSync(config.keyFile),
     minVersion: "TLSv1.2", handshakeTimeout: 8000,
@@ -30,9 +45,8 @@ export function createConnector(config, dependencies = {}) {
     if (!authorized(req, config)) { res.writeHead(403).end(); return; }
     if (req.method !== "GET" || req.url !== "/v1/status") { res.writeHead(404).end(); return; }
     try {
-      await checkRoute(config);
       // TCP reachability through the verified VPN route, without a SQL login.
-      await probe();
+      await readinessCheck();
       res.writeHead(200, { "Content-Type": "application/json" }).end('{"vpn":"ready"}');
     } catch { res.writeHead(503).end(); }
   });

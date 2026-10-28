@@ -5,10 +5,12 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { WmsNetworkConfigMonitoring } from './wmsNetworkConfigMonitoring';
 import type { WmsNetworkConfigPath } from './wmsNetworkConfigPath';
 
 export interface WmsNetworkConfig {
   path: WmsNetworkConfigPath;
   configured: boolean;
   message: string;
+  monitoring?: WmsNetworkConfigMonitoring;
 }

@@ -7,8 +7,10 @@ import { logger } from "./logger";
 import { withRoleLock } from "./role-lock";
 import { notificationMessage, notificationSender } from "./access-notification-message";
 import type { AppRole } from "./access-policy";
+import { appRole, verifiedPrimaryEmail } from "./access-policy";
 
 export type NotificationStatus = "queued" | "failed" | "not_needed";
+type StoredNoticeKind = "reporting" | "platform" | "vpn_outage" | "vpn_recovery";
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 export type Notice = {
   recipient: string; roleName: string; kind: "reporting" | "platform"; targetId?: string;
@@ -183,7 +185,7 @@ function encodeFailedNotificationCursor(createdAt: string, id: string): string {
 export async function listConfirmedFailedAccessNotifications(cursor?: string) {
   const position = cursor ? decodeFailedNotificationCursor(cursor) : undefined;
   const { rows } = await pool.query<{
-    id: string; recipient: string; role_name: string; kind: "reporting" | "platform";
+    id: string; recipient: string; role_name: string; kind: StoredNoticeKind;
     created_at: Date; attempts: number; cursor_created_at: string;
   }>(`SELECT id, recipient, role_name, kind, created_at, attempts,
         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_created_at
@@ -204,7 +206,7 @@ export async function listConfirmedFailedAccessNotifications(cursor?: string) {
 
 export async function listUncertainAccessNotifications() {
   const { rows } = await pool.query<{
-    id: string; recipient: string; role_name: string; kind: "reporting" | "platform";
+    id: string; recipient: string; role_name: string; kind: StoredNoticeKind;
     created_at: Date; attempts: number;
   }>(`SELECT id, recipient, role_name, kind, created_at, attempts
       FROM wareiq_access_notifications
@@ -265,6 +267,15 @@ export async function deliverAccessNotifications(): Promise<void> {
     // Concurrent workers may reclaim after two minutes. They use the same key.
     try {
       const deliver = async () => {
+        if (row.kind === "vpn_outage" || row.kind === "vpn_recovery") {
+          const user = await clerkClient.users.getUser(row.target_id!);
+          const email = user.emailAddresses.find((e) => e.id === user.primaryEmailAddressId);
+          if (appRole(user.publicMetadata.role) !== "admin" || user.banned || user.locked ||
+              !verifiedPrimaryEmail(user) || email?.emailAddress !== row.recipient) {
+            await connection.query("UPDATE wareiq_access_notifications SET state = 'cancelled' WHERE id = $1 AND state = 'pending'", [row.id]);
+            return;
+          }
+        }
         if (row.kind === "platform") {
           const user = await clerkClient.users.getUser(row.target_id!);
           if (user.privateMetadata.wareiqRoleNotificationId !== row.id ||
@@ -315,7 +326,7 @@ export async function deliverAccessNotifications(): Promise<void> {
         await connection.query("UPDATE wareiq_access_notifications SET state = 'sent' WHERE id = $1", [row.id]);
         await connection.query("COMMIT");
       };
-      if (row.kind === "platform") await withRoleLock(deliver);
+      if (row.kind === "platform" || row.kind === "vpn_outage" || row.kind === "vpn_recovery") await withRoleLock(deliver);
       else await deliver();
     } catch {
       await connection.query("ROLLBACK").catch(() => undefined);

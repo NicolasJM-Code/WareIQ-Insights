@@ -27,6 +27,19 @@ export function WmsVpnSteps({ config, unavailable, pending, ready, result, onChe
     </div>
     {unavailable ? <p role="alert" className="text-xs text-destructive">Connection-path configuration could not be loaded. MySQL testing is locked until it can be verified.</p>
       : <p className="text-xs">{config?.message ?? 'Loading server connection path…'}</p>}
+    {config?.path === 'openvpn' && <div role="status" className="text-xs space-y-1" data-testid="status-vpn-monitor">
+      <p><strong>Background monitoring: </strong>{
+        unavailable || !config.monitoring || config.monitoring.status === 'unknown'
+          ? 'Unknown — monitoring cannot currently verify connectivity.'
+          : config.monitoring.status === 'healthy'
+            ? 'VPN route and database TCP port reachable. SQL login is not verified.'
+            : config.monitoring.status === 'unavailable'
+              ? 'Unavailable — connector or warehouse route check failed.'
+              : 'Disabled.'
+      }</p>
+      {!unavailable && config.monitoring?.checkedAt && <p>Last check: {new Date(config.monitoring.checkedAt).toLocaleString()}</p>}
+      <p>Checks run once a minute while the API is running. Verified administrators receive an email after two consecutive failures and a recovery email when reachability returns.</p>
+    </div>}
     {config?.path === 'direct' && <p className="text-xs text-muted-foreground">
       VPN mode is not active. An owner must configure <code>WMS_OPENVPN_CONNECTOR_URL</code> and
       its secret token, then set <code>WMS_MYSQL_CONNECTION_PATH=openvpn</code> on the server.

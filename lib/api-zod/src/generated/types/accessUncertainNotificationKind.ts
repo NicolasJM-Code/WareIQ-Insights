@@ -12,4 +12,6 @@ export type AccessUncertainNotificationKind = typeof AccessUncertainNotification
 export const AccessUncertainNotificationKind = {
   reporting: 'reporting',
   platform: 'platform',
+  vpn_outage: 'vpn_outage',
+  vpn_recovery: 'vpn_recovery',
 } as const;

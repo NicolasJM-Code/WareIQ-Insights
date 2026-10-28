@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createServer as tlsServer, connect as tlsConnect } from "node:tls";
-import { createConnection } from "node:net";
+import { createConnection, Socket } from "node:net";
 import https from "node:https";
 import { once } from "node:events";
 import { readConfig, authorized, assertVpnRoute } from "./policy.mjs";
@@ -74,14 +74,23 @@ test("real HTTPS CONNECT carries nested verified TLS and drops the tunnel when V
     });
     db.on("connection", track);
     await new Promise((resolve) => db.listen(0, "127.0.0.1", resolve));
-    let routeReady = true, dialCount = 0;
+    let routeReady = true, dialCount = 0, routeChecks = 0;
+    let routeWait;
+    let stalledSocket;
+    let stallTcp = false;
     const connector = createConnector(readConfig({
       ...env, WAREIQ_CONNECTOR_TLS_CERT_FILE: certFile, WAREIQ_CONNECTOR_TLS_KEY_FILE: keyFile,
     }), {
-      checkRoute: async () => { if (!routeReady) throw new Error("VPN_NOT_READY"); },
+      statusTimeoutMs: 100,
+      checkRoute: async () => {
+        routeChecks += 1;
+        if (routeWait) await routeWait;
+        if (!routeReady) throw new Error("VPN_NOT_READY");
+      },
       connect: (options) => {
         assert.deepEqual(options, { host: "10.40.0.10", port: 3306 });
         dialCount += 1;
+        if (stallTcp) return (stalledSocket = new Socket());
         return createConnection({ host: "127.0.0.1", port: db.address().port });
       },
     });
@@ -128,4 +137,26 @@ test("real HTTPS CONNECT carries nested verified TLS and drops the tunnel when V
     assert.equal(await status(headers), 503);
     await closed;
     assert.equal(nested.destroyed, true, "a lost VPN route must close the existing tunnel");
+
+    // A stalled route check cannot hold HTTP requests indefinitely or fan out
+    // additional readiness work. No SQL or external network is used.
+    routeReady = true;
+    let releaseRoute;
+    routeWait = new Promise((resolve) => { releaseRoute = resolve; });
+    const checksBefore = routeChecks;
+    assert.deepEqual(await Promise.all([status(headers), status(headers), status(headers)]), [503, 503, 503]);
+    assert.equal(await status(headers), 503);
+    assert.equal(routeChecks, checksBefore + 1, "only one underlying route check may run");
+    releaseRoute();
+    routeWait = undefined;
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(await status(headers), 200, "readiness recovers after the route check returns");
+
+    stallTcp = true;
+    assert.equal(await status(headers), 503, "a stalled TCP probe never reports ready");
+    assert.equal(await status(headers), 503);
+    await new Promise((resolve) => setTimeout(resolve, 2100));
+    assert.equal(stalledSocket.destroyed, true, "the TCP probe closes its socket at its deadline");
+    stallTcp = false;
+    assert.equal(await status(headers), 200);
   });

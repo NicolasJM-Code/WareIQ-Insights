@@ -1,8 +1,9 @@
 import { Router, type IRouter } from "express";
 import { clerkClient, getAuth } from "@clerk/express";
-import { TestWmsConnectionBody, TestWmsConnectionResponse } from "@workspace/api-zod";
+import { TestWmsConnectionBody, TestWmsConnectionResponse, GetWmsNetworkConfigResponse } from "@workspace/api-zod";
 import { testConnection, testWmsVpn } from "../lib/wms-connection";
 import { getWmsNetworkConfig } from "../lib/wms-openvpn";
+import { warehouseVpnHealth } from "../lib/wms-vpn-monitor";
 
 const router: IRouter = Router();
 let busy = false;
@@ -25,8 +26,8 @@ router.use("/wms/connection", async (req, res, next): Promise<void> => {
   next();
 });
 
-router.get("/wms/connection/network", (_req, res) => {
-  res.json(getWmsNetworkConfig());
+router.get("/wms/connection/network", async (_req, res) => {
+  res.json(GetWmsNetworkConfigResponse.parse({ ...getWmsNetworkConfig(), monitoring: await warehouseVpnHealth() }));
 });
 
 router.post("/wms/connection/vpn-test", async (req, res): Promise<void> => {

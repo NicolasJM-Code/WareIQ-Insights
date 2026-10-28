@@ -795,7 +795,7 @@ components:
         id: { type: string, format: uuid }
         recipient: { type: string, format: email }
         roleName: { type: string }
-        kind: { type: string, enum: [reporting, platform] }
+        kind: { type: string, enum: [reporting, platform, vpn_outage, vpn_recovery] }
         createdAt: { type: string, format: date-time }
         attempts: { type: integer, minimum: 1 }
     AccessUncertainNotification:
@@ -805,7 +805,7 @@ components:
         id: { type: string, format: uuid }
         recipient: { type: string, format: email }
         roleName: { type: string }
-        kind: { type: string, enum: [reporting, platform] }
+        kind: { type: string, enum: [reporting, platform, vpn_outage, vpn_recovery] }
         createdAt: { type: string, format: date-time }
         attempts: { type: integer, minimum: 1 }
     AccessFailedNotificationPage:
@@ -911,6 +911,12 @@ components:
         path: { type: string, enum: [direct, openvpn] }
         configured: { type: boolean }
         message: { type: string }
+        monitoring:
+          type: object
+          required: [status, checkedAt]
+          properties:
+            status: { type: string, enum: [healthy, unavailable, unknown, disabled] }
+            checkedAt: { type: string, nullable: true }
     WmsNetworkResult:
       type: object
       required: [status, code, message, testedAt]

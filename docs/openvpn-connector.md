@@ -155,3 +155,50 @@ Do not log Authorization headers, service environment values, VPN profiles or
 SQL passwords. To rotate the shared token, update both services securely;
 mismatched tokens deny access. To intentionally return to the old direct route,
 an owner must explicitly set `WMS_MYSQL_CONNECTION_PATH=direct` and restart.
+
+## Background health monitoring and administrator alerts
+
+When OpenVPN mode is enabled, the API checks the **server-approved** MySQL
+destination at startup and every minute, without sending a password or attempting
+a SQL login. The authenticated status endpoint verifies the VPN interface, kernel
+route, private DNS and TCP reachability. It does not prove SQL authentication,
+database permissions, reporting-view availability or query success.
+
+Two consecutive failed checks open an outage and queue one email per unrestricted,
+verified-primary-email platform administrator. A single transient failure sends
+no email. Sustained failures do not send repeated outage emails. The first
+successful check after an outage queues a recovery notice. Monitoring errors do
+not count as reachability failures or recovery, and break the consecutive-failure
+sequence. Administrator lookup or queue failures roll back the transition and
+retry next time. Accounts that lose administrator access before delivery do not
+receive these notices.
+
+State and notifications are committed together to the application PostgreSQL
+database; never to WMS. Apply the normal application schema update
+(`pnpm --filter @workspace/db run push`, also in post-merge setup) before starting
+the API with monitoring enabled. Missing tables or application-database outages
+show **Unknown**, never a successful connection. Configured destination changes
+start a new monitoring baseline. Direct mode disables monitoring and sends no
+recovery notice for the old VPN route.
+
+Settings polls the monitoring status separately from the manual VPN test.
+Results older than 150 seconds, incomplete configuration, directory failures or
+monitoring-storage errors show **Unknown**. A manual successful check does not
+clear a background outage or prove that SQL works.
+
+Checks do not overlap within a process; a PostgreSQL transaction advisory lock
+and persisted next-check time coordinate API instances and restarts. Gateway DNS
+has a five-second deadline and HTTPS has an eight-second deadline. Connector
+readiness calls share in-flight work and return failure after 8.5 seconds; TCP
+probes close their socket after two seconds. Monitor database operations and
+administrator discovery also have deadlines and a small dedicated connection
+pool. If a dependency ignores its deadline, the monitor reports unknown instead
+of launching more overlapping work.
+
+Email uses the existing durable Resend outbox, delivery retries and idempotency
+keys. Failed deliveries appear in administrator email-delivery history alongside
+access emails. Monitoring is only active while an API instance is running; it
+cannot send email if all instances are stopped. For continuous coverage, run a
+continuously available API instance and retain independent external monitoring
+of the connector and API. No connector token, SQL credential, VPN profile or
+raw provider error is included in health logs, status responses or notices.

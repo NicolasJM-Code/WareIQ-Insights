@@ -12,4 +12,6 @@ export type AccessFailedNotificationKind = typeof AccessFailedNotificationKind[k
 export const AccessFailedNotificationKind = {
   reporting: 'reporting',
   platform: 'platform',
+  vpn_outage: 'vpn_outage',
+  vpn_recovery: 'vpn_recovery',
 } as const;
