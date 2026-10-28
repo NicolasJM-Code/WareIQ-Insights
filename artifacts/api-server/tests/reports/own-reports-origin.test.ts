@@ -57,7 +57,11 @@ const importBody = {
   expectedOwnerId: "owner-a",
   expectedClientId: "client-a",
   confirmedOwnership: true,
-  reports: [{ ...definition, name: "Imported report" }],
+  reports: [
+    { ...definition, name: "Imported report A" },
+    { ...definition, name: "Imported report B" },
+    { ...definition, name: "Imported report C" },
+  ],
 };
 const snapshot = async () =>
   (await pool.query("SELECT * FROM wareiq_own_reports ORDER BY id")).rows;
@@ -160,27 +164,39 @@ describe("full-app origin protection for saved reports", () => {
 
   it("allows a same-origin bulk import through the full application", async () => {
     const before = await snapshot();
-    const importedDefinition = { ...definition, name: "Imported report" };
     const response = await mutation("post", importPath, {
       origin: "https://wareiq.test",
       fetchSite: "same-origin",
     }).send(importBody);
 
     expect(response.status).toBe(200);
-    expect(response.body).toHaveLength(1);
-    expect(response.body[0]).toMatchObject({
-      ...importedDefinition,
-      id: expect.any(String),
-      createdAt: expect.any(String),
-      updatedAt: expect.any(String),
-    });
+    expect(response.body).toHaveLength(importBody.reports.length);
+    for (const importedDefinition of importBody.reports) {
+      expect(response.body).toContainEqual(expect.objectContaining({
+        ...importedDefinition,
+        id: expect.any(String),
+        createdAt: expect.any(String),
+        updatedAt: expect.any(String),
+      }));
+    }
+
     const after = await snapshot();
-    expect(after).toHaveLength(before.length + 1);
-    expect(after.find((row) => row.id === response.body[0].id)).toMatchObject({
-      owner_id: "owner-a",
-      client_id: "client-a",
-      definition: importedDefinition,
-    });
+    expect(after).toHaveLength(before.length + importBody.reports.length);
+    const importedIds = new Set(response.body.map((report: { id: string }) => report.id));
+    expect(importedIds).toHaveLength(importBody.reports.length);
+    const persistedImports = after.filter((row) => importedIds.has(row.id));
+    expect(persistedImports).toHaveLength(importBody.reports.length);
+    for (const importedDefinition of importBody.reports) {
+      const returned = response.body.find(
+        (report: { name: string }) => report.name === importedDefinition.name,
+      );
+      expect(returned).toBeDefined();
+      expect(persistedImports.find((row) => row.id === returned.id)).toMatchObject({
+        owner_id: "owner-a",
+        client_id: "client-a",
+        definition: importedDefinition,
+      });
+    }
   });
 
   it("allows a same-origin DELETE to remove a report through the full application", async () => {
