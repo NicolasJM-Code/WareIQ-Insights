@@ -355,6 +355,51 @@ On a process kill or provider cleanup failure, retain the private journal and
 use the browser cleanup recovery command above against the same Development
 instance. Recovery creates no account and opens no browser.
 
+## Opt-in repeated browser renewal outages
+
+```sh
+CLERK_BROWSER_TESTS=isolated-development-only \
+CLERK_BROWSER_EXECUTABLE="$(command -v chromium)" \
+pnpm test:auth:browser:renewal:repeat
+```
+
+This longer live scenario is separately selected by
+`vitest.browser-renewal-repeat.config.ts` (`CLERK_BROWSER_SCENARIO=renewal-repeat`).
+It is **not** part of `test:auth:browser:renewal`, `test:auth:browser`, the offline
+suite, the authorization workflow, or a build. Allow about eight minutes;
+the scenario has a ten-minute test timeout plus the shared cleanup timeout.
+It requires the same explicit opt-in, Development keys, locally verified
+key-pair attestation, Chromium and network access as the renewal check above.
+Do not enable it globally or in routine offline CI.
+
+One new disposable Development account and one session complete the initial
+automatic renewal, then **two full outage/recovery cycles**. After the first
+recovery has delivered fresh server authorization and both harmless protected
+markers are visible again, SDK networking is interrupted a second time in the
+same open document. No navigation is allowed after the initial reload control.
+Each cycle takes its own cookie snapshot after blocking networking and verifies
+the original session ID; the second snapshot must have a later expiry than the
+cookie from the first outage. Each cycle observes a blocked renewal attempt,
+waits past that cycle's latest cookie expiry, and requires permissions and both
+markers to lock. Another complete access poll must leave them locked, and the
+protected APIs must deny access without reaching the harmless report handler.
+This specifically prevents permissions renewed after the first recovery from
+remaining cached through the second expiry.
+
+Each restoration independently requires advancing issuance and expiry on the
+SDK-written cookie for the same session and a fresh, real active `/api/access/me`
+response. The original browser fetch response is held before delivery to prove
+neither marker nor permissions unlocks early. Only after delivering that original
+response may both markers return and cookie-only protected controls succeed.
+The runner never signs in again, injects tokens/cookies, manually refreshes,
+changes clocks or reloads to recover. Cycle-specific failure phases and success
+messages contain no credentials or provider response details.
+
+The existing database isolation, harmless catalog/markers, private ownership-
+checked cleanup journal and `afterAll` cleanup apply unchanged; no report data or
+real database access is involved. If interrupted, use the existing browser cleanup
+recovery command above against the same Development instance before retrying.
+
 ## Opt-in hosted sign-in screen check
 
 ```sh

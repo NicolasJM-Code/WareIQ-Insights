@@ -13,6 +13,7 @@
     "auth:provider:fingerprint": "pnpm --filter @workspace/scripts exec tsx ../artifacts/api-server/provider-tests/key-pair-fingerprint.ts",
     "test:auth:browser": "vitest run --config vitest.browser.config.ts",
     "test:auth:browser:renewal": "vitest run --config vitest.browser-renewal.config.ts",
+    "test:auth:browser:renewal:repeat": "vitest run --config vitest.browser-renewal-repeat.config.ts",
     "test:auth:hosted": "vitest run --config vitest.hosted.config.ts",
     "test:auth:typecheck": "pnpm run typecheck:libs && pnpm --filter @workspace/api-server exec tsc -p tsconfig.test.json && pnpm --filter @workspace/wareiq exec tsc -p tsconfig.test.json && pnpm --filter @workspace/scripts run typecheck",
     "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",

@@ -30,6 +30,7 @@ vi.mock("../src/lib/logger", () => ({
 vi.mock("pino-http", () => ({
   default: () => (req: { log: unknown }, _res: unknown, next: () => void) => {
     req.log = { warn() {}, error() {} }; next();
+    req.log = { warn() {}, error() {} }; next();
   },
 }));
 
@@ -68,6 +69,7 @@ type BrowserClerk = {
   client: { signIn: { create: (p: { strategy: "ticket"; ticket: string }) => Promise<{ createdSessionId: string | null }> } };
   setActive: (p: { session: string }) => Promise<void>;
 };
+declare global { interface Window { Clerk: BrowserClerk } }
 declare global { interface Window { Clerk: BrowserClerk } }
 
 async function signIn(userId: string) {
@@ -196,7 +198,7 @@ async function pastExpiry(exp: number) {
 
 async function recoverRenewal(
   context: BrowserContext, page: Page, last: Awaited<ReturnType<typeof sessionCookie>>,
-  restore: () => Promise<void>,
+  restore: () => Promise<void>, label: string,
 ) {
   // Observe the whole recovery window, not just a final snapshot: cached
   // permissions must never unlock either guard before fresh server evidence.
@@ -234,7 +236,7 @@ async function recoverRenewal(
     };
   });
   try {
-    phase = "restored SDK networking and passive cookie recovery";
+    phase = `${label}: restored SDK networking and passive cookie recovery`;
     await restore();
     await expect.poll(async () => {
       const fresh = await sessionCookie(context);
@@ -242,17 +244,17 @@ async function recoverRenewal(
         && fresh.exp * 1000 > Date.now();
     }, { timeout: 90_000, interval: 500 }).toBe(true);
 
-    phase = "fresh server authorization held before guard recovery";
+    phase = `${label}: fresh server authorization held before guard recovery`;
     await expect.poll(() => recovery.evaluate(state => state.received()), { timeout: 35_000 }).toBe(true);
     // Even with a fresh SDK cookie and the server's successful response waiting
     // at the network boundary, the old cached summary must not grant access.
-    phase = "cached permissions remain locked before fresh summary delivery";
+    phase = `${label}: cached permissions remain locked before fresh summary delivery`;
     expect(await recovery.evaluate(state => state.stop())).toBe(false);
     expect(await page.getByTestId("permissions").textContent()).toBe("locked");
     expect(await page.getByTestId("report-gate").count()).toBe(0);
     expect(await page.getByTestId("admin-gate").count()).toBe(0);
 
-    phase = "fresh access summary delivery and reporting recovery";
+    phase = `${label}: fresh access summary delivery and reporting recovery`;
     await recovery.evaluate(state => state.release());
     await page.getByTestId("admin-gate").waitFor({ state: "visible" });
     await cookieControl(page);
@@ -262,11 +264,14 @@ async function recoverRenewal(
   }
 }
 
-async function renewal(userId: string) {
+async function renewal(userId: string, cycles: 1 | 2) {
   phase = "renewal browser-authenticated positive control";
   const signedIn = await signIn(userId);
   const { context, page } = signedIn;
   try {
+    // After the initial reload control, every cycle must use this document.
+    let navigations = 0;
+    page.on("framenavigated", frame => { if (frame === page.mainFrame()) navigations++; });
     const first = await sessionCookie(context);
     expect(first.sid).toBe(signedIn.sessionId);
     phase = "genuine SDK renewal beyond initial cookie expiry";
@@ -285,23 +290,29 @@ async function renewal(userId: string) {
     expect(access.status === "active" && access.platformAdmin === true && access.reportIds.length > 0).toBe(true);
     await cookieControl(page);
 
-    phase = "post-renewal blocked refresh positive control";
-    const outage = await freezeRefresh(context);
-    await cookieControl(page);
-    // Snapshot after blocking: a renewal just before the block must not make
-    // the denial assertion run against the wrong token's expiry.
-    const last = await sessionCookie(context);
-    expect(last.sid).toBe(first.sid);
-    phase = "failed SDK renewal and natural cookie expiry";
-    await pastExpiry(last.exp);
-    const recheck = watchRevalidation(page);
-    await locked(page, recheck, "failed renewal");
-    expect(outage.blockedRenewals()).toBeGreaterThan(0);
-    // Keep networking blocked for another complete access poll: stale cached
-    // success must not unlock reporting while the outage continues.
-    await locked(page, watchRevalidation(page), "continued renewal outage");
-    await recoverRenewal(context, page, last, outage.restore);
-    console.info("SDK renewal preserved reporting; outage locked guards; fresh cookies and server access restored reporting.");
+    let previousExpiry = first.exp;
+    for (let cycle = 1; cycle <= cycles; cycle++) {
+      const label = `renewal outage cycle ${cycle}`;
+      phase = `${label}: blocked refresh positive control`;
+      const outage = await freezeRefresh(context);
+      await cookieControl(page);
+      // Snapshot after blocking, including on the repeated outage: use the
+      // recovered cookie, not the token that expired during the first outage.
+      const last = await sessionCookie(context);
+      expect(last.sid).toBe(first.sid);
+      expect(last.exp).toBeGreaterThan(previousExpiry);
+      phase = `${label}: failed SDK renewal and natural cookie expiry`;
+      await pastExpiry(last.exp);
+      await locked(page, watchRevalidation(page), label);
+      expect(outage.blockedRenewals()).toBeGreaterThan(0);
+      // Another complete poll must not reuse the cached successful summary,
+      // including the fresh permissions obtained after the previous recovery.
+      await locked(page, watchRevalidation(page), `${label}: continued outage`);
+      await recoverRenewal(context, page, last, outage.restore, label);
+      previousExpiry = last.exp;
+      expect(navigations).toBe(0);
+      console.info(`SDK renewal outage cycle ${cycle} locked guards; advancing cookies and fresh server access restored reporting.`);
+    }
   } finally {
     await context.close();
   }
@@ -388,8 +399,11 @@ async function revokedRenewal(userId: string) {
   }
 }
 
+const repeatRun = process.env.CLERK_BROWSER_SCENARIO === "renewal-repeat";
 const renewalRun = process.env.CLERK_BROWSER_SCENARIO === "renewal";
-it(renewalRun
+it(repeatRun
+  ? "recovers reporting through two SDK networking outages in the same document and session"
+  : renewalRun
   ? "recovers valid browser sessions after renewal outages but keeps revoked sessions locked"
   : "authenticates real browser cookies then locks reporting on expiry and immediate revocation", async () => {
   // Fail without network or account creation unless explicitly enabled.
@@ -423,8 +437,9 @@ it(renewalRun
     origin = `http://127.0.0.1:${address.port}`;
     phase = "disposable fixture creation";
     const userId = await createFixture();
+    if (repeatRun) { await renewal(userId, 2); return; }
     if (renewalRun) {
-      await renewal(userId);
+      await renewal(userId, 1);
       await revokedRenewal(userId);
       return;
     }
