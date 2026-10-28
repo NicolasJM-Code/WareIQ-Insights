@@ -20,6 +20,10 @@ function rejectLimitedTest(res: Response): void {
   res.status(429).json({ error: "Wait a few seconds before running another connection test." });
 }
 
+function rejectLimiterUnavailable(res: Response): void {
+  res.status(503).json({ error: "Connection tests are temporarily unavailable. Try again shortly." });
+}
+
 router.use("/wms/connection", async (req, res, next): Promise<void> => {
   res.setHeader("Cache-Control", "no-store");
   const { userId } = getAuth(req);
@@ -66,12 +70,20 @@ router.get("/wms/connection/network", async (_req, res) => {
 router.post("/wms/connection/vpn-test", async (req, res): Promise<void> => {
   const parsed = TestWmsConnectionBody.strict().safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Check the approved connection fields." }); return; }
-  const release = connectionTestLimiter.acquire(connectionTestSiteKey(res.locals.wmsSiteScope), "vpn");
+  let release: (() => Promise<void>) | undefined;
+  try {
+    release = await connectionTestLimiter.acquire(connectionTestSiteKey(res.locals.wmsSiteScope), "vpn");
+  } catch {
+    rejectLimiterUnavailable(res);
+    return;
+  }
   if (!release) { rejectLimitedTest(res); return; }
   try {
     res.json(await testWmsVpn(parsed.data, res.locals.wmsSiteScope));
   } finally {
-    release();
+    await release().catch(() => {
+      req.log.warn({ event: "wms_connection_test_limiter_release_failed" }, "Warehouse test slot release failed");
+    });
   }
 });
 
@@ -80,13 +92,23 @@ router.post("/wms/connection/test", async (req, res): Promise<void> => {
   if (!parsed.success) {
     res.status(400).json({ error: "Check the connection fields. Only verified TLS is supported; never send a password in this request." }); return;
   }
-  const release = connectionTestLimiter.acquire(connectionTestSiteKey(res.locals.wmsSiteScope), "connection");
+  let release: (() => Promise<void>) | undefined;
+  try {
+    release = await connectionTestLimiter.acquire(connectionTestSiteKey(res.locals.wmsSiteScope), "connection");
+  } catch {
+    rejectLimiterUnavailable(res);
+    return;
+  }
   if (!release) { rejectLimitedTest(res); return; }
   try {
     const result = TestWmsConnectionResponse.parse(await testConnection(parsed.data, { siteScope: res.locals.wmsSiteScope }));
     req.log.info({ event: "wms_connection_test", status: result.status, code: result.code, userId: getAuth(req).userId }, "WMS connection test finished");
     res.json(result);
-  } finally { release(); }
+  } finally {
+    await release().catch(() => {
+      req.log.warn({ event: "wms_connection_test_limiter_release_failed" }, "Warehouse test slot release failed");
+    });
+  }
 });
 
 export default router;

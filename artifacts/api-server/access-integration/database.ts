@@ -5,7 +5,12 @@ import { join } from "node:path";
 import { Pool } from "pg";
 import { SQL } from "drizzle-orm";
 import { getTableConfig, PgDialect } from "drizzle-orm/pg-core";
-import { accessHistoryTable, accessNotificationsTable, captureDiagnosticsTable } from "@workspace/db/schema";
+import {
+  accessHistoryTable,
+  accessNotificationsTable,
+  captureDiagnosticsTable,
+  wmsConnectionTestLimiterTable,
+} from "@workspace/db/schema";
 
 // No caller-provided URL, path, PG* variable or application/WMS credential is
 // accepted. Every connection, including children, uses this private Unix socket.
@@ -47,7 +52,12 @@ export class PrivateDatabase {
         "--auth-local=trust", "--auth-host=reject", "--no-locale"]);
       this.startPostgres();
       // Render the actual production schemas, not handwritten test tables.
-      for (const table of [accessHistoryTable, captureDiagnosticsTable, accessNotificationsTable]) {
+      for (const table of [
+        accessHistoryTable,
+        captureDiagnosticsTable,
+        accessNotificationsTable,
+        wmsConnectionTestLimiterTable,
+      ]) {
       const config = getTableConfig(table);
       const dialect = new PgDialect();
       const quote = (s: string) => `"${s.replaceAll('"', '""')}"`;

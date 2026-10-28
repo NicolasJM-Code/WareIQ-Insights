@@ -4,6 +4,7 @@ import request from "supertest";
 import { configureVpnSite, vpnScope } from "./fixtures/wms-vpn-sites";
 const fake = vi.hoisted(() => ({
   userId: "admin" as string | null, user: vi.fn(), vpn: vi.fn(), sql: vi.fn(), access: vi.fn(), health: vi.fn(),
+  acquire: vi.fn(),
 }));
 vi.mock("../src/lib/wms-vpn-monitor", () => ({ warehouseVpnHealth: fake.health }));
 vi.mock("../src/lib/reporting-access", async (original) => {
@@ -16,13 +17,34 @@ vi.mock("@clerk/express", () => ({
   clerkClient: { users: { getUser: fake.user } },
 }));
 vi.mock("../src/lib/wms-connection", () => ({ testWmsVpn: fake.vpn, testConnection: fake.sql }));
+vi.mock("../src/lib/wms-connection-test-limiter", () => ({
+  WmsConnectionTestLimiter: class {
+    acquire(...args: unknown[]) { return fake.acquire(...args); }
+  },
+}));
 import router from "../src/routes/wms";
 const app = express().use(express.json()).use((req, _res, next) => {
   req.log = { info: vi.fn() } as unknown as typeof req.log;
   next();
 }).use(router);
+const activeTestSites = new Set<string>();
+const cooldowns = new Map<string, number>();
 beforeEach(() => {
   vi.clearAllMocks(); fake.userId = "admin";
+  activeTestSites.clear();
+  cooldowns.clear();
+  fake.acquire.mockImplementation(async (siteKey: string, kind: string) => {
+    const cooldownKey = `${siteKey}:${kind}`;
+    if (activeTestSites.has(siteKey) || Date.now() < (cooldowns.get(cooldownKey) ?? 0)) return undefined;
+    activeTestSites.add(siteKey);
+    cooldowns.set(cooldownKey, Date.now() + 10_000);
+    let released = false;
+    return async () => {
+      if (released) return;
+      released = true;
+      activeTestSites.delete(siteKey);
+    };
+  });
   configureVpnSite();
   fake.health.mockResolvedValue({ status: "unknown", checkedAt: null });
   fake.access.mockResolvedValue({

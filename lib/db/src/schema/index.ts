@@ -6,3 +6,4 @@ export * from "./access-history";
 export * from "./capture-diagnostics";
 export * from "./access-notifications";
 export * from "./wms-vpn-health";
+export * from "./wms-connection-test-limiter";
