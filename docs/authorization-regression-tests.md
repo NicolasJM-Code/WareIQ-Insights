@@ -58,13 +58,15 @@ instead of accidentally passing because a route does not exist. Supertest uses
 an isolated, ephemeral local HTTP listener, not the running application.
 
 The provider-boundary regression starts both authorization projects in a
-subprocess with synthetic `DATABASE_URL`, `WMS_DATABASE_URL`, `WMS_PGPASSWORD`,
-and standard PostgreSQL `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, and
-`PGPASSWORD` values. Probe tests confirm the API and WareIQ Vitest workers see
-blank values, including the standard PostgreSQL defaults; a temporary setup
-observes PostgreSQL `Pool` and `Client` construction across the suite, and the
-subprocess blocks outbound network connections. Passing requires the worker
-settings to be cleared, no database client to be constructed, and no network
+subprocess with synthetic `DATABASE_URL`, WMS settings, and standard PostgreSQL
+defaults, including approved PostgreSQL and MySQL destinations, passwords, CA
+certificates, and VPN configuration. The worker startup setup removes every
+`WMS_` variable, not just the currently known names. Probes in both API and
+WareIQ workers confirm the application database setting and standard PostgreSQL
+defaults are blank and no WMS variables remain visible. A temporary setup
+observes PostgreSQL `Pool` and `Client` construction across the suite, while the
+subprocess blocks outbound network connections. Passing requires all settings
+to be unavailable, no PostgreSQL client to be constructed, and no network
 attempt to occur.
 
 ## Covered risks

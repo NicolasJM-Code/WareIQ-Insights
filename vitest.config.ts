@@ -40,6 +40,7 @@ export default defineConfig({
           include: ["artifacts/api-server/tests/**/*.test.ts", "scripts/src/**/*.test.ts"],
           exclude: ["artifacts/api-server/tests/reports/**"],
           env,
+          setupFiles: ["./scripts/auth-worker-env.ts"],
         },
       },
       {
@@ -50,6 +51,7 @@ export default defineConfig({
           environment: "jsdom",
           include: ["artifacts/wareiq/tests/**/*.test.tsx"],
           env,
+          setupFiles: ["./scripts/auth-worker-env.ts"],
         },
       },
     ],

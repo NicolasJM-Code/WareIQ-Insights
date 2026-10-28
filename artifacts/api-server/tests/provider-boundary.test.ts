@@ -69,13 +69,12 @@ import { expect, it } from "vitest";
 
 it("clears synthetic database settings in API auth workers", () => {
   expect(process.env.DATABASE_URL).toBe("");
-  expect(process.env.WMS_DATABASE_URL).toBe("");
-  expect(process.env.WMS_PGPASSWORD).toBe("");
   expect(process.env.PGHOST).toBe("");
   expect(process.env.PGPORT).toBe("");
   expect(process.env.PGDATABASE).toBe("");
   expect(process.env.PGUSER).toBe("");
   expect(process.env.PGPASSWORD).toBe("");
+  expect(Object.keys(process.env).filter((key) => key.startsWith("WMS_"))).toEqual([]);
 });
 `,
     );
@@ -86,13 +85,12 @@ import { expect, it } from "vitest";
 
 it("clears synthetic database settings in WareIQ workers", () => {
   expect(process.env.DATABASE_URL).toBe("");
-  expect(process.env.WMS_DATABASE_URL).toBe("");
-  expect(process.env.WMS_PGPASSWORD).toBe("");
   expect(process.env.PGHOST).toBe("");
   expect(process.env.PGPORT).toBe("");
   expect(process.env.PGDATABASE).toBe("");
   expect(process.env.PGUSER).toBe("");
   expect(process.env.PGPASSWORD).toBe("");
+  expect(Object.keys(process.env).filter((key) => key.startsWith("WMS_"))).toEqual([]);
 });
 `,
     );
@@ -140,7 +138,10 @@ export default {
         ...project,
         test: {
           ...project.test,
-          setupFiles: [${JSON.stringify(setupPath)}],
+          setupFiles: [
+            "./scripts/auth-worker-env.ts",
+            ${JSON.stringify(setupPath)},
+          ],
           ...(project.test.name === "api-authorization"
             ? {
                 exclude: [
@@ -183,6 +184,33 @@ export default {
           PGDATABASE: "synthetic_auth_database",
           PGUSER: "synthetic_auth_user",
           PGPASSWORD: "synthetic-postgres-password",
+          WMS_CA_CERT: "synthetic-postgres-ca",
+          WMS_APPROVED_HOST: "approved-postgres.internal.test",
+          WMS_APPROVED_PORT: "5432",
+          WMS_APPROVED_DATABASE: "approved_wms",
+          WMS_APPROVED_USERNAME: "approved_reader",
+          WMS_MYSQL_DATABASE_URL: "mysql://offline:offline@127.0.0.1:1/wms",
+          WMS_MYSQL_PASSWORD: "synthetic-mysql-password",
+          WMS_MYSQL_CA_CERT: "synthetic-mysql-ca",
+          WMS_MYSQL_APPROVED_HOST: "approved-mysql.internal.test",
+          WMS_MYSQL_APPROVED_PORT: "3306",
+          WMS_MYSQL_APPROVED_DATABASE: "approved_wms",
+          WMS_MYSQL_APPROVED_USERNAME: "approved_reader",
+          WMS_MYSQL_CONNECTION_PATH: "openvpn",
+          WMS_OPENVPN_CONNECTOR_URL: "https://vpn.internal.test",
+          WMS_OPENVPN_CONNECTOR_TOKEN: "synthetic-vpn-token",
+          WMS_OPENVPN_SITES: JSON.stringify([{
+            id: "synthetic-site",
+            tokenEnv: "WMS_SYNTHETIC_VPN_TOKEN",
+            passwordEnv: "WMS_SYNTHETIC_SQL_PASSWORD",
+            sqlCaEnv: "WMS_SYNTHETIC_SQL_CA",
+          }]),
+          WMS_SYNTHETIC_VPN_TOKEN: "synthetic-site-token",
+          WMS_SYNTHETIC_SQL_PASSWORD: "synthetic-site-password",
+          WMS_SYNTHETIC_SQL_CA: "synthetic-site-ca",
+          WMS_PRIVATE_NETWORK_ENABLED: "true",
+          WMS_PRIVATE_NETWORK_CIDRS: "10.40.0.0/16",
+          WMS_AUTH_BOUNDARY_UNLISTED_SENTINEL: "synthetic-future-connection-setting",
           WAREIQ_OFFLINE_DATABASE_CLIENT_LOG: clientLogPath,
         },
         encoding: "utf8",
