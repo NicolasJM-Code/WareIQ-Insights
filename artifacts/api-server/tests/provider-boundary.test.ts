@@ -67,10 +67,15 @@ async function expectOfflineAuthorizationDatabaseIsolation() {
       `
 import { expect, it } from "vitest";
 
-it("clears synthetic application and WMS database settings in auth workers", () => {
+it("clears synthetic database settings in API auth workers", () => {
   expect(process.env.DATABASE_URL).toBe("");
   expect(process.env.WMS_DATABASE_URL).toBe("");
   expect(process.env.WMS_PGPASSWORD).toBe("");
+  expect(process.env.PGHOST).toBe("");
+  expect(process.env.PGPORT).toBe("");
+  expect(process.env.PGDATABASE).toBe("");
+  expect(process.env.PGUSER).toBe("");
+  expect(process.env.PGPASSWORD).toBe("");
 });
 `,
     );
@@ -79,10 +84,15 @@ it("clears synthetic application and WMS database settings in auth workers", () 
       `
 import { expect, it } from "vitest";
 
-it("clears synthetic application and WMS database settings in WareIQ workers", () => {
+it("clears synthetic database settings in WareIQ workers", () => {
   expect(process.env.DATABASE_URL).toBe("");
   expect(process.env.WMS_DATABASE_URL).toBe("");
   expect(process.env.WMS_PGPASSWORD).toBe("");
+  expect(process.env.PGHOST).toBe("");
+  expect(process.env.PGPORT).toBe("");
+  expect(process.env.PGDATABASE).toBe("");
+  expect(process.env.PGUSER).toBe("");
+  expect(process.env.PGPASSWORD).toBe("");
 });
 `,
     );
@@ -168,6 +178,11 @@ export default {
           DATABASE_URL: "postgresql://offline:offline@127.0.0.1:1/application",
           WMS_DATABASE_URL: "postgresql://offline:offline@127.0.0.1:1/wms",
           WMS_PGPASSWORD: "synthetic-offline-password",
+          PGHOST: "synthetic-postgres.invalid",
+          PGPORT: "5432",
+          PGDATABASE: "synthetic_auth_database",
+          PGUSER: "synthetic_auth_user",
+          PGPASSWORD: "synthetic-postgres-password",
           WAREIQ_OFFLINE_DATABASE_CLIENT_LOG: clientLogPath,
         },
         encoding: "utf8",

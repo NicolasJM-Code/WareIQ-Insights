@@ -16,6 +16,11 @@ export const env = {
   WMS_OPENVPN_CONNECTOR_URL: "",
   WMS_OPENVPN_CONNECTOR_TOKEN: "",
   DATABASE_URL: "",
+  PGHOST: "",
+  PGPORT: "",
+  PGDATABASE: "",
+  PGUSER: "",
+  PGPASSWORD: "",
 };
 
 export const wareiqResolve = {
