@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fork, spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, fork, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
@@ -78,6 +78,14 @@ describe("offline provider harness safety", () => {
     expect(error).toBeInstanceOf(Error);
     expect(String(error)).not.toContain(providerDetail);
     return String(error);
+  }
+  function copiedRetryPath(message: string) {
+    const assignment = message.match(/CLERK_PROVIDER_CLEANUP_MANIFEST=(.+?) pnpm test:auth:provider/)?.[1];
+    if (!assignment) throw new Error("Retry command did not include a journal path assignment");
+    return execFileSync("/bin/sh", [
+      "-c",
+      `CLERK_PROVIDER_CLEANUP_MANIFEST=${assignment} /bin/sh -c 'printf "%s" "$CLERK_PROVIDER_CLEANUP_MANIFEST"'`,
+    ], { encoding: "utf8" });
   }
   beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), "wareiq-provider-offline-"));
@@ -1130,7 +1138,7 @@ describe("offline provider harness safety", () => {
     const call = stage === "ownership lookup" ? users.getUser : users.deleteUser;
     call.mockRejectedValueOnce(outage());
     const message = await failure(runProviderCheck(env, dependencies(), check));
-    expect(message).toContain(`CLERK_PROVIDER_CLEANUP_MANIFEST=${JSON.stringify(env.CLERK_PROVIDER_CLEANUP_MANIFEST)}`);
+    expect(copiedRetryPath(message)).toBe(env.CLERK_PROVIDER_CLEANUP_MANIFEST);
     expect(message).toContain("same Development instance");
     await retained(env.CLERK_PROVIDER_CLEANUP_MANIFEST);
     if (stage === "ownership lookup") expect(users.deleteUser).not.toHaveBeenCalled();
@@ -1138,6 +1146,36 @@ describe("offline provider harness safety", () => {
     expect(await readdir(directory)).toEqual([]);
     expect(users.createUser).not.toHaveBeenCalled();
     expect(check).not.toHaveBeenCalled();
+  });
+
+  it("prints a shell-safe retry command for unusual recovery journal paths", async () => {
+    const path = join(directory, "journal with $HOME $(printf expanded) and 'quotes'.json");
+    await writeFile(path, JSON.stringify(saved), { mode: 0o600 });
+    users.getUser.mockRejectedValueOnce(outage());
+
+    const message = await failure(runProviderCheck({
+      ...safeEnv,
+      CLERK_PROVIDER_CLEANUP_MANIFEST: path,
+    }, dependencies(), check));
+    expect(copiedRetryPath(message)).toBe(path);
+    expect(users.createUser).not.toHaveBeenCalled();
+  });
+
+  it("prints a shell-safe retry command after account creation has an unknown outcome", async () => {
+    const journalDirectory = join(directory, "journal with $HOME $(printf expanded) and 'quotes'");
+    users.createUser.mockRejectedValueOnce(outage());
+
+    const message = await failure(runProviderCheck(
+      safeEnv,
+      { ...dependencies(), journalDirectory },
+      check,
+    ));
+    const copiedPath = copiedRetryPath(message);
+
+    expect(copiedPath).toMatch(new RegExp(`^${journalDirectory.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/[^/]+\\.json$`));
+    expect(message).toContain(`private intent journal is ${copiedPath}.`);
+    expect(users.getUser).not.toHaveBeenCalled();
+    expect(users.deleteUser).not.toHaveBeenCalled();
   });
 
   it("cleans up after a failed journal update without running application checks", async () => {

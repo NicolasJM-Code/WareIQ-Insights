@@ -25,6 +25,9 @@ export type ProviderUsers = {
   deleteUser(id: string): Promise<unknown>;
 };
 export const journalIO = { mkdir, readFile, rename, unlink, writeFile };
+function shellQuote(value: string) {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
 const keyPairAttestationVersion = "wareiq-clerk-provider-key-pair-v1\0";
 type Dependencies = {
   users: ProviderUsers;
@@ -328,7 +331,7 @@ export async function runProviderCheck(
         throw new Error(`Cleanup incomplete: generated account was deleted, but journal removal failed. Confirm its absence in the same Development instance, then manually remove ${path}. Do not rerun recovery for an already-deleted account.`);
       }
       const instruction = journalWritten
-        ? `Retain ${path}. Retry against the same Development instance with CLERK_PROVIDER_TESTS=isolated-development-only CLERK_PROVIDER_CLEANUP_MANIFEST=${JSON.stringify(path)} pnpm test:auth:provider. If ownership differs, do not alter the journal or delete the account. If already absent, confirm absence before manually removing the journal.`
+        ? `Retain ${path}. Retry against the same Development instance with CLERK_PROVIDER_TESTS=isolated-development-only CLERK_PROVIDER_CLEANUP_MANIFEST=${shellQuote(path)} pnpm test:auth:provider. If ownership differs, do not alter the journal or delete the account. If already absent, confirm absence before manually removing the journal.`
         : `No reliable recovery journal was saved. In the same Development instance, verify only generated user ${target.userId}, email ${target.email}, private run marker ${target.runId} before manual deletion. Do not bulk-delete accounts. Remove any partial journal at ${path} only after confirming deletion.`;
       throw new Error(`Cleanup failed or ownership check refused deletion. ${instruction} Provider details suppressed.`);
     }
@@ -417,7 +420,7 @@ export async function runProviderCheck(
         privateMetadata: { wareiqProviderTest: runId },
       }));
     } catch {
-      throw new Error(`Account creation did not return an ID; its outcome is unknown. The private intent journal is ${path}. Explicitly recover it against the same Development instance with CLERK_PROVIDER_TESTS=isolated-development-only CLERK_PROVIDER_CLEANUP_MANIFEST=${JSON.stringify(path)} pnpm test:auth:provider. Recovery checks only exact generated email ${email} and private run marker ${runId}; it never creates another account. Do not retry creation until recovery confirms absence or deletes the verified fixture. Provider details suppressed.`);
+      throw new Error(`Account creation did not return an ID; its outcome is unknown. The private intent journal is ${path}. Explicitly recover it against the same Development instance with CLERK_PROVIDER_TESTS=isolated-development-only CLERK_PROVIDER_CLEANUP_MANIFEST=${shellQuote(path)} pnpm test:auth:provider. Recovery checks only exact generated email ${email} and private run marker ${runId}; it never creates another account. Do not retry creation until recovery confirms absence or deletes the verified fixture. Provider details suppressed.`);
     }
     manifest = { userId: user.id, runId, email };
     try {
