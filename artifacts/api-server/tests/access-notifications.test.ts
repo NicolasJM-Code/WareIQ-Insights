@@ -317,6 +317,7 @@ describe("durable delivery and duplicate protection", () => {
     const response = await request(accessApp).get("/api/access/admin");
 
     expect(response.status).toBe(200);
+    expect(response.headers["cache-control"]).toBe("no-store");
     expect(response.body.notificationSummary).toEqual({
       status: "available", queued: 2, queuedOverThreshold: 1,
       oldestQueuedAgeSeconds: 420, queueWarningAfterSeconds: 300,
