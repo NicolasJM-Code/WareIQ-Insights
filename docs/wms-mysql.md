@@ -128,3 +128,21 @@ pnpm --filter @workspace/scripts exec tsx --test ../artifacts/api-server/src/lib
 A live MySQL report run has not been verified. It requires an approved
 reachable server, views containing the approved client/site keys, a read-only
 account, secure credentials, and mappings tested against the real view schema.
+An opt-in isolated integration harness provisions a disposable MySQL 8.4
+container, creates temporary CA/server certificates and synthetic users/views,
+then removes the container and certificates when the run ends. It binds the
+fixture database only to `127.0.0.1`; it does not read or use configured WMS
+credentials or connect to a configured destination. Docker with Compose and
+OpenSSL are required. Run it from the repository root:
+
+```
+pnpm --filter @workspace/api-server run test:wms:mysql-tls
+```
+
+The suite checks a trusted CA and matching hostname, an unrelated CA, hostname
+mismatch, authentication failure, read-only grants, rejected write grants and
+active roles, a database without views, and cleanup after a stalled handshake.
+Its generated keys, certificates and database data are temporary. The regular
+test suite does not start Docker or enable this integration suite. This
+integration verifies connection setup and metadata access only; it does not
+exercise mapped report execution against a live WMS.

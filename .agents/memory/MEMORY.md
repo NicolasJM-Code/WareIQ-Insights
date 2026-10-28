@@ -14,3 +14,4 @@
 - [Capture diagnostic durability](capture-diagnostic-durability.md) — preserve warnings across key rotation; database outages require explicit uncertainty and ordered attempt completion.
 - [Drizzle optional peers](drizzle-optional-peers.md) — database-driver peer differences can create incompatible Drizzle types across workspace packages.
 - [Warehouse VPN requirements](warehouse-vpn.md) — user confirmed OpenVPN with an existing VPN-connected server and wants VPN established before SQL.
+- [Docker fixture readiness](docker-fixture-readiness.md) — wait for the database listener in container logs; an open host port may precede readiness, and container exec may be unavailable.

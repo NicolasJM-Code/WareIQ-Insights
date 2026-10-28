@@ -1,0 +1,25 @@
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: disposable-fixture-root-password
+    command:
+      - --require_secure_transport=ON
+      - --ssl-ca=/etc/mysql/certs/ca.pem
+      - --ssl-cert=/etc/mysql/certs/server-cert.pem
+      - --ssl-key=/etc/mysql/certs/server-key.pem
+      - --tls-version=TLSv1.2,TLSv1.3
+    ports:
+      - target: 3306
+        host_ip: 127.0.0.1
+        published: "0"
+        protocol: tcp
+    volumes:
+      - type: bind
+        source: ${WMS_MYSQL_TLS_FIXTURE_DIR:?fixture directory is required}/certs
+        target: /etc/mysql/certs
+        read_only: true
+      - type: bind
+        source: ./init.sql
+        target: /docker-entrypoint-initdb.d/001-fixture.sql
+        read_only: true
