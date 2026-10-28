@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 
 const state = vi.hoisted(() => ({
   test: vi.fn(), vpn: vi.fn(),
+  siteId: undefined as string | undefined,
   network: { path: 'direct' as 'direct' | 'openvpn', configured: true, message: 'Direct connection' },
 }));
 vi.mock('@clerk/react', () => ({
@@ -19,6 +20,7 @@ vi.mock('@workspace/api-client-react', () => ({
 vi.mock('../src/lib/report-context', () => ({
   useDocTitle: () => {},
   useReport: () => ({
+    siteId: state.siteId,
     prefs: { refreshInterval: '5', queryTimeoutSec: 30, targetPickAccuracy: 99,
       targetFillRate: 99, targetDockToStockMin: 60 },
     setPrefs: vi.fn(), resetPrefs: vi.fn(),
@@ -26,6 +28,10 @@ vi.mock('../src/lib/report-context', () => ({
 }));
 vi.mock('../src/components/access-management', () => ({ AccessManagement: () => null }));
 vi.mock('../src/components/access-history', () => ({ AccessHistory: () => null }));
+vi.mock('../src/lib/use-access', () => ({ useAccess: () => ({ data: { sites: [
+  { id: '11111111-1111-4111-8111-111111111111', name: 'Warehouse one' },
+  { id: '33333333-3333-4333-8333-333333333333', name: 'Warehouse two' },
+] } }) }));
 // Exercise the form's value contract without Radix portal/browser geometry.
 vi.mock('../src/components/ui/select', () => ({
   Select: ({ value, onValueChange, children }: {
@@ -44,6 +50,7 @@ afterAll(() => vi.unstubAllGlobals());
 afterEach(() => {
   cleanup(); vi.clearAllMocks();
   state.network = { path: 'direct', configured: true, message: 'Direct connection' };
+  state.siteId = undefined;
 });
 
 it('defaults to PostgreSQL and switches MySQL port, schema and secret guidance', async () => {
@@ -91,6 +98,7 @@ it('preserves an explicitly chosen non-default port when switching engines', () 
 });
 
 it('requires VPN readiness before SQL and clears it when connection fields change', async () => {
+  state.siteId = '11111111-1111-4111-8111-111111111111';
   state.network = { path: 'openvpn', configured: true, message: 'VPN required before SQL' };
   state.vpn.mockResolvedValue({ status: 'ready', code: 'VPN_READY', message: 'VPN verified',
     testedAt: '2026-10-28T00:00:00Z' });
@@ -110,6 +118,7 @@ it('requires VPN readiness before SQL and clears it when connection fields chang
 });
 
 it('keeps SQL locked when the VPN check fails', async () => {
+  state.siteId = '11111111-1111-4111-8111-111111111111';
   state.network = { path: 'openvpn', configured: true, message: 'VPN required before SQL' };
   state.vpn.mockResolvedValue({ status: 'error', code: 'VPN_NOT_READY',
     message: 'The route is unavailable.', testedAt: '2026-10-28T00:00:00Z' });
@@ -122,4 +131,28 @@ it('keeps SQL locked when the VPN check fails', async () => {
   expect(await screen.findByTestId('status-vpn-result')).toHaveTextContent('VPN_NOT_READY');
   expect(screen.getByTestId('button-test-connection')).toBeDisabled();
   expect(state.test).not.toHaveBeenCalled();
+});
+
+it('clears readiness on site change and ignores a late response from the previous site', async () => {
+  state.siteId = '11111111-1111-4111-8111-111111111111';
+  state.network = { path: 'openvpn', configured: true, message: 'VPN required' };
+  let resolve!: (value: unknown) => void;
+  state.vpn.mockImplementation(() => new Promise((done) => { resolve = done; }));
+  const view = render(<Settings />);
+  fireEvent.change(screen.getAllByRole('combobox')[0], { target: { value: 'mysql' } });
+  for (const [id, value] of [['input-host', 'wms.example.test'], ['input-database', 'reporting'], ['input-username', 'reporter']])
+    fireEvent.change(screen.getByTestId(id), { target: { value } });
+  fireEvent.click(screen.getByTestId('button-test-vpn'));
+  await waitFor(() => expect(state.vpn).toHaveBeenCalledWith({ data: expect.objectContaining({ siteId: state.siteId }) }));
+  state.siteId = '33333333-3333-4333-8333-333333333333';
+  view.rerender(<Settings />);
+  resolve({ status: 'ready', code: 'VPN_READY', message: 'Old site ready' });
+  await waitFor(() => expect(screen.getByTestId('button-test-connection')).toBeDisabled());
+  expect(screen.queryByTestId('status-vpn-result')).not.toBeInTheDocument();
+  state.vpn.mockResolvedValue({ status: 'ready', code: 'VPN_READY', message: 'New site ready' });
+  fireEvent.click(screen.getByTestId('button-test-vpn'));
+  await waitFor(() => expect(screen.getByTestId('button-test-connection')).toBeEnabled());
+  state.siteId = '11111111-1111-4111-8111-111111111111';
+  view.rerender(<Settings />);
+  expect(screen.getByTestId('button-test-connection')).toBeDisabled();
 });

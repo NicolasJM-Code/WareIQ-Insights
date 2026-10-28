@@ -18,6 +18,7 @@ import { useUser, UserButton } from '@clerk/react';
 import { Link } from 'wouter';
 import { AccessManagement } from '@/components/access-management';
 import { AccessHistory } from '@/components/access-history';
+import { useAccess } from '@/lib/use-access';
 
 const hostRe = /^(?=.{1,253}$)([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$|^(\d{1,3}\.){3}\d{1,3}$/;
 const ident = /^[a-zA-Z_][a-zA-Z0-9_$]{0,62}$/;
@@ -59,12 +60,13 @@ const Unavailable = () => <Pill tone="neutral">Unavailable until live setup</Pil
 
 export default function Settings() {
   useDocTitle('Settings');
-  const { prefs, setPrefs, resetPrefs } = useReport();
+  const { prefs, setPrefs, resetPrefs, siteId, setSiteId } = useReport();
+  const access = useAccess();
   const { user, isSignedIn } = useUser();
   const testConnection = useTestWmsConnection();
   const vpnTest = useTestWmsVpn();
-  const network = useGetWmsNetworkConfig({ query: {
-    enabled: !!isSignedIn, queryKey: ['wms-network', user?.id], refetchInterval: 15000,
+  const network = useGetWmsNetworkConfig(siteId ? { siteId } : undefined, { query: {
+    enabled: !!isSignedIn, queryKey: ['wms-network', user?.id, siteId], refetchInterval: 15000,
   } });
   const [vpnResult, setVpnResult] = useState<WmsNetworkResult | null>(null);
   const [vpnReady, setVpnReady] = useState(false);
@@ -81,7 +83,7 @@ export default function Settings() {
     setLog([]);
     vpnEpoch.current += 1;
     setVpnResult(null); setVpnReady(false);
-  }, [user?.id]);
+  }, [user?.id, siteId]);
 
   const form = useForm<Conn>({
     resolver: zodResolver(connSchema),
@@ -93,7 +95,7 @@ export default function Settings() {
   const isMysql = engine === 'mysql';
   const requiresVpn = isMysql && network.data?.path === 'openvpn';
   const networkUnavailable = network.isError || !network.data;
-  const sqlLocked = isMysql && (networkUnavailable || (requiresVpn && (!network.data?.configured || !vpnReady)));
+  const sqlLocked = isMysql && (networkUnavailable || (requiresVpn && (!siteId || !network.data?.configured || !vpnReady)));
   useEffect(() => {
     setVpnReady(false); setVpnResult(null); vpnEpoch.current += 1;
   }, [network.data?.path, network.data?.configured, network.isError]);
@@ -121,7 +123,7 @@ export default function Settings() {
     const epoch = ++vpnEpoch.current;
     const { refreshInterval: _interval, ...input } = form.getValues();
     try {
-      const result = await vpnTest.mutateAsync({ data: input });
+      const result = await vpnTest.mutateAsync({ data: { ...input, ...(siteId ? { siteId } : {}) } });
       if (epoch !== vpnEpoch.current) return;
       setVpnResult(result); setVpnReady(result.status === 'ready');
     } catch {
@@ -144,7 +146,7 @@ export default function Settings() {
     const { refreshInterval: _refreshInterval, ...input } = form.getValues();
     const epoch = ++vpnEpoch.current;
     try {
-      const result = await testConnection.mutateAsync({ data: input });
+      const result = await testConnection.mutateAsync({ data: { ...input, ...(siteId ? { siteId } : {}) } });
       if (epoch !== vpnEpoch.current) return;
       setTestResult(result);
       if (result.status === 'error' && result.code.startsWith('VPN_')) {
@@ -253,7 +255,16 @@ export default function Settings() {
           <FormDescription>Changing engines never migrates data. MySQL reports run only when server-approved credentials and view mappings are configured.</FormDescription>
                     </FormItem>
                   )} />
-                  {isMysql && <WmsVpnSteps config={network.data} unavailable={network.isError}
+                  {isMysql && <label className="block text-sm font-medium">
+                    Assigned warehouse for connection
+                    <select aria-label="Connection warehouse" value={siteId}
+                      onChange={(event) => setSiteId(event.target.value)}
+                      className="mt-2 block h-9 w-full rounded-md border bg-background px-3 text-sm">
+                      <option value="">Select an assigned warehouse</option>
+                      {(access.data?.sites ?? []).map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}
+                    </select>
+                  </label>}
+                  {isMysql && <WmsVpnSteps siteId={siteId} config={network.data} unavailable={network.isError}
                     pending={vpnTest.isPending} ready={vpnReady} result={vpnResult} onCheck={onVpnTest} />}
                   <div className="grid sm:grid-cols-[1fr_140px] gap-4">
                     <FormField control={form.control} name="host" render={({ field }) => (
@@ -277,7 +288,8 @@ export default function Settings() {
                     )} />
                     <div className="space-y-2">
                       <div className="text-sm font-medium flex items-center gap-1.5">Server-side password <Lock className="h-3 w-3 text-muted-foreground" /></div>
-                      <p className="text-[0.8rem] text-muted-foreground">An owner must configure credentials and approve this exact engine, host, port, database and username on the server. Use a matching <code>{isMysql ? 'WMS_MYSQL_DATABASE_URL' : 'WMS_DATABASE_URL'}</code>, or <code>{isMysql ? 'WMS_MYSQL_PASSWORD' : 'WMS_PGPASSWORD'}</code> with all four approval settings below. PostgreSQL credentials are never reused for MySQL. The password is never entered or stored in this browser.</p>
+                      {requiresVpn ? <p className="text-[0.8rem] text-muted-foreground">An owner must approve this warehouse's client, site, connector and exact database target in <code>WMS_OPENVPN_SITES</code>. Its token and SQL password are stored in the server-only settings named by the entry. Global MySQL credentials are not used as a fallback. Passwords are never entered or stored in this browser.</p>
+                        : <p className="text-[0.8rem] text-muted-foreground">An owner must configure credentials and approve this exact engine, host, port, database and username on the server. Use a matching <code>{isMysql ? 'WMS_MYSQL_DATABASE_URL' : 'WMS_DATABASE_URL'}</code>, or <code>{isMysql ? 'WMS_MYSQL_PASSWORD' : 'WMS_PGPASSWORD'}</code> with all four approval settings below. PostgreSQL credentials are never reused for MySQL. The password is never entered or stored in this browser.</p>}
                     </div>
                   </div>
 
@@ -345,7 +357,9 @@ export default function Settings() {
                   <li><span className="font-semibold">1. Test the server connection.</span> Testing uses verified TLS, checks read-only grants and database access, and closes the connection. The test reads metadata only.</li>
                   <li><span className="font-semibold">2. Keep credentials and report mappings on the server.</span> Never put these in browser code or source control:
                     <pre className="mt-1.5 rounded bg-muted p-2.5 font-mono text-[11px] leading-relaxed overflow-x-auto">{isMysql
-                      ? 'WMS_MYSQL_DATABASE_URL (approved mysql:// URL)\nor WMS_MYSQL_PASSWORD with all of:\nWMS_MYSQL_APPROVED_HOST\nWMS_MYSQL_APPROVED_PORT\nWMS_MYSQL_APPROVED_DATABASE\nWMS_MYSQL_APPROVED_USERNAME\nWMS_MYSQL_CA_CERT (private CA only)'
+                      ? requiresVpn
+                        ? 'WMS_MYSQL_CONNECTION_PATH=openvpn\nWMS_OPENVPN_SITES (client/site approvals)\nPer-site tokenEnv and passwordEnv Secrets\nOptional per-site caEnv (connector CA)\nWMS_MYSQL_CA_CERT (SQL CA bundle only)'
+                        : 'WMS_MYSQL_DATABASE_URL (approved mysql:// URL)\nor WMS_MYSQL_PASSWORD with all of:\nWMS_MYSQL_APPROVED_HOST\nWMS_MYSQL_APPROVED_PORT\nWMS_MYSQL_APPROVED_DATABASE\nWMS_MYSQL_APPROVED_USERNAME\nWMS_MYSQL_CA_CERT (private CA only)'
                       : 'WMS_DATABASE_URL (approved PostgreSQL URL)\nor WMS_PGPASSWORD with all of:\nWMS_APPROVED_HOST\nWMS_APPROVED_PORT\nWMS_APPROVED_DATABASE\nWMS_APPROVED_USERNAME\nWMS_CA_CERT (private CA only)'}</pre>
                   </li>
                   <li><span className="font-semibold">3. Approve MySQL views explicitly.</span> Set <code>WMS_MYSQL_REPORT_MAPPINGS</code> to an allowlist of report or dataset IDs, view names, client/site filter columns and approved output columns. See <code>docs/wms-mysql.md</code> for the format. No browser-supplied SQL or mapping is accepted.</li>

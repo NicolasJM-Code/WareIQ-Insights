@@ -42,6 +42,8 @@ WAREIQ_CONNECTOR_PORT=8443
 WAREIQ_CONNECTOR_TLS_CERT_FILE=/etc/wareiq/tls/fullchain.pem
 WAREIQ_CONNECTOR_TLS_KEY_FILE=/etc/wareiq/tls/privkey.pem
 WAREIQ_CONNECTOR_TOKEN=<a cryptographically random shared secret, at least 32 characters>
+WAREIQ_SITE_ID=<approved WareIQ warehouse UUID>
+WAREIQ_CLIENT_ID=<the warehouse owner's WareIQ client UUID>
 WAREIQ_VPN_INTERFACE=tun0
 WAREIQ_DB_HOST=mysql.internal.example.com
 WAREIQ_DB_ADDRESS=10.40.0.10
@@ -94,9 +96,47 @@ An owner adds these server-only settings to the API service:
 
 ```text
 WMS_MYSQL_CONNECTION_PATH=openvpn
-WMS_OPENVPN_CONNECTOR_URL=https://connector.example.com:8443
-WMS_OPENVPN_CONNECTOR_TOKEN=<the same shared token, stored as a secret>
+WMS_OPENVPN_SITES=<JSON array of site approvals, described below>
 ```
+
+Each entry binds exactly one WareIQ site and client to a fixed connector and
+SQL destination. For example (illustrative IDs only):
+
+```json
+[
+  {
+    "siteId": "11111111-1111-4111-8111-111111111111",
+    "clientId": "22222222-2222-4222-8222-222222222222",
+    "connectorUrl": "https://warehouse-one.example.com:8443",
+    "tokenEnv": "WMS_WAREHOUSE_ONE_TOKEN",
+    "passwordEnv": "WMS_WAREHOUSE_ONE_PASSWORD",
+    "host": "mysql.internal.example.com",
+    "port": 3306,
+    "database": "reporting",
+    "username": "wareiq_readonly"
+  }
+]
+```
+
+Add one entry per warehouse and run a separately configured connector on each
+warehouse's VPN-connected server. Each connector must have matching
+`WAREIQ_SITE_ID`, `WAREIQ_CLIENT_ID`, target approvals and a **unique token**.
+Private database addresses/hostnames may overlap across VPNs; site IDs must not.
+Duplicate site IDs or reused tokens invalidate the registry.
+`tokenEnv`, `passwordEnv` and optional `caEnv` name server-only environment
+settings beginning with `WMS_`; put the token and SQL password in Secrets, not
+in the JSON, frontend, repository or chat. An optional `caEnv` names that
+connector's private CA PEM setting; when specified it must exist.
+No registry values, secret names, URLs, tokens or passwords are returned to the browser.
+
+Migration from the single-connector path requires explicit entries even for a
+single warehouse. The old `WMS_OPENVPN_CONNECTOR_URL`, token and global MySQL
+credentials are **not** used as a fallback in VPN mode. Roll out the connector
+site/client headers and API registry together; old connectors must be upgraded.
+Missing sites, client mismatches, invalid settings and outages fail closed.
+Background outage monitoring uses separate persisted health records and locks for
+each approved site. The Settings status refers only to its authorized selected
+site; historical global connector health is not evidence of any site's health.
 
 The URL must be a public DNS hostname, HTTPS, and an origin only: no credentials,
 query, fragment or custom path. All DNS answers must be public; WareIQ pins the
@@ -104,13 +144,15 @@ resolved address and verifies the connector's TLS certificate against its
 original DNS hostname. It follows no redirects.
 
 If the connector uses an approved private certificate authority, store its PEM
-certificate server-side as `WMS_OPENVPN_CONNECTOR_CA_CERT`. Verification is
+certificate server-side in the setting named by that entry's `caEnv`. Verification is
 never disabled. A private connector IP cannot be used from a Replit runtime
 without its own route; this connector is the authenticated HTTPS ingress.
 
-Keep the normal exact MySQL approval and password settings described in
-`docs/wms-mysql.md`. Host, port, database and username must match on both sides.
-If MySQL uses a private CA, `WMS_MYSQL_CA_CERT` is separate from the connector CA.
+In VPN mode the registry's exact host, port, database and username approval and
+site password replace the global MySQL destination/password settings. Direct
+mode retains the settings in `docs/wms-mysql.md`. All target fields must match
+on both sides. If MySQL uses private CAs, `WMS_MYSQL_CA_CERT` can contain the
+approved CA bundle for those databases and is separate from connector CAs.
 The browser never receives either password or token.
 The VPN-only check needs the four destination approvals and connector token, but
 does not require a MySQL password yet. SQL credentials are required at the SQL step.
@@ -121,7 +163,7 @@ must each have the intended settings. Existing direct-route
 
 ## 4. Test in WareIQ Settings
 
-1. Select **MySQL 8+** and enter the approved DNS hostname, port, database and
+1. Select your assigned warehouse in the site selector, then **MySQL 8+**, and enter the approved DNS hostname, port, database and
    reporting username.
 2. Click **Check VPN connection**. The authenticated connector must confirm its
    VPN interface, actual kernel route and TCP reachability of the pinned database
@@ -134,9 +176,16 @@ must each have the intended settings. Existing direct-route
    and reporting-view access. Normal report mappings and client/site permissions
    still apply.
 
-Changing connection fields, switching users, a configuration error or one minute
+Changing the selected site or connection fields, switching users, a configuration error or one minute
 of elapsed time clears UI readiness. The UI check is not an authorization token:
 the API and connector check again for **every SQL test and live report**.
+Administrators must also have an active reporting membership, active client,
+role and assignment to that active site to inspect its VPN configuration or
+run connection tests. Platform administration alone does not grant a connection
+to every warehouse. The server re-reads membership for each request and derives
+the client ID itself; the browser sends only the selected site ID and untrusted
+test fields, never connector destinations or secret references. Live reports
+derive the approved destination from the same authorized client/site selection.
 The connector also checks the VPN route every two seconds during a tunnel and
 closes it on failure. It caps concurrent tunnels, connection time, idle time and
 overall tunnel lifetime. It never accepts arbitrary proxy destinations.
@@ -144,6 +193,7 @@ overall tunnel lifetime. It never accepts arbitrary proxy destinations.
 Typical errors:
 
 - `VPN_NOT_CONFIGURED`: missing/invalid connector URL or token.
+- `VPN_SITE_REQUIRED`: the server operation has no authorized site scope.
 - `VPN_NOT_ENABLED`: server still selects the direct path.
 - `VPN_NOT_READY`: connector TLS/authentication/destination approval failed,
   connector unreachable, VPN interface missing, private DNS mismatch, or database

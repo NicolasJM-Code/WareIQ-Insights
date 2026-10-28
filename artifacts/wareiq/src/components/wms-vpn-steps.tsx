@@ -1,7 +1,8 @@
 import type { WmsNetworkConfig, WmsNetworkResult } from '@workspace/api-client-react';
 import { ConnectorDownload } from './connector-download';
 
-export function WmsVpnSteps({ config, unavailable, pending, ready, result, onCheck }: {
+export function WmsVpnSteps({ config, unavailable, pending, ready, result, onCheck, siteId }: {
+  siteId?: string;
   config?: WmsNetworkConfig;
   unavailable: boolean;
   pending: boolean;
@@ -11,6 +12,8 @@ export function WmsVpnSteps({ config, unavailable, pending, ready, result, onChe
 }) {
   return <section className="rounded-md border bg-muted/30 p-4 space-y-3" aria-label="VPN then SQL connection">
     <div className="text-sm font-semibold">Connection path: OpenVPN → MySQL</div>
+    <p className="text-xs">{siteId ? 'The selected warehouse uses its own server-approved connector and credentials.'
+      : 'Select an assigned warehouse in the site selector before checking its VPN connection.'}</p>
     <p className="text-xs text-muted-foreground">
       Run the secure connector on your existing Linux OpenVPN-connected server.
       WareIQ checks its VPN interface, database route and TCP reachability before attempting a verified-TLS SQL login.
@@ -32,8 +35,8 @@ export function WmsVpnSteps({ config, unavailable, pending, ready, result, onChe
       <p>Checks run once a minute while the API is running. Verified administrators receive an email after two consecutive failures and a recovery email when reachability returns.</p>
     </div>}
     {config?.path === 'direct' && <p className="text-xs text-muted-foreground">
-      VPN mode is not active. An owner must configure <code>WMS_OPENVPN_CONNECTOR_URL</code> and
-      its secret token, then set <code>WMS_MYSQL_CONNECTION_PATH=openvpn</code> on the server.
+      VPN mode is not active. An owner must configure the site-bound <code>WMS_OPENVPN_SITES</code> entries and
+      their secret references, then set <code>WMS_MYSQL_CONNECTION_PATH=openvpn</code> on the server.
       Until then, the existing direct path remains active.
     </p>}
     <div className="grid sm:grid-cols-2 gap-3 text-xs">
@@ -41,7 +44,7 @@ export function WmsVpnSteps({ config, unavailable, pending, ready, result, onChe
         <h3 className="font-semibold">1. Check OpenVPN connection</h3>
         <p>{ready ? 'VPN route verified for these fields. Ready to test SQL.' : 'No current VPN route verification for these connection fields.'}</p>
         <button type="button" onClick={onCheck}
-          disabled={pending || unavailable || !config?.configured || config.path !== 'openvpn'}
+          disabled={!siteId || pending || unavailable || !config?.configured || config.path !== 'openvpn'}
           className="rounded border px-3 py-2 disabled:opacity-50" data-testid="button-test-vpn">
           {pending ? 'Checking VPN…' : 'Check VPN connection'}
         </button>

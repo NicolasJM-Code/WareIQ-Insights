@@ -6,6 +6,7 @@ import ipaddr from "ipaddr.js";
 import type { WmsConnectionInput, WmsConnectionResult, WmsNetworkResult } from "@workspace/api-zod";
 import { checkOpenVpn, mysqlConnectionPath, openVpnMysqlStream } from "./wms-openvpn";
 import { ConnectionFailure } from "./wms-connection-error";
+import { siteVpnInput, siteVpnPassword, type WmsSiteScope } from "./wms-site-config";
 import { runMysqlReport, testMysqlConnection, type MysqlReportMapping, type MysqlReportScope } from "./wms-mysql-connection";
 export { ConnectionFailure } from "./wms-connection-error";
 
@@ -204,15 +205,16 @@ export async function executeApprovedMysqlReport(
   mapping: MysqlReportMapping,
   scope: MysqlReportScope,
   fields?: string[],
-  dependencies: { resolveHost?: WmsAddressResolver } = {},
+  dependencies: { resolveHost?: WmsAddressResolver; siteScope?: WmsSiteScope } = {},
 ) {
-  const input = configuredMysqlReportInput();
+  const vpn = mysqlConnectionPath() === "openvpn";
+  const input = vpn ? siteVpnInput(dependencies.siteScope) : configuredMysqlReportInput();
   if (!input) return undefined;
   if (isIP(input.host))
     throw new ConnectionFailure("TLS_HOSTNAME_REQUIRED", "Use an approved MySQL DNS hostname matching its TLS certificate.");
-  const password = reportingPassword(input);
-  if (mysqlConnectionPath() === "openvpn") {
-    const stream = await openVpnMysqlStream(input);
+  const password = vpn ? siteVpnPassword(input, dependencies.siteScope) : reportingPassword(input);
+  if (vpn) {
+    const stream = await openVpnMysqlStream(input, dependencies.siteScope);
     try { return await runMysqlReport(input, password, input.host, mapping, scope, fields, stream); }
     finally { stream.destroy(); }
   }
@@ -221,14 +223,14 @@ export async function executeApprovedMysqlReport(
   return runMysqlReport(input, password, address, mapping, scope, fields);
 }
 
-export async function testWmsVpn(input: WmsConnectionInput): Promise<WmsNetworkResult> {
+export async function testWmsVpn(input: WmsConnectionInput, siteScope?: WmsSiteScope): Promise<WmsNetworkResult> {
   try {
     if (input.engine !== "mysql")
       throw new ConnectionFailure("VPN_ENGINE_UNSUPPORTED", "The OpenVPN connector path currently supports MySQL only.");
     if (isIP(input.host))
       throw new ConnectionFailure("TLS_HOSTNAME_REQUIRED", "Use the MySQL DNS hostname matching its TLS certificate.");
-    reportingPassword(input, false); // Approval only: VPN checks need no SQL password.
-    await checkOpenVpn(input);
+    siteVpnPassword(input, siteScope, false); // Approval only: no SQL password needed.
+    await checkOpenVpn(input, siteScope);
     return { status: "ready", code: "VPN_READY", testedAt: new Date().toISOString(),
       message: "The authenticated connector confirms its OpenVPN interface, database route and TCP reachability. You can now test SQL. No SQL login was attempted." };
   } catch (error) {
@@ -239,7 +241,7 @@ export async function testWmsVpn(input: WmsConnectionInput): Promise<WmsNetworkR
 
 export async function testConnection(
   input: WmsConnectionInput,
-  dependencies: { resolveHost?: WmsAddressResolver } = {},
+  dependencies: { resolveHost?: WmsAddressResolver; siteScope?: WmsSiteScope } = {},
 ): Promise<WmsConnectionResult> {
   let pool: pg.Pool | undefined;
   let client: pg.PoolClient | undefined;
@@ -250,9 +252,10 @@ export async function testConnection(
       if (isIP(input.host))
         throw new ConnectionFailure("TLS_HOSTNAME_REQUIRED", "Use the MySQL DNS hostname matching its TLS certificate, not a numeric IP address.");
     }
-    const password = reportingPassword(input);
-    if (input.engine === "mysql" && mysqlConnectionPath() === "openvpn") {
-      const stream = await openVpnMysqlStream(input);
+    const vpn = input.engine === "mysql" && mysqlConnectionPath() === "openvpn";
+    const password = vpn ? siteVpnPassword(input, dependencies.siteScope) : reportingPassword(input);
+    if (vpn) {
+      const stream = await openVpnMysqlStream(input, dependencies.siteScope);
       try { return await testMysqlConnection(input, password, input.host, stream); }
       finally { stream.destroy(); }
     }

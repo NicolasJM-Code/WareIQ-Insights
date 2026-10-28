@@ -1,8 +1,8 @@
 import pg from "pg";
 import { createHash, randomUUID } from "node:crypto";
 import { clerkClient } from "@clerk/express";
-import { configuredMysqlReportInput } from "./wms-connection";
-import { checkOpenVpn, getWmsNetworkConfig } from "./wms-openvpn";
+import { checkOpenVpn, getWmsNetworkConfig, mysqlConnectionPath } from "./wms-openvpn";
+import { siteVpnConfig, siteVpnConfigs, siteVpnInput, type WmsSiteScope } from "./wms-site-config";
 import { ConnectionFailure } from "./wms-connection-error";
 import { appRole, verifiedPrimaryEmail } from "./access-policy";
 import { logger } from "./logger";
@@ -16,20 +16,23 @@ const pool = new pg.Pool({
 });
 pool.on("error", () => monitorError());
 let monitoringError = false;
+const siteErrors = new Set<string>();
 function monitorError() {
   monitoringError = true;
   logger.warn({ event: "wms_vpn_monitor_unknown" }, "Warehouse VPN monitoring status is unknown");
 }
-function configuration() {
-  const config = getWmsNetworkConfig();
+function configuration(scope?: WmsSiteScope) {
+  const config = getWmsNetworkConfig(scope);
   if (config.path !== "openvpn") return null;
   if (!config.configured) throw new Error("Monitor configuration unavailable");
-  const input = configuredMysqlReportInput();
-  if (!input) throw new Error("Monitor destination unavailable");
+  const approved = siteVpnConfig(scope);
+  const input = siteVpnInput(scope);
   const key = createHash("sha256").update(JSON.stringify([
-    process.env.WMS_OPENVPN_CONNECTOR_URL, input.host, input.port, input.database, input.username,
+    approved.clientId, approved.siteId, approved.connectorUrl, input.host, input.port, input.database, input.username,
   ])).digest("hex");
-  return { input, key };
+  return { input, key, id: `warehouse-openvpn:${approved.siteId}`, scope: {
+    siteId: approved.siteId, clientId: approved.clientId,
+  } };
 }
 async function within<T>(work: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -66,23 +69,41 @@ async function listVpnAdministrators() {
   throw new Error("Administrator directory exceeded monitoring bound");
 }
 
-export async function checkWarehouseVpnHealth(): Promise<void> {
-  const config = configuration();
+export async function checkWarehouseVpnHealth(scope?: WmsSiteScope): Promise<void> {
+  if (!scope) {
+    if (mysqlConnectionPath() !== "openvpn") return;
+    const sites = siteVpnConfigs();
+    let failed = false;
+    // Keep all sites progressing even when one connector or its alert delivery fails.
+    // Two workers match the dedicated pool without an unbounded connection queue.
+    let index = 0;
+    await Promise.all(Array.from({ length: Math.min(2, sites.length) }, async () => {
+      while (index < sites.length) {
+        const site = sites[index++];
+        try { await checkWarehouseVpnHealth(site); } catch { failed = true; }
+      }
+    }));
+    monitoringError = failed;
+    if (failed) throw new Error("Warehouse monitor unavailable");
+    return;
+  }
+  const config = configuration(scope);
   if (!config) return;
   const client = await pool.connect();
   let broken = false;
   client.on("error", monitorError);
   try {
     await client.query("BEGIN");
-    const lock = await client.query<{ locked: boolean }>("SELECT pg_try_advisory_xact_lock(88417391) AS locked");
+    const lock = await client.query<{ locked: boolean }>(
+      "SELECT pg_try_advisory_xact_lock(88417391, hashtext($1)) AS locked", [config.id]);
     if (!lock.rows[0]?.locked) { await client.query("ROLLBACK"); return; }
     const previous = await client.query<{ config_key: string; state: VpnHealthState; due: boolean }>(
-      "SELECT config_key, state, next_check_at <= now() AS due FROM wareiq_wms_vpn_health WHERE id = 'warehouse-openvpn'",
+      "SELECT config_key, state, next_check_at <= now() AS due FROM wareiq_wms_vpn_health WHERE id = $1", [config.id],
     );
     const row = previous.rows[0];
     if (row?.config_key === config.key && !row.due) { await client.query("ROLLBACK"); return; }
     let observation: VpnObservation;
-    try { await checkOpenVpn(config.input); observation = "healthy"; }
+    try { await checkOpenVpn(config.input, config.scope); observation = "healthy"; }
     catch (error) {
       // Transport timeout/refusal and explicit connector rejection are unavailable.
       // Programmer/configuration/monitoring failures are never evidence of health.
@@ -99,13 +120,14 @@ export async function checkWarehouseVpnHealth(): Promise<void> {
       [JSON.stringify(recipients.map((recipient) => ({ id: randomUUID(), email: recipient.email, target: recipient.id }))), notice]);
     }
     await client.query(`INSERT INTO wareiq_wms_vpn_health (id, config_key, state, next_check_at)
-      VALUES ('warehouse-openvpn', $1, $2::jsonb, now() + interval '60 seconds')
+      VALUES ($3, $1, $2::jsonb, now() + interval '60 seconds')
       ON CONFLICT (id) DO UPDATE SET config_key = excluded.config_key, state = excluded.state, next_check_at = excluded.next_check_at`,
-    [config.key, JSON.stringify(state)]);
+    [config.key, JSON.stringify(state), config.id]);
     await client.query("COMMIT");
-    monitoringError = observation === "unknown";
+    if (observation === "unknown") siteErrors.add(config.id);
+    else siteErrors.delete(config.id);
   } catch {
-    monitoringError = true;
+    siteErrors.add(config.id);
     await client.query("ROLLBACK").catch(() => { broken = true; });
     throw new Error("Warehouse monitor unavailable");
   } finally {
@@ -114,15 +136,15 @@ export async function checkWarehouseVpnHealth(): Promise<void> {
   }
 }
 
-export async function warehouseVpnHealth(): Promise<{
+export async function warehouseVpnHealth(scope?: WmsSiteScope): Promise<{
   status: "healthy" | "unavailable" | "unknown" | "disabled"; checkedAt: string | null;
 }> {
   try {
-    const config = configuration();
+    const config = configuration(scope);
     if (!config) return { status: "disabled", checkedAt: null };
-    if (monitoringError) return { status: "unknown", checkedAt: null };
+    if (monitoringError || siteErrors.has(config.id)) return { status: "unknown", checkedAt: null };
     const { rows } = await pool.query<{ state: VpnHealthState }>(
-      "SELECT state FROM wareiq_wms_vpn_health WHERE id = 'warehouse-openvpn' AND config_key = $1", [config.key],
+      "SELECT state FROM wareiq_wms_vpn_health WHERE id = $2 AND config_key = $1", [config.key, config.id],
     );
     const state = rows[0]?.state;
     if (!state?.checkedAt || Date.now() - Date.parse(state.checkedAt) > 150_000 ||

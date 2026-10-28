@@ -748,6 +748,8 @@ export const WmsConnectionInputSslMode = {
 } as const;
 
 export interface WmsConnectionInput {
+  /** Assigned warehouse ID. Required for the OpenVPN path; never a connector destination. */
+  siteId?: string;
   /** Connection test engine. Omitted values retain PostgreSQL behavior. */
   engine?: WmsConnectionInputEngine;
   /**
@@ -851,5 +853,9 @@ export type ListFailedAccessNotificationsParams = {
  * @maxLength 512
  */
 cursor?: string;
+};
+
+export type GetWmsNetworkConfigParams = {
+siteId?: string;
 };
 

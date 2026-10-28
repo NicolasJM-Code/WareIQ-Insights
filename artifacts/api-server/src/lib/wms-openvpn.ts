@@ -6,6 +6,7 @@ import type { Duplex } from "node:stream";
 import ipaddr from "ipaddr.js";
 import type { WmsConnectionInput, WmsNetworkConfig } from "@workspace/api-zod";
 import { ConnectionFailure } from "./wms-connection-error";
+import { siteVpnConfig, siteVpnPassword, type WmsSiteScope } from "./wms-site-config";
 
 const failure = () => new ConnectionFailure("VPN_NOT_READY",
   "The OpenVPN connector is unavailable, its destination approval differs, or its VPN route is not ready. SQL was not started.");
@@ -17,26 +18,29 @@ export function mysqlConnectionPath(): "direct" | "openvpn" {
   return path;
 }
 
-function connectorConfig() {
+function connectorConfig(scope?: WmsSiteScope) {
+  const site = siteVpnConfig(scope);
   try {
-    const url = new URL(process.env.WMS_OPENVPN_CONNECTOR_URL ?? "");
-    const token = process.env.WMS_OPENVPN_CONNECTOR_TOKEN ?? "";
+    const url = new URL(site.connectorUrl);
+    const token = process.env[site.tokenEnv] ?? "";
     if (url.protocol !== "https:" || url.username || url.password || isIP(url.hostname) ||
         url.pathname !== "/" || url.search || url.hash || token.length < 32 || /[\r\n]/.test(token))
       throw new Error();
-    return { url, token, ca: process.env.WMS_OPENVPN_CONNECTOR_CA_CERT };
+    const ca = site.caEnv ? process.env[site.caEnv] : undefined;
+    if (site.caEnv && !ca) throw new Error();
+    return { url, token, ca };
   } catch {
     throw new ConnectionFailure("VPN_NOT_CONFIGURED",
       "An owner must install the connector on the OpenVPN server and configure its HTTPS URL and secret token on the WareIQ server.");
   }
 }
 
-export function getWmsNetworkConfig(): WmsNetworkConfig {
+export function getWmsNetworkConfig(scope?: WmsSiteScope): WmsNetworkConfig {
   try {
     const path = mysqlConnectionPath();
     if (path === "direct") return { path, configured: true,
       message: "Direct MySQL connection. To require VPN first, configure the OpenVPN connector and select openvpn in server configuration." };
-    connectorConfig();
+    connectorConfig(scope);
     return { path, configured: true, message: "OpenVPN connector → verified TLS MySQL. Check VPN readiness before the SQL test." };
   } catch (error) {
     return { path: "openvpn", configured: false,
@@ -59,9 +63,11 @@ async function pinnedGateway(host: string) {
 }
 
 /** HTTPS transport auth is separate from MySQL auth. No database password is sent in these headers. */
-function targetHeaders(input: WmsConnectionInput, token: string) {
+function targetHeaders(input: WmsConnectionInput, token: string, scope: WmsSiteScope) {
   return {
     authorization: `Bearer ${token}`,
+    "x-wareiq-site": scope.siteId,
+    "x-wareiq-client": scope.clientId,
     "x-wareiq-host": input.host,
     "x-wareiq-port": String(input.port),
     "x-wareiq-database": input.database,
@@ -69,10 +75,11 @@ function targetHeaders(input: WmsConnectionInput, token: string) {
   };
 }
 
-async function connectorRequest(input: WmsConnectionInput, tunnel: boolean): Promise<Duplex | undefined> {
+async function connectorRequest(input: WmsConnectionInput, tunnel: boolean, scope?: WmsSiteScope): Promise<Duplex | undefined> {
   if (mysqlConnectionPath() !== "openvpn")
     throw new ConnectionFailure("VPN_NOT_ENABLED", "The server is using the direct connection path. An owner must enable the OpenVPN connector path first.");
-  const config = connectorConfig();
+  siteVpnPassword(input, scope, false);
+  const config = connectorConfig(scope);
   const address = await pinnedGateway(config.url.hostname);
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -83,7 +90,7 @@ async function connectorRequest(input: WmsConnectionInput, tunnel: boolean): Pro
       ...(config.ca ? { ca: config.ca } : {}),
       method: tunnel ? "CONNECT" : "GET",
       path: tunnel ? "/v1/mysql" : "/v1/status",
-      headers: { ...targetHeaders(input, config.token), host: config.url.host },
+      headers: { ...targetHeaders(input, config.token, scope!), host: config.url.host },
       agent: false, maxHeaderSize: 8192,
     });
     const timer = setTimeout(() => { req.destroy(); finish(failure()); }, 8000);
@@ -124,12 +131,12 @@ async function connectorRequest(input: WmsConnectionInput, tunnel: boolean): Pro
   });
 }
 
-export async function checkOpenVpn(input: WmsConnectionInput): Promise<void> {
-  await connectorRequest(input, false);
+export async function checkOpenVpn(input: WmsConnectionInput, scope?: WmsSiteScope): Promise<void> {
+  await connectorRequest(input, false, scope);
 }
 
-export async function openVpnMysqlStream(input: WmsConnectionInput): Promise<Duplex> {
-  await checkOpenVpn(input);
+export async function openVpnMysqlStream(input: WmsConnectionInput, scope?: WmsSiteScope): Promise<Duplex> {
+  await checkOpenVpn(input, scope);
   // The connector rechecks the route immediately before opening this tunnel.
-  return (await connectorRequest(input, true))!;
+  return (await connectorRequest(input, true, scope))!;
 }

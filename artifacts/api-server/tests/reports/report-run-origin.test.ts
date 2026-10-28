@@ -12,6 +12,9 @@ const poolConstructor = vi.hoisted(() => vi.fn());
 const database = vi.hoisted(() => ({ select: vi.fn() }));
 const executeMysqlReport = vi.hoisted(() => vi.fn());
 
+vi.mock("../../src/lib/wms-vpn-monitor", () => ({
+  warehouseVpnHealth: async () => ({ status: "unknown", checkedAt: null }),
+}));
 vi.mock("@clerk/express", () => ({
   clerkMiddleware: () => (_req: unknown, _res: unknown, next: () => void) => next(),
   getAuth: () => ({ userId: provider.userId, sessionId: provider.sessionId }),
@@ -225,6 +228,7 @@ describe("full-app authorization for report runs", () => {
       expect.objectContaining({ view: "v_receipts" }),
       { clientKey: "COMPANY-01", siteKey: "WAREHOUSE-01" },
       undefined,
+      { siteScope: { siteId: "site-a", clientId: "client-a" } },
     );
     expect(poolConstructor).not.toHaveBeenCalled();
   });
@@ -246,6 +250,7 @@ describe("full-app authorization for report runs", () => {
       expect.objectContaining({ view: "v_receipts" }),
       { clientKey: "COMPANY-01", siteKey: "WAREHOUSE-01" },
       ["id"],
+      { siteScope: { siteId: "site-a", clientId: "client-a" } },
     );
   });
 

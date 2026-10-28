@@ -2,8 +2,10 @@ import { Router, type IRouter } from "express";
 import { clerkClient, getAuth } from "@clerk/express";
 import { TestWmsConnectionBody, TestWmsConnectionResponse, GetWmsNetworkConfigResponse } from "@workspace/api-zod";
 import { testConnection, testWmsVpn } from "../lib/wms-connection";
-import { getWmsNetworkConfig } from "../lib/wms-openvpn";
 import { warehouseVpnHealth } from "../lib/wms-vpn-monitor";
+import { getWmsNetworkConfig, mysqlConnectionPath } from "../lib/wms-openvpn";
+import { AccessError, accessFor, requireMemberAccess } from "../lib/reporting-access";
+import { z } from "zod";
 
 const router: IRouter = Router();
 let busy = false;
@@ -26,8 +28,31 @@ router.use("/wms/connection", async (req, res, next): Promise<void> => {
   next();
 });
 
+router.use("/wms/connection", async (req, res, next): Promise<void> => {
+  try {
+    const vpn = mysqlConnectionPath() === "openvpn";
+    if (vpn && (req.method === "GET" || req.path === "/vpn-test" || req.body?.engine === "mysql")) {
+      const site = z.string().uuid().safeParse(req.method === "GET" ? req.query.siteId : req.body?.siteId);
+      if (!site.success) { res.status(400).json({ error: "Select an assigned warehouse." }); return; }
+      // Fresh membership, active client, role and assigned active sites for every request.
+      const access = await accessFor(req);
+      requireMemberAccess(access);
+      if (!access.actor.platformAdmin || !access.session.sites.some((candidate) => candidate.id === site.data))
+        throw new AccessError(403, "This warehouse is not assigned to you.");
+      res.locals.wmsSiteScope = { siteId: site.data, clientId: access.client!.id };
+    }
+    next();
+  } catch (error) {
+    res.status(error instanceof AccessError ? error.status : 503)
+      .json({ error: error instanceof AccessError ? error.message : "Warehouse access could not be verified." });
+  }
+});
+
 router.get("/wms/connection/network", async (_req, res) => {
-  res.json(GetWmsNetworkConfigResponse.parse({ ...getWmsNetworkConfig(), monitoring: await warehouseVpnHealth() }));
+  const scope = res.locals.wmsSiteScope;
+  res.json(GetWmsNetworkConfigResponse.parse({
+    ...getWmsNetworkConfig(scope), monitoring: await warehouseVpnHealth(scope),
+  }));
 });
 
 router.post("/wms/connection/vpn-test", async (req, res): Promise<void> => {
@@ -35,7 +60,7 @@ router.post("/wms/connection/vpn-test", async (req, res): Promise<void> => {
   if (!parsed.success) { res.status(400).json({ error: "Check the approved connection fields." }); return; }
   if (Date.now() < nextVpnAt) { res.status(429).json({ error: "Wait a few seconds before checking the VPN again." }); return; }
   nextVpnAt = Date.now() + 10000;
-  res.json(await testWmsVpn(parsed.data));
+  res.json(await testWmsVpn(parsed.data, res.locals.wmsSiteScope));
 });
 
 router.post("/wms/connection/test", async (req, res): Promise<void> => {
@@ -50,7 +75,7 @@ router.post("/wms/connection/test", async (req, res): Promise<void> => {
   busy = true;
   nextTestAt = Date.now() + 10000;
   try {
-    const result = TestWmsConnectionResponse.parse(await testConnection(parsed.data));
+    const result = TestWmsConnectionResponse.parse(await testConnection(parsed.data, { siteScope: res.locals.wmsSiteScope }));
     req.log.info({ event: "wms_connection_test", status: result.status, code: result.code, userId: getAuth(req).userId }, "WMS connection test finished");
     res.json(result);
   } finally { busy = false; }

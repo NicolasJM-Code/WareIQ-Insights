@@ -397,6 +397,11 @@ paths:
       operationId: getWmsNetworkConfig
       summary: Read the server-selected MySQL connection path without secrets
       security: [{ clerkSession: [] }]
+      parameters:
+        - in: query
+          name: siteId
+          required: false
+          schema: { type: string, format: uuid }
       responses:
         "200":
           description: Server-selected connection path
@@ -930,6 +935,10 @@ components:
       additionalProperties: false
       required: [host, port, database, schema, username, sslMode, queryTimeoutSec]
       properties:
+        siteId:
+          type: string
+          format: uuid
+          description: Assigned warehouse ID. Required for the OpenVPN path; never a connector destination.
         engine:
           type: string
           enum: [postgresql, mysql]

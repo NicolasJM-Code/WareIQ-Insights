@@ -51,6 +51,7 @@ import type {
   AuthUnavailableResponse,
   ClerkEventEnvelope,
   ForbiddenResponse,
+  GetWmsNetworkConfigParams,
   HealthStatus,
   ListAccessHistoryParams,
   ListAccessUsersParams,
@@ -2144,20 +2145,27 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       return useMutation(getRunAccessReportMutationOptions(options), queryClient);
     }
 
-export const getGetWmsNetworkConfigUrl = () => {
+export const getGetWmsNetworkConfigUrl = (params?: GetWmsNetworkConfigParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/wms/connection/network`
+  return stringifiedParams.length > 0 ? `/api/wms/connection/network?${stringifiedParams}` : `/api/wms/connection/network`
 }
 
 /**
  * @summary Read the server-selected MySQL connection path without secrets
  */
-export const getWmsNetworkConfig = async ( options?: Parameters<typeof customFetch>[1]): Promise<WmsNetworkConfig> => {
+export const getWmsNetworkConfig = async (params?: GetWmsNetworkConfigParams, options?: Parameters<typeof customFetch>[1]): Promise<WmsNetworkConfig> => {
 
-  return customFetch<WmsNetworkConfig>(getGetWmsNetworkConfigUrl(),
+  return customFetch<WmsNetworkConfig>(getGetWmsNetworkConfigUrl(params),
   {
     ...options,
     method: 'GET'
@@ -2170,23 +2178,23 @@ export const getWmsNetworkConfig = async ( options?: Parameters<typeof customFet
 
 
 
-export const getGetWmsNetworkConfigQueryKey = () => {
+export const getGetWmsNetworkConfigQueryKey = (params?: GetWmsNetworkConfigParams,) => {
     return [
-    `/api/wms/connection/network`
+    `/api/wms/connection/network`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getGetWmsNetworkConfigQueryOptions = <TData = Awaited<ReturnType<typeof getWmsNetworkConfig>>, TError = ErrorType<AccessFailureResponse>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWmsNetworkConfig>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+export const getGetWmsNetworkConfigQueryOptions = <TData = Awaited<ReturnType<typeof getWmsNetworkConfig>>, TError = ErrorType<AccessFailureResponse>>(params?: GetWmsNetworkConfigParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWmsNetworkConfig>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetWmsNetworkConfigQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getGetWmsNetworkConfigQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getWmsNetworkConfig>>> = ({ signal }) => getWmsNetworkConfig({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getWmsNetworkConfig>>> = ({ signal }) => getWmsNetworkConfig(params, { signal, ...requestOptions });
 
 
 
@@ -2200,7 +2208,7 @@ export type GetWmsNetworkConfigQueryError = ErrorType<AccessFailureResponse>
 
 
 export function useGetWmsNetworkConfig<TData = Awaited<ReturnType<typeof getWmsNetworkConfig>>, TError = ErrorType<AccessFailureResponse>>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWmsNetworkConfig>>, TError, TData>> & Pick<
+ params: undefined |  GetWmsNetworkConfigParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWmsNetworkConfig>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getWmsNetworkConfig>>,
           TError,
@@ -2210,7 +2218,7 @@ export function useGetWmsNetworkConfig<TData = Awaited<ReturnType<typeof getWmsN
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useGetWmsNetworkConfig<TData = Awaited<ReturnType<typeof getWmsNetworkConfig>>, TError = ErrorType<AccessFailureResponse>>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWmsNetworkConfig>>, TError, TData>> & Pick<
+ params?: GetWmsNetworkConfigParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWmsNetworkConfig>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getWmsNetworkConfig>>,
           TError,
@@ -2220,7 +2228,7 @@ export function useGetWmsNetworkConfig<TData = Awaited<ReturnType<typeof getWmsN
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 export function useGetWmsNetworkConfig<TData = Awaited<ReturnType<typeof getWmsNetworkConfig>>, TError = ErrorType<AccessFailureResponse>>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWmsNetworkConfig>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ params?: GetWmsNetworkConfigParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWmsNetworkConfig>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
@@ -2228,11 +2236,11 @@ export function useGetWmsNetworkConfig<TData = Awaited<ReturnType<typeof getWmsN
  */
 
 export function useGetWmsNetworkConfig<TData = Awaited<ReturnType<typeof getWmsNetworkConfig>>, TError = ErrorType<AccessFailureResponse>>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWmsNetworkConfig>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ params?: GetWmsNetworkConfigParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWmsNetworkConfig>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
  , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getGetWmsNetworkConfigQueryOptions(options)
+  const queryOptions = getGetWmsNetworkConfigQueryOptions(params,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

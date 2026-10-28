@@ -486,7 +486,7 @@ router.post("/access/reports/:id/run", handler(async (req, res) => {
   const result = await executeApprovedMysqlReport(mapping, {
     clientKey: access.client.companyNumber,
     siteKey: site.sourceId,
-  }, fields);
+  }, fields, { siteScope: { siteId: site.id, clientId: access.client.id } });
   if (!result) {
     res.json(RunAccessReportResponse.parse({
       status: "not_connected",

@@ -13,12 +13,15 @@ import { createConnector } from "./server.mjs";
 
 const token = "not-a-real-secret-".repeat(4);
 const env = {
+  WAREIQ_SITE_ID: "11111111-1111-4111-8111-111111111111",
+  WAREIQ_CLIENT_ID: "22222222-2222-4222-8222-222222222222",
   WAREIQ_CONNECTOR_TOKEN: token, WAREIQ_CONNECTOR_TLS_CERT_FILE: "/unused/cert",
   WAREIQ_CONNECTOR_TLS_KEY_FILE: "/unused/key", WAREIQ_VPN_INTERFACE: "tun0",
   WAREIQ_DB_HOST: "mysql.internal.example.test", WAREIQ_DB_ADDRESS: "10.40.0.10",
   WAREIQ_DB_PORT: "3306", WAREIQ_DB_DATABASE: "reporting", WAREIQ_DB_USERNAME: "reporter",
 };
 const headers = {
+  "x-wareiq-site": env.WAREIQ_SITE_ID, "x-wareiq-client": env.WAREIQ_CLIENT_ID,
   authorization: `Bearer ${token}`, "x-wareiq-host": env.WAREIQ_DB_HOST,
   "x-wareiq-port": "3306", "x-wareiq-database": "reporting", "x-wareiq-username": "reporter",
 };
@@ -27,6 +30,8 @@ test("connector accepts only a private pinned target and exact authenticated des
   const config = readConfig(env);
   assert.equal(authorized({ headers }, config), true);
   for (const invalid of [
+    { ...headers, "x-wareiq-site": "33333333-3333-4333-8333-333333333333" },
+    { ...headers, "x-wareiq-client": "33333333-3333-4333-8333-333333333333" },
     { ...headers, authorization: "Bearer wrong" },
     { ...headers, "x-wareiq-host": "other.example.test" },
     { ...headers, "x-wareiq-host": ["malformed"] },
@@ -110,6 +115,9 @@ test("real HTTPS CONNECT carries nested verified TLS and drops the tunnel when V
       req.once("error", reject); req.end();
     });
     assert.equal(await status({ ...headers, authorization: "Bearer invalid" }), 403);
+    assert.equal(await status({ ...headers, "x-wareiq-site": "wrong-site" }), 403);
+    assert.equal(await status({ ...headers, "x-wareiq-client": "wrong-client" }), 403);
+    assert.equal(dialCount, 0, "unauthorised site/client must not probe the database");
     assert.equal(await status(headers), 200);
     assert.equal(dialCount, 1, "readiness probes the pinned database TCP port");
     assert.equal(sqlTlsSessions, 0, "VPN readiness must not attempt a SQL TLS handshake or login");

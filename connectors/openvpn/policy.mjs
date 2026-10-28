@@ -19,6 +19,9 @@ export function readConfig(env) {
   const host = env.WAREIQ_DB_HOST;
   const token = env.WAREIQ_CONNECTOR_TOKEN || "";
   const vpnInterface = env.WAREIQ_VPN_INTERFACE;
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (!uuid.test(env.WAREIQ_SITE_ID || "") || !uuid.test(env.WAREIQ_CLIENT_ID || ""))
+    throw new Error("CONNECTOR_CONFIGURATION_INVALID");
   if (!host || host.length > 253 || !/^[A-Za-z0-9][A-Za-z0-9.-]*$/.test(host) || isIP(host) ||
       isIP(address || "") !== 4 || !privateV4.check(address, "ipv4") ||
       !Number.isInteger(port) || port < 1 || port > 65535 ||
@@ -30,6 +33,7 @@ export function readConfig(env) {
       !env.WAREIQ_CONNECTOR_TLS_CERT_FILE || !env.WAREIQ_CONNECTOR_TLS_KEY_FILE)
     throw new Error("CONNECTOR_CONFIGURATION_INVALID");
   return {
+    siteId: env.WAREIQ_SITE_ID, clientId: env.WAREIQ_CLIENT_ID,
     host, address, port, listenPort, vpnInterface,
     database: env.WAREIQ_DB_DATABASE, username: env.WAREIQ_DB_USERNAME,
     tokenHash: hash(`Bearer ${token}`),
@@ -40,7 +44,9 @@ export function readConfig(env) {
 export function authorized(req, config) {
   const authorization = req.headers.authorization;
   if (typeof authorization !== "string" || !timingSafeEqual(hash(authorization), config.tokenHash)) return false;
-  return typeof req.headers["x-wareiq-host"] === "string" &&
+  return req.headers["x-wareiq-site"] === config.siteId &&
+    req.headers["x-wareiq-client"] === config.clientId &&
+    typeof req.headers["x-wareiq-host"] === "string" &&
     req.headers["x-wareiq-host"].toLowerCase() === config.host.toLowerCase() &&
     req.headers["x-wareiq-port"] === String(config.port) &&
     req.headers["x-wareiq-database"] === config.database &&

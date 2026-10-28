@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { initialVpnHealth, type VpnHealthState } from "../src/lib/wms-vpn-health";
+import { configureVpnSite, vpnScope, vpnSite } from "./fixtures/wms-vpn-sites";
 
 const fixture = vi.hoisted(() => ({
   query: vi.fn(), release: vi.fn(), connect: vi.fn(), probe: vi.fn(), directory: vi.fn(),
-  input: vi.fn(), network: vi.fn(), warn: vi.fn(),
+  network: vi.fn(), warn: vi.fn(),
 }));
 vi.mock("pg", () => ({ default: { Pool: class {
   on() {}
@@ -11,10 +12,10 @@ vi.mock("pg", () => ({ default: { Pool: class {
   query = fixture.query;
 } } }));
 vi.mock("@clerk/express", () => ({ clerkClient: { users: { getUserList: fixture.directory } } }));
-vi.mock("../src/lib/wms-connection", () => ({ configuredMysqlReportInput: fixture.input }));
-vi.mock("../src/lib/wms-openvpn", () => ({ checkOpenVpn: fixture.probe, getWmsNetworkConfig: fixture.network }));
+vi.mock("../src/lib/wms-openvpn", () => ({ checkOpenVpn: fixture.probe, getWmsNetworkConfig: fixture.network,
+  mysqlConnectionPath: () => fixture.network().path }));
 vi.mock("../src/lib/logger", () => ({ logger: { warn: fixture.warn } }));
-import { checkWarehouseVpnHealth, startWarehouseVpnMonitor, warehouseVpnHealth, vpnAdministrators } from "../src/lib/wms-vpn-monitor";
+import { checkWarehouseVpnHealth, startWarehouseVpnMonitor, warehouseVpnHealth as scopedWarehouseVpnHealth, vpnAdministrators } from "../src/lib/wms-vpn-monitor";
 import { ConnectionFailure } from "../src/lib/wms-connection-error";
 
 let stored: { config_key: string; state: VpnHealthState; due: boolean } | undefined;
@@ -23,6 +24,7 @@ let queued: Array<{ kind: string; recipients: unknown[] }>;
 let committed: typeof queued;
 let locked: boolean;
 let storageFails: boolean;
+const warehouseVpnHealth = () => scopedWarehouseVpnHealth(vpnScope);
 const administrator = {
   id: "fixture-admin", banned: false, locked: false, publicMetadata: { role: "admin" },
   primaryEmailAddressId: "primary",
@@ -31,11 +33,10 @@ const administrator = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  configureVpnSite();
   stored = undefined; staged = undefined; queued = []; committed = [];
   locked = true; storageFails = false;
   fixture.network.mockReturnValue({ path: "openvpn", configured: true });
-  fixture.input.mockReturnValue({ engine: "mysql", host: "db.example.test", port: 3306,
-    database: "reporting", schema: "reporting", username: "reader", sslMode: "verify-full", queryTimeoutSec: 15 });
   fixture.probe.mockResolvedValue(undefined);
   fixture.directory.mockResolvedValue({ data: [administrator], totalCount: 1 });
   fixture.connect.mockResolvedValue({ query: fixture.query, release: fixture.release, on: vi.fn(), removeListener: vi.fn() });
@@ -51,7 +52,7 @@ beforeEach(() => {
     return { rows: [] };
   });
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 const unavailable = () => fixture.probe.mockRejectedValue(new ConnectionFailure("VPN_NOT_READY", "private-fixture"));
 
 test("outage and recovery are queued atomically and sustained failures survive worker restarts", async () => {
@@ -137,6 +138,62 @@ test("administrator discovery paginates and excludes unverified, restricted and 
     ], totalCount: 101 });
   expect(await vpnAdministrators()).toEqual([{ id: "fixture-admin", email: "admin@example.test" }]);
   expect(fixture.directory.mock.calls.map(([arg]) => arg.offset)).toEqual([0, 100]);
+});
+
+test("monitoring probes, locks, health records and outage transitions remain isolated per approved site", async () => {
+  const second = { ...vpnSite, siteId: "33333333-3333-4333-8333-333333333333",
+    clientId: "44444444-4444-4444-8444-444444444444",
+    connectorUrl: "https://second.example.test", tokenEnv: "WMS_SECOND_TOKEN" };
+  vi.stubEnv(second.tokenEnv, "second-connector-token-".repeat(4));
+  vi.stubEnv("WMS_OPENVPN_SITES", JSON.stringify([vpnSite, second]));
+  const records = new Map<string, NonNullable<typeof stored>>();
+  const locks: string[] = [];
+  fixture.connect.mockImplementation(async () => {
+    let id: string;
+    let next: NonNullable<typeof stored>;
+    let notices: typeof queued = [];
+    return { on: vi.fn(), removeListener: vi.fn(), release: vi.fn(),
+      query: vi.fn(async (sql: string, args?: string[]) => {
+        if (sql.includes("pg_try_advisory")) {
+          locks.push(args![0]);
+          return { rows: [{ locked: true }] };
+        }
+        if (sql.startsWith("SELECT config_key")) return { rows: records.has(args![0]) ? [records.get(args![0])] : [] };
+        if (sql.startsWith("INSERT INTO wareiq_wms")) {
+          id = args![2];
+          next = { config_key: args![0], state: JSON.parse(args![1]), due: true };
+        }
+        if (sql.startsWith("INSERT INTO wareiq_access"))
+          notices.push({ kind: args![1], recipients: JSON.parse(args![0]) });
+        if (sql === "COMMIT") { records.set(id, next); committed.push(...notices); notices = []; }
+        return { rows: [] };
+      }),
+    };
+  });
+  fixture.query.mockImplementation(async (_sql: string, args: string[]) => {
+    const row = records.get(args[1]);
+    return { rows: row?.config_key === args[0] ? [{ state: row.state }] : [] };
+  });
+  fixture.probe.mockImplementation(async (_input, scope) => {
+    if (scope.siteId === vpnScope.siteId) throw new ConnectionFailure("VPN_NOT_READY", "unavailable");
+  });
+  await checkWarehouseVpnHealth();
+  await checkWarehouseVpnHealth();
+  expect(committed.map((notice) => notice.kind)).toEqual(["vpn_outage"]);
+  expect(new Set(locks)).toEqual(new Set([
+    `warehouse-openvpn:${vpnScope.siteId}`, `warehouse-openvpn:${second.siteId}`,
+  ]));
+  expect(fixture.probe.mock.calls.map(([input, scope]) => [input.siteId, scope.clientId]))
+    .toEqual([[vpnScope.siteId, vpnScope.clientId], [second.siteId, second.clientId],
+      [vpnScope.siteId, vpnScope.clientId], [second.siteId, second.clientId]]);
+  expect(await scopedWarehouseVpnHealth(vpnScope)).toMatchObject({ status: "unavailable" });
+  expect(await scopedWarehouseVpnHealth(second)).toMatchObject({ status: "healthy" });
+  expect(await scopedWarehouseVpnHealth({ ...vpnScope, clientId: second.clientId }))
+    .toEqual({ status: "unknown", checkedAt: null });
+  fixture.probe.mockRejectedValueOnce(new Error("unknown-first-site"));
+  await checkWarehouseVpnHealth();
+  expect(await scopedWarehouseVpnHealth(vpnScope)).toEqual({ status: "unknown", checkedAt: null });
+  expect(await scopedWarehouseVpnHealth(second)).toMatchObject({ status: "healthy" });
 });
 
 test("bounded directory timeout rolls back and a stalled probe does not overlap subsequent ticks", async () => {

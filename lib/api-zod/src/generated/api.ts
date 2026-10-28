@@ -662,6 +662,10 @@ export const RunAccessReportResponse = zod.object({
 /**
  * @summary Read the server-selected MySQL connection path without secrets
  */
+export const GetWmsNetworkConfigQueryParams = zod.object({
+  "siteId": zod.coerce.string().uuid().optional()
+})
+
 export const GetWmsNetworkConfigResponse = zod.object({
   "path": zod.enum(['direct', 'openvpn']),
   "configured": zod.boolean(),
@@ -701,6 +705,7 @@ export const testWmsVpnBodyQueryTimeoutSecMax = 300;
 
 
 export const TestWmsVpnBody = zod.object({
+  "siteId": zod.string().uuid().optional().describe('Assigned warehouse ID. Required for the OpenVPN path; never a connector destination.'),
   "engine": zod.enum(['postgresql', 'mysql']).default(testWmsVpnBodyEngineDefault).describe('Connection test engine. Omitted values retain PostgreSQL behavior.'),
   "host": zod.string().min(1).max(testWmsVpnBodyHostMax).regex(testWmsVpnBodyHostRegExp),
   "port": zod.number().int().min(1).max(testWmsVpnBodyPortMax),
@@ -747,6 +752,7 @@ export const testWmsConnectionBodyQueryTimeoutSecMax = 300;
 
 
 export const TestWmsConnectionBody = zod.object({
+  "siteId": zod.string().uuid().optional().describe('Assigned warehouse ID. Required for the OpenVPN path; never a connector destination.'),
   "engine": zod.enum(['postgresql', 'mysql']).default(testWmsConnectionBodyEngineDefault).describe('Connection test engine. Omitted values retain PostgreSQL behavior.'),
   "host": zod.string().min(1).max(testWmsConnectionBodyHostMax).regex(testWmsConnectionBodyHostRegExp),
   "port": zod.number().int().min(1).max(testWmsConnectionBodyPortMax),

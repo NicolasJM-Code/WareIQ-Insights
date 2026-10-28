@@ -65,6 +65,7 @@ export * from './captureReadinessRouting';
 export * from './captureReadinessSigning';
 export * from './clerkEventEnvelope';
 export * from './forbiddenResponse';
+export * from './getWmsNetworkConfigParams';
 export * from './healthStatus';
 export * from './listAccessHistoryParams';
 export * from './listAccessUsersParams';

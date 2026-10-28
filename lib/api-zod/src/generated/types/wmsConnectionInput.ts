@@ -9,6 +9,8 @@ import type { WmsConnectionInputEngine } from './wmsConnectionInputEngine';
 import type { WmsConnectionInputSslMode } from './wmsConnectionInputSslMode';
 
 export interface WmsConnectionInput {
+  /** Assigned warehouse ID. Required for the OpenVPN path; never a connector destination. */
+  siteId?: string;
   /** Connection test engine. Omitted values retain PostgreSQL behavior. */
   engine?: WmsConnectionInputEngine;
   /**
