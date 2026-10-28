@@ -97,6 +97,7 @@ const site = {
 
 let memberFixture = member;
 let clientFixture = client;
+let roleFixture = role;
 const privateReports = [
   {
     id: "another-owner-report",
@@ -145,6 +146,7 @@ beforeEach(() => {
   provider.sessionId = "session-a";
   memberFixture = member;
   clientFixture = client;
+  roleFixture = role;
   siteFixtures = [site];
   provider.getUser.mockImplementation(async () => ({
     banned: false,
@@ -166,7 +168,7 @@ beforeEach(() => {
           return [memberFixture, otherMember].filter((candidate) => candidate.email === email);
         }
         if (table === clientsTable) return [clientFixture];
-        if (table === rolesTable) return [role];
+        if (table === rolesTable) return [roleFixture];
         if (table === sitesTable) return siteFixtures.filter((site) => site.active);
         if (table === ownReportsTable) {
           const query = new PgDialect().sqlToQuery(condition);
@@ -397,6 +399,30 @@ describe("full-app authorization for report runs", () => {
     expect(provider.getSession).toHaveBeenCalledOnce();
     expect(provider.getUser).toHaveBeenCalledOnce();
     expect(database.select).toHaveBeenCalledTimes(5);
+    expect(poolConstructor).not.toHaveBeenCalled();
+  });
+
+  it("denies an owner whose role no longer grants the personal report section", async () => {
+    roleFixture = { ...role, ownReportSections: ["inventory"] };
+    vi.stubEnv("WMS_MYSQL_REPORT_MAPPINGS", JSON.stringify({
+      "own:inbound:receipts": {
+        view: "v_receipts", clientColumn: "client_code", siteColumn: "warehouse_code",
+        columns: { id: "receipt_id" },
+      },
+    }));
+
+    const response = await runRequest({
+      reportId: "reporter-a-report",
+      origin: "https://wareiq.test",
+      fetchSite: "same-origin",
+    });
+
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({ error: "Your role does not grant access to this report." });
+    expect(provider.getSession).toHaveBeenCalledOnce();
+    expect(provider.getUser).toHaveBeenCalledOnce();
+    expect(database.select).toHaveBeenCalledTimes(5);
+    expect(executeMysqlReport).not.toHaveBeenCalled();
     expect(poolConstructor).not.toHaveBeenCalled();
   });
 
