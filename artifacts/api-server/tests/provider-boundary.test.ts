@@ -237,6 +237,59 @@ async function expectProviderDatabaseIsolation() {
   }
 }
 
+it("keeps browser execution isolated from application and WMS databases", async () => {
+  await expectBrowserDatabaseIsolation();
+}, 60_000);
+
+async function expectBrowserDatabaseIsolation() {
+  const tempRoot = join(workspaceRoot, "tmp");
+  await mkdir(tempRoot, { recursive: true });
+  const directory = await mkdtemp(join(tempRoot, "wareiq-browser-database-"));
+  const networkBlockerPath = join(directory, "block-network.cjs");
+
+  try {
+    await writeFile(networkBlockerPath, networkBlockerModule);
+    const result = spawnSync(
+      process.execPath,
+      [
+        join(workspaceRoot, "node_modules/vitest/vitest.mjs"),
+        "run",
+        "--config",
+        join(workspaceRoot, "vitest.browser.config.ts"),
+        "--root",
+        workspaceRoot,
+        "--reporter=verbose",
+        "--testNamePattern",
+        "keeps browser execution isolated from application and WMS databases",
+      ],
+      {
+        cwd: workspaceRoot,
+        env: {
+          PATH: process.env.PATH,
+          HOME: directory,
+          TMPDIR: directory,
+          NODE_OPTIONS: `--require=${networkBlockerPath}`,
+          NODE_ENV: "test",
+          DATABASE_URL: "postgresql://offline:offline@127.0.0.1:1/application",
+          WMS_DATABASE_URL: "postgresql://offline:offline@127.0.0.1:1/wms",
+          WMS_PGPASSWORD: "synthetic-offline-password",
+        },
+        encoding: "utf8",
+        timeout: 45_000,
+      },
+    );
+    const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+    expect(result.error).toBeUndefined();
+    expect(result.status, output).toBe(0);
+    expect(output).toContain(
+      "keeps browser execution isolated from application and WMS databases",
+    );
+    expect(output).not.toContain("FORBIDDEN_OFFLINE_NETWORK");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
 async function expectLiveEntrypointToRespectPreflightAndRecovery() {
   const tempRoot = join(workspaceRoot, "tmp");
   await mkdir(tempRoot, { recursive: true });

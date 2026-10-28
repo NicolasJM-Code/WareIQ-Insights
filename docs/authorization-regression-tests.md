@@ -203,8 +203,13 @@ installation or cleanup) fail the command, not skip it.
 The runner serves a minimal React page on a random loopback port with the
 production `AuthProvider`, `AccessGate`, `use-access` hook and `access.tsx`
 permission components, plus the real Express middleware and Clerk SDK.
-Only the database read boundary is replaced with an empty fixture; it
-does **not** open the WMS or application database or import report content.
+The browser Vitest setup removes `DATABASE_URL`, `WMS_DATABASE_URL`, and
+`WMS_PGPASSWORD` before application modules load. Only the database read
+boundary is replaced with an empty fixture, and PostgreSQL pool construction is
+blocked. The check does **not** use real database credentials, open the WMS or
+application database, or import report content. An offline regression supplies
+synthetic database settings and blocks network connections while verifying
+these protections; it does not need database credentials or Clerk access.
 Its only protected children are harmless test markers. It creates one
 new `wareiq-browser-<uuid>@example.com` Development account with temporary
 administrator metadata. A short-lived single-use Clerk sign-in ticket is

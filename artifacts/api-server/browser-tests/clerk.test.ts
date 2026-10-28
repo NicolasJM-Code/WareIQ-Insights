@@ -8,6 +8,17 @@ import react from "@vitejs/plugin-react";
 import { clerkClient } from "@clerk/express";
 import { cleanupFixture, createFixture, preflight, recoverFixture, safe } from "./fixture";
 
+const databasePoolConstructor = vi.hoisted(() => vi.fn());
+vi.mock("pg", () => {
+  class BlockedPool {
+    constructor() {
+      databasePoolConstructor();
+      throw new Error("Browser checks must not construct a PostgreSQL pool");
+    }
+  }
+  return { default: { Pool: BlockedPool }, Pool: BlockedPool };
+});
+
 // Real Clerk and production authorization; no WMS/application database opens.
 vi.mock("@workspace/db", async () => ({
   ...await import("@workspace/db/schema"),
@@ -28,6 +39,13 @@ let server: Server | undefined;
 let origin: string;
 let reached = 0;
 let phase = "preflight";
+
+it("keeps browser execution isolated from application and WMS databases", () => {
+  expect(process.env.DATABASE_URL).toBeUndefined();
+  expect(process.env.WMS_DATABASE_URL).toBeUndefined();
+  expect(process.env.WMS_PGPASSWORD).toBeUndefined();
+  expect(databasePoolConstructor).not.toHaveBeenCalled();
+});
 
 afterAll(async () => {
   // Attempt provider cleanup even if local shutdown fails.
