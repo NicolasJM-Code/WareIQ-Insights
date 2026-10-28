@@ -19,7 +19,7 @@ vi.mock("@clerk/express", () => ({
     users: { getUser: async () => ({
       banned: false,
       locked: false,
-      publicMetadata: {},
+      publicMetadata: { role: "admin" },
       primaryEmailAddressId: "verified",
       emailAddresses: [{
         id: "verified",
@@ -65,6 +65,10 @@ const importBody = {
 };
 const snapshot = async () =>
   (await pool.query("SELECT * FROM wareiq_own_reports ORDER BY id")).rows;
+const clientSnapshot = async () =>
+  (await pool.query("SELECT * FROM wareiq_clients ORDER BY id")).rows;
+const siteSnapshot = async () =>
+  (await pool.query("SELECT * FROM wareiq_sites ORDER BY id")).rows;
 
 function mutation(
   method: "post" | "delete",
@@ -230,5 +234,65 @@ describe("full-app origin protection for saved reports", () => {
     expect((await snapshot()).map((row) => row.id)).toEqual(
       before.map((row) => row.id).filter((id) => id !== "original"),
     );
+  });
+});
+
+describe("full-app origin protection for other persistent API changes", () => {
+  const clientBody = {
+    name: "Origin regression client",
+    companyNumber: "",
+    addressLine1: "",
+    addressLine2: "",
+    city: "",
+    region: "",
+    postalCode: "",
+    country: "",
+    active: true,
+  };
+  const warehouseBody = {
+    clientId: "client-a",
+    sourceId: "origin-regression-site",
+    name: "Origin regression warehouse",
+    addressLine1: "",
+    addressLine2: "",
+    city: "",
+    region: "",
+    postalCode: "",
+    country: "",
+    contactPhone: "",
+    active: true,
+  };
+  const persistentMutations = [
+    { path: "/api/access/clients", body: clientBody, snapshot: clientSnapshot },
+    { path: "/api/access/warehouses", body: warehouseBody, snapshot: siteSnapshot },
+  ];
+
+  it.each([
+    ["absent Origin", {}],
+    ["foreign Origin", { origin: "https://foreign.test" }],
+    ["mismatched fetch metadata", { origin: "https://wareiq.test", fetchSite: "cross-site" }],
+  ] as const)("blocks non-report changes with %s before changing persistent state", async (_label, options) => {
+    for (const route of persistentMutations) {
+      const before = await route.snapshot();
+      const response = await mutation("post", route.path, options).send(route.body);
+
+      expect(response.status).toBe(403);
+      expect(response.body).toEqual({ error: "A same-origin request is required." });
+      expect(await route.snapshot()).toEqual(before);
+    }
+  });
+
+  it("allows same-origin creation on non-report routes through the full application", async () => {
+    const validOrigin = { origin: "https://wareiq.test", fetchSite: "same-origin" };
+    for (const route of persistentMutations) {
+      const before = await route.snapshot();
+      const response = await mutation("post", route.path, validOrigin).send(route.body);
+
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({ ...route.body, id: expect.any(String) });
+      const after = await route.snapshot();
+      expect(after).toHaveLength(before.length + 1);
+      expect(after.find((row) => row.id === response.body.id)).toBeDefined();
+    }
   });
 });
