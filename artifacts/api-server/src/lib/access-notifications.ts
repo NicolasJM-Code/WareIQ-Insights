@@ -31,7 +31,7 @@ export class InvalidAccessNotificationCursorError extends Error {}
 
 export const ACCESS_NOTIFICATION_QUEUE_WARNING_AFTER_SECONDS = 5 * 60;
 
-// Keep completed outbox history for 90 days. Each run removes at most 500 rows.
+// Keep completed outbox history for 90 days. Cleanup removes at most 500 rows per batch.
 const COMPLETED_NOTIFICATION_RETENTION_DAYS = 90;
 const COMPLETED_NOTIFICATION_CLEANUP_BATCH_SIZE = 500;
 const COMPLETED_NOTIFICATION_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -85,26 +85,31 @@ export async function getAccessNotificationSummary(): Promise<AccessNotification
 }
 
 export async function cleanupCompletedAccessNotifications(): Promise<number> {
-  const { rows } = await pool.query<{ deleted: number | string }>(`
-    WITH expired AS (
-      SELECT id
-      FROM wareiq_access_notifications
-      WHERE state IN ('sent', 'cancelled')
-        AND created_at < now() - ($1 * interval '1 day')
-      ORDER BY created_at
-      LIMIT $2
-      FOR UPDATE SKIP LOCKED
-    ),
-    deleted AS (
-      DELETE FROM wareiq_access_notifications
-      WHERE id IN (SELECT id FROM expired)
-      RETURNING 1
-    )
-    SELECT count(*)::int AS deleted FROM deleted
-  `, [COMPLETED_NOTIFICATION_RETENTION_DAYS, COMPLETED_NOTIFICATION_CLEANUP_BATCH_SIZE]);
-  const result = rows[0];
-  if (!result) throw new Error("Notification cleanup unavailable");
-  return Number(result.deleted);
+  let totalDeleted = 0;
+  while (true) {
+    const { rows } = await pool.query<{ deleted: number | string }>(`
+      WITH expired AS (
+        SELECT id
+        FROM wareiq_access_notifications
+        WHERE state IN ('sent', 'cancelled')
+          AND created_at < now() - ($1 * interval '1 day')
+        ORDER BY created_at
+        LIMIT $2
+        FOR UPDATE SKIP LOCKED
+      ),
+      deleted AS (
+        DELETE FROM wareiq_access_notifications
+        WHERE id IN (SELECT id FROM expired)
+        RETURNING 1
+      )
+      SELECT count(*)::int AS deleted FROM deleted
+    `, [COMPLETED_NOTIFICATION_RETENTION_DAYS, COMPLETED_NOTIFICATION_CLEANUP_BATCH_SIZE]);
+    const result = rows[0];
+    if (!result) throw new Error("Notification cleanup unavailable");
+    const batchDeleted = Number(result.deleted);
+    totalDeleted += batchDeleted;
+    if (batchDeleted < COMPLETED_NOTIFICATION_CLEANUP_BATCH_SIZE) return totalDeleted;
+  }
 }
 
 export async function checkAccessNotificationProgress(): Promise<void> {

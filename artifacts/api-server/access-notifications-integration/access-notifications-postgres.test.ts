@@ -575,7 +575,7 @@ describe("access notification transaction ordering in private PostgreSQL", () =>
     }
   });
 
-  it("limits repeated and overlapping cleanup while preserving pending and failed notices", async () => {
+  it("catches up in bounded overlapping batches while preserving pending and failed notices", async () => {
     expect(pool.options.host).toBe(socketDirectory);
     await pool.query(`
       UPDATE wareiq_access_notifications
@@ -597,7 +597,7 @@ describe("access notification transaction ordering in private PostgreSQL", () =>
              'reporting',
              CASE WHEN series % 2 = 0 THEN 'sent' ELSE 'cancelled' END,
              now() - interval '91 days'
-      FROM generate_series(1, 1001) AS series
+      FROM generate_series(1, 2501) AS series
     `);
 
     await pool.query(`
@@ -627,14 +627,15 @@ describe("access notification transaction ordering in private PostgreSQL", () =>
       await waitForCleanupWaiters(2);
 
       await blocker.query("SELECT pg_advisory_unlock(314159, 265358)");
-      expect(await Promise.all([first, second])).toEqual([500, 500]);
+      const deletedCounts = await Promise.all([first, second]);
+      expect(deletedCounts.reduce((sum, count) => sum + count, 0)).toBe(2501);
+      expect(deletedCounts.some((count) => count > 500)).toBe(true);
     } finally {
       await blocker.query("SELECT pg_advisory_unlock(314159, 265358)").catch(() => undefined);
       blocker.release();
       await Promise.all([first, second].filter(Boolean).map((run) => run!.catch(() => 0)));
     }
 
-    expect(await cleanupCompletedAccessNotifications()).toBe(1);
     expect(await cleanupCompletedAccessNotifications()).toBe(0);
 
     const { rows } = await pool.query<{ id: string; state: string }>(`
