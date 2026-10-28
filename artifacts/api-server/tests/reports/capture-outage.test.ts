@@ -1,12 +1,13 @@
 import { createHmac } from "node:crypto";
 import express from "express";
-import request from "supertest";
+import request, { type Response } from "supertest";
 import { Client } from "pg";
+import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
-import { accessHistoryTable } from "@workspace/db/schema";
+import { accessHistoryTable, captureDiagnosticsTable } from "@workspace/db/schema";
 import {
   configureReportFixtureSuite, db, pauseDatabase, pool, resumeDatabase,
-  startDatabase, stopDatabase,
+  socketDirectory, startDatabase, stopDatabase,
 } from "./database";
 
 // Replace only the app database binding. The signature verifier, evidence
@@ -353,3 +354,160 @@ it.each([
     `);
   }
 }, 20_000);
+
+it.each([
+  { earlierSucceeds: true, laterSucceeds: false },
+  { earlierSucceeds: false, laterSucceeds: true },
+])("keeps the newer signed outcome when earlier success=$earlierSucceeds finishes after later success=$laterSucceeds", async ({
+  earlierSucceeds, laterSucceeds,
+}) => {
+  const instanceId = earlierSucceeds ? "ins_overlapLaterFailure" : "ins_overlapLaterSuccess";
+  vi.stubEnv("CLERK_WEBHOOK_ENVIRONMENT", "development");
+  vi.stubEnv("CLERK_WEBHOOK_INSTANCE_ID", instanceId);
+  vi.stubEnv("CLERK_WEBHOOK_SIGNING_SECRET", `whsec_${secretBytes.toString("base64")}`);
+  vi.stubEnv("CLERK_SECRET_KEY", "sk_test_isolated");
+  provider.userId = "user_admin";
+  provider.warn.mockClear();
+  const configuration = captureConfiguration();
+  const raw = (succeeds: boolean) => JSON.stringify({
+    type: "user.updated", object: "event", timestamp: Date.now(), instance_id: instanceId,
+    data: {
+      id: succeeds ? "user_overlapSuccess" : "user_overlapFailure", object: "user",
+      public_metadata: { role: "admin" },
+    },
+  });
+  const earlierRaw = raw(earlierSucceeds);
+  const laterRaw = raw(laterSucceeds);
+  const evidence = () => db.select().from(accessHistoryTable)
+    .where(eq(accessHistoryTable.providerInstanceId, instanceId));
+  const diagnostic = async () => {
+    const rows = await db.select().from(captureDiagnosticsTable)
+      .where(eq(captureDiagnosticsTable.instanceId, instanceId));
+    expect(rows).toHaveLength(1);
+    return rows[0]!;
+  };
+  const initial = (await readReadiness()).captureReadiness;
+  expect(initial).toMatchObject({ delivery: "unknown", lastDeliveryFailureAt: null });
+
+  // A third, fixture-only connection holds the gate, leaving both application
+  // pool slots available. No production writer, diagnostic or verifier is mocked.
+  const gate = new Client({
+    host: socketDirectory, port: 5432, user: "report_test", database: "postgres", password: "",
+  });
+  await gate.connect();
+  let earlier: Promise<Response> | undefined;
+  try {
+    await gate.query("SELECT pg_advisory_lock(193, 1)");
+    await pool.query(`
+      CREATE FUNCTION overlap_capture_evidence() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.provider_event_id = 'msg_overlapEarlier' THEN
+          PERFORM pg_advisory_xact_lock(193, 1);
+        END IF;
+        IF NEW.target_id = 'user_overlapFailure' THEN
+          RAISE EXCEPTION 'synthetic private fixture evidence failure';
+        END IF;
+        RETURN NEW;
+      END;
+      $$;
+      CREATE TRIGGER overlap_capture_evidence BEFORE INSERT ON access_change_history
+        FOR EACH ROW EXECUTE FUNCTION overlap_capture_evidence();
+    `);
+    // Calling then starts Supertest immediately, rather than awaiting it later
+    // and accidentally testing two sequential requests.
+    earlier = send(earlierRaw, undefined, "msg_overlapEarlier").then((response) => response);
+    await vi.waitFor(async () => {
+      const blocked = await pool.query(`
+        SELECT 1 FROM pg_locks WHERE locktype = 'advisory'
+          AND classid = 193 AND objid = 1 AND NOT granted
+      `);
+      expect(blocked.rows).toHaveLength(1);
+    }, { timeout: 4_000, interval: 10 });
+    const pending = await diagnostic();
+    expect(pending.status).toBe("pending");
+    expect(await evidence()).toEqual([]);
+    expect((await readReadiness()).captureReadiness).toMatchObject({
+      delivery: "delivery_unknown", lastDeliveryFailureAt: null,
+    });
+
+    const later = await send(laterRaw, undefined, "msg_overlapLater");
+    expect(later.status).toBe(laterSucceeds ? 204 : 503);
+    expect(later.headers["cache-control"]).toContain("no-store");
+    if (!laterSucceeds) {
+      expect(later.body).toEqual({ error: "Provider role evidence could not be saved." });
+    }
+    const latest = await diagnostic();
+    expect(latest.attemptId).not.toBe(pending.attemptId);
+    expect(latest.status).toBe(laterSucceeds ? "succeeded" : "failed");
+    const expectedDelivery = laterSucceeds ? "verified_delivery" : "delivery_problem";
+    const beforeRelease = (await readReadiness()).captureReadiness;
+    expect(beforeRelease.delivery).toBe(expectedDelivery);
+    // Without a durable diagnostic supplied, this directly checks the route's
+    // local outcome independently of the PostgreSQL compare-and-set.
+    const localBefore = captureReadiness(configuration, beforeRelease.lastVerifiedDeliveryAt);
+    expect(localBefore.delivery).toBe(expectedDelivery);
+    if (!laterSucceeds) {
+      expect(Number.isFinite(Date.parse(localBefore.lastDeliveryFailureAt!))).toBe(true);
+    } else {
+      expect(localBefore.lastDeliveryFailureAt).toBeNull();
+    }
+    const successfulEventId = earlierSucceeds ? "msg_overlapEarlier" : "msg_overlapLater";
+    const beforeRows = await evidence();
+    expect(beforeRows).toHaveLength(laterSucceeds ? 1 : 0);
+
+    await gate.query("SELECT pg_advisory_unlock(193, 1)");
+    const delayed = await earlier;
+    expect(delayed.status).toBe(earlierSucceeds ? 204 : 503);
+    expect(delayed.headers["cache-control"]).toContain("no-store");
+    if (!earlierSucceeds) {
+      expect(delayed.body).toEqual({ error: "Provider role evidence could not be saved." });
+    }
+    // The older completion really reached the production finish path, but
+    // cannot change the newer attempt's identity, status or timestamp.
+    expect(await diagnostic()).toEqual(latest);
+    const rows = await evidence();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ providerEventId: successfulEventId, outcome: "observed" });
+    const afterRelease = (await readReadiness()).captureReadiness;
+    expect(afterRelease).toMatchObject({
+      delivery: expectedDelivery, lastDeliveryFailureAt: beforeRelease.lastDeliveryFailureAt,
+      lastVerifiedDeliveryAt: rows[0]!.createdAt.toISOString(),
+    });
+    expect(captureReadiness(configuration, beforeRelease.lastVerifiedDeliveryAt)).toEqual(localBefore);
+    expect(provider.warn).toHaveBeenCalledExactlyOnceWith(
+      { code: "provider_evidence_write_failed" }, "Provider role evidence could not be saved",
+    );
+
+    // Remove only the synthetic failure, then replay both exact signed events.
+    // The failed event recovers; repeated successful evidence keeps its UUID
+    // and receipt time despite overlapping retries.
+    await pool.query("DROP TRIGGER overlap_capture_evidence ON access_change_history");
+    expect((await Promise.all(Array.from({ length: 4 }, (_, index) => index % 2
+      ? send(earlierRaw, undefined, "msg_overlapEarlier")
+      : send(laterRaw, undefined, "msg_overlapLater")))).map((response) => response.status))
+      .toEqual([204, 204, 204, 204]);
+    const replayed = await evidence();
+    expect(replayed).toHaveLength(2);
+    expect(new Set(replayed.map((row) => row.providerEventId))).toEqual(
+      new Set(["msg_overlapEarlier", "msg_overlapLater"]),
+    );
+    expect(replayed.find((row) => row.providerEventId === successfulEventId)).toEqual(rows[0]);
+    expect((await diagnostic()).status).toBe("succeeded");
+    expect((await readReadiness()).captureReadiness).toMatchObject({
+      delivery: "verified_delivery", lastDeliveryFailureAt: null,
+    });
+    expect(captureReadiness(configuration, rows[0]!.createdAt.toISOString())).toMatchObject({
+      delivery: "verified_delivery", lastDeliveryFailureAt: null,
+    });
+  } finally {
+    // Always unblock and drain the HTTP request before changing its trigger or
+    // stopping the cluster, including when an assertion above fails.
+    await gate.query("SELECT pg_advisory_unlock_all()");
+    await earlier;
+    await pool.query(`
+      DROP TRIGGER IF EXISTS overlap_capture_evidence ON access_change_history;
+      DROP FUNCTION IF EXISTS overlap_capture_evidence();
+    `);
+    await gate.end();
+  }
+}, 15_000);
