@@ -60,6 +60,14 @@ async function pending(worker: ReturnType<typeof launch>, kind: Kind) {
   return entry;
 }
 
+async function rejectFinalWrites() {
+  await database.pool.query(`
+    CREATE OR REPLACE FUNCTION reject_audit_finish() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'integration final write failure'; END $$;
+    CREATE TRIGGER reject_finish BEFORE UPDATE ON access_change_history
+      FOR EACH ROW WHEN (NEW.finished_at IS NOT NULL) EXECUTE FUNCTION reject_audit_finish()`);
+}
+
 beforeAll(() => database.start());
 beforeEach(async () => {
   await database.pool.query("TRUNCATE access_change_history");
@@ -116,8 +124,12 @@ it.each<Kind>(["api", "command"])("%s retains committed evidence when the role t
   expect(worker.messages.some((m) => m.event === "success")).toBe(false);
 });
 
-it.each<Kind>(["api", "command"])("%s never reports success after losing the role-lock connection", async (kind) => {
-  const worker = launch(kind);
+it.each(
+  (["api", "command"] as const).flatMap((kind) =>
+    ["", "provider-error", "finish-error"].map((fault) => ({ kind, fault }))),
+)("$kind gracefully rejects a lost role-lock connection and remains available ($fault)", async ({ kind, fault }) => {
+  if (fault === "finish-error") await rejectFinalWrites();
+  const worker = launch(kind, fault);
   await worker.wait("dispatch");
   const entry = await pending(worker, kind);
   // Kill only the backend holding this private cluster's advisory lock.
@@ -125,13 +137,23 @@ it.each<Kind>(["api", "command"])("%s never reports success after losing the rol
     SELECT pg_terminate_backend(pid) AS killed FROM pg_locks
     WHERE locktype = 'advisory' AND granted`);
   expect(killed.rows).toEqual([{ killed: true }]);
-  // pg currently emits an unhandled checked-out Client error while the
-  // provider is in flight. Assert the real crash rather than swallowing it in
-  // the fixture, which would conceal a production failure mode.
-  await worker.exited;
-  expect(worker.child.exitCode).not.toBe(0);
-  expect(worker.messages.some((m) => m.event === "success")).toBe(false);
+  // Read back while the provider is still paused. The production client error
+  // listener must keep the process alive without rewriting pending evidence.
   expect(await history()).toEqual([entry]);
+  expect(worker.child.exitCode).toBeNull();
+  worker.release();
+  await worker.wait("failure");
+  await worker.wait("available");
+  await worker.exited;
+  expect(worker.child.exitCode).toBe(0);
+  expect(worker.child.signalCode).toBeNull();
+  expect(worker.messages.some((m) => m.event === "success")).toBe(false);
+  // Never turn a provider response into confirmed success after losing the
+  // lock. Preserve the original account, actor, requested role and timestamps.
+  expect(await history()).toEqual([fault === "finish-error" ? entry : {
+    ...entry, outcome: "unconfirmed", reason: "provider_outcome_unknown",
+    finishedAt: expect.any(String),
+  }]);
 });
 
 it.each<Kind>(["api", "command"])("%s preserves its intent when the shared role lock times out", async (kind) => {
@@ -152,11 +174,7 @@ it.each<Kind>(["api", "command"])("%s preserves its intent when the shared role 
 });
 
 it.each<Kind>(["api", "command"])("%s keeps pending intent if PostgreSQL rejects final persistence", async (kind) => {
-  await database.pool.query(`
-    CREATE OR REPLACE FUNCTION reject_audit_finish() RETURNS trigger LANGUAGE plpgsql AS $$
-    BEGIN RAISE EXCEPTION 'integration final write failure'; END $$;
-    CREATE TRIGGER reject_finish BEFORE UPDATE ON access_change_history
-      FOR EACH ROW WHEN (NEW.finished_at IS NOT NULL) EXECUTE FUNCTION reject_audit_finish()`);
+  await rejectFinalWrites();
   const worker = launch(kind);
   await worker.wait("dispatch");
   const entry = await pending(worker, kind);

@@ -68,17 +68,37 @@ export const accessAuditStore: AccessAuditStore & {
 // Shared by Settings and the owner-operated recovery command. Never WMS.
 export async function withRoleLock<T>(operation: () => Promise<T>): Promise<T> {
   const connection = await pool.connect();
+  let connectionError: Error | undefined;
+  // Checked-out clients have no pool error listener. PostgreSQL can disconnect
+  // while we await the provider, not just while a query is pending.
+  const onError = (error: Error) => { connectionError ??= error; };
+  connection.on("error", onError);
+  const assertConnected = () => {
+    if (connectionError) throw connectionError;
+  };
   try {
     await connection.query("BEGIN");
     await connection.query("SET LOCAL lock_timeout = '5s'");
     await connection.query("SELECT pg_advisory_xact_lock(174983, 1)");
+    assertConnected();
+    // Let dispatched work settle: rejecting a race cannot cancel a provider
+    // write and would leave that callback running after its caller has failed.
     const result = await operation();
+    assertConnected();
     await connection.query("COMMIT");
+    assertConnected();
     return result;
   } catch (error) {
-    await connection.query("ROLLBACK").catch(() => undefined);
-    throw error;
+    if (!connectionError) {
+      await connection.query("ROLLBACK").catch((rollbackError: Error) => {
+        connectionError ??= rollbackError;
+      });
+    }
+    throw connectionError ?? error;
   } finally {
-    connection.release();
+    // Destroy rather than recycle failed clients. Keep our listener until
+    // release has handed error ownership back to the pool (or removed it).
+    connection.release(connectionError);
+    connection.removeListener("error", onError);
   }
 }

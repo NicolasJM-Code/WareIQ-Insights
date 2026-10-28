@@ -53,6 +53,10 @@ try {
   }
 } catch {
   process.send?.({ event: "failure" });
+  // Prove that the same application process can still use the production
+  // lock and database after a rejected operation; no fixture error handlers.
+  await commandLock(async () => { await pool.query("SELECT 1"); });
+  process.send?.({ event: "available" });
 } finally {
   await pool.end();
   process.disconnect?.();

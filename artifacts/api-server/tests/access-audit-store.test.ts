@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { beforeEach, expect, it, vi } from "vitest";
 
 const fake = vi.hoisted(() => ({
@@ -11,12 +12,14 @@ vi.mock("../../../lib/db/src/index", () => ({
 }));
 import { accessAuditStore, withRoleLock } from "../../../lib/db/src/access-audit";
 
+let connection: EventEmitter;
 beforeEach(() => {
   vi.resetAllMocks();
   fake.insert.mockReturnValue({ values: fake.values });
   fake.update.mockReturnValue({ set: fake.set });
   fake.set.mockReturnValue({ where: fake.where });
-  fake.connect.mockResolvedValue({ query: fake.query, release: fake.release });
+  connection = Object.assign(new EventEmitter(), { query: fake.query, release: fake.release });
+  fake.connect.mockResolvedValue(connection);
 });
 it("projects only safe audit fields rather than arbitrary extra provider data", async () => {
   const entry = {
@@ -50,4 +53,38 @@ it("rolls back and releases the lock on uncertain commit errors without deleting
   expect(fake.query).toHaveBeenLastCalledWith("ROLLBACK");
   expect(fake.release).toHaveBeenCalledOnce();
   expect(fake.values).toHaveBeenCalledOnce();
+});
+
+it("discards a client lost during provider work and never commits its result", async () => {
+  const error = new Error("role lock disconnected");
+  await expect(withRoleLock(async () => {
+    connection.emit("error", error);
+    await Promise.resolve();
+    return "provider returned success";
+  })).rejects.toBe(error);
+  expect(fake.query.mock.calls.map(([sql]) => sql)).not.toContain("COMMIT");
+  expect(fake.query.mock.calls.map(([sql]) => sql)).not.toContain("ROLLBACK");
+  expect(fake.release).toHaveBeenCalledExactlyOnceWith(error);
+  expect(connection.listenerCount("error")).toBe(0);
+});
+
+it("retains the first connection failure when provider work also rejects", async () => {
+  const error = new Error("first connection failure");
+  await expect(withRoleLock(async () => {
+    connection.emit("error", error);
+    connection.emit("error", new Error("later connection failure"));
+    throw new Error("provider failure");
+  })).rejects.toBe(error);
+  expect(fake.release).toHaveBeenCalledExactlyOnceWith(error);
+});
+
+it("discards the client when rollback fails", async () => {
+  const error = new Error("rollback failed");
+  fake.query.mockImplementation(async (sql: string) => {
+    if (sql === "ROLLBACK") throw error;
+  });
+  await expect(withRoleLock(async () => {
+    throw new Error("operation failed");
+  })).rejects.toBe(error);
+  expect(fake.release).toHaveBeenCalledExactlyOnceWith(error);
 });
