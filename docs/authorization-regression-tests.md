@@ -145,6 +145,15 @@ failure; those conditions are never reported as a skipped/pass result.
    before each fixture account or recovery operation. Each runner also refuses
    missing or live keys, missing opt-in, and `NODE_ENV=production` before
    importing the app or making provider calls.
+   To check the saved pairing locally without contacting Clerk, run:
+
+   ```sh
+   pnpm --silent auth:provider:check-key-pair
+   ```
+
+   It prints only `MATCH` or `MISMATCH`; a match exits successfully, while a
+   mismatch (including missing or invalid settings) exits nonzero. It makes no
+   network or provider calls and is separate from the live provider check.
 3. Do not supply an existing email, account ID, session, token, or published app
    URL. The runner has no remote application target: Supertest hosts the real
    Express app/router on an ephemeral local listener. The app DB is an in-memory

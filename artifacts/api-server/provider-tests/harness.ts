@@ -106,6 +106,37 @@ export function runKeyPairFingerprintCommand(
   }
 }
 
+export function isConfiguredKeyPairAttested(
+  env: {
+    CLERK_SECRET_KEY?: string;
+    CLERK_PUBLISHABLE_KEY?: string;
+    CLERK_PROVIDER_KEY_PAIR_ATTESTATION?: string;
+  },
+) {
+  try {
+    const fingerprint = createConfiguredKeyPairAttestation(env);
+    const attestation = env.CLERK_PROVIDER_KEY_PAIR_ATTESTATION;
+    return typeof attestation === "string"
+      && /^[a-f0-9]{64}$/.test(attestation)
+      && timingSafeEqual(Buffer.from(attestation, "hex"), Buffer.from(fingerprint, "hex"));
+  } catch {
+    return false;
+  }
+}
+
+export function runKeyPairAttestationCheckCommand(
+  env: {
+    CLERK_SECRET_KEY?: string;
+    CLERK_PUBLISHABLE_KEY?: string;
+    CLERK_PROVIDER_KEY_PAIR_ATTESTATION?: string;
+  },
+  writeOutput: (text: string) => void,
+) {
+  const matched = isConfiguredKeyPairAttested(env);
+  writeOutput(`${matched ? "MATCH" : "MISMATCH"}\n`);
+  return matched ? 0 : 1;
+}
+
 // Explicit input makes offline refusal tests independent of workspace secrets.
 export function preflight(env: NodeJS.ProcessEnv) {
   if (env.CLERK_PROVIDER_TESTS !== "isolated-development-only"
