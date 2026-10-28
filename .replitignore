@@ -3,3 +3,6 @@
 
 # No need to store the pnpm store twice.
 .local
+
+# Recreated during the web build and included in the static build output.
+artifacts/wareiq/public/downloads/

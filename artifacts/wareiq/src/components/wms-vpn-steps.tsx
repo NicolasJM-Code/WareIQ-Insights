@@ -14,6 +14,17 @@ export function WmsVpnSteps({ config, unavailable, pending, ready, result, onChe
       Run the secure connector on your existing Linux OpenVPN-connected server.
       WareIQ checks its VPN interface, database route and TCP reachability before attempting a verified-TLS SQL login.
     </p>
+    <div className="rounded border bg-background p-3 space-y-2">
+      <a href={`${import.meta.env.BASE_URL}downloads/wareiq-openvpn-connector.zip`}
+        download="wareiq-openvpn-connector.zip"
+        className="inline-flex rounded border px-3 py-2 text-xs font-medium hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+        data-testid="link-download-connector">Download WareIQ connector</a>
+      <p className="text-xs text-muted-foreground">
+        Includes both connector files and installation instructions. Extract the package and
+        follow README.md on your Linux VPN-connected server, or give the package to your IT administrator.
+        No credentials are included. Downloading it does not install it or start OpenVPN.
+      </p>
+    </div>
     {unavailable ? <p role="alert" className="text-xs text-destructive">Connection-path configuration could not be loaded. MySQL testing is locked until it can be verified.</p>
       : <p className="text-xs">{config?.message ?? 'Loading server connection path…'}</p>}
     {config?.path === 'direct' && <p className="text-xs text-muted-foreground">

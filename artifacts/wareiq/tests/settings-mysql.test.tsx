@@ -52,6 +52,8 @@ it('defaults to PostgreSQL and switches MySQL port, schema and secret guidance',
   expect(screen.getByTestId('input-port')).toHaveValue('5432');
   fireEvent.change(screen.getAllByRole('combobox')[0], { target: { value: 'mysql' } });
   expect(screen.getByText('MySQL connection definition')).toBeInTheDocument();
+  expect(screen.getByTestId('link-download-connector')).toHaveAttribute('download', 'wareiq-openvpn-connector.zip');
+  expect(screen.getByTestId('link-download-connector').getAttribute('href')).toMatch(/\/downloads\/wareiq-openvpn-connector\.zip$/);
   expect(screen.getByTestId('input-port')).toHaveValue('3306');
   expect(screen.getByTestId('input-schema')).toHaveAttribute('readonly');
   expect(screen.getAllByText('WMS_MYSQL_DATABASE_URL').length).toBeGreaterThan(0);
