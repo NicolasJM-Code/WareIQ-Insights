@@ -34,3 +34,14 @@ services:
         source: ./init.sql
         target: /docker-entrypoint-initdb.d/001-fixture.sql
         read_only: true
+  mysql-renewed:
+    <<: *mysql
+    volumes:
+      - type: bind
+        source: ${WMS_MYSQL_TLS_FIXTURE_DIR:?fixture directory is required}/certs-renewed
+        target: /etc/mysql/certs
+        read_only: true
+      - type: bind
+        source: ./init.sql
+        target: /docker-entrypoint-initdb.d/001-fixture.sql
+        read_only: true

@@ -24,7 +24,7 @@ fi
 
 fixture_gid="$(id -g)"
 chmod 755 "$fixture_dir"
-for certs in "$fixture_dir/certs" "$fixture_dir/certs-second"; do
+for certs in "$fixture_dir/certs" "$fixture_dir/certs-second" "$fixture_dir/certs-renewed"; do
 mkdir -p "$certs"
 chmod 770 "$certs"
 openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 2 \
@@ -86,14 +86,21 @@ if ! "${compose[@]}" up --detach; then
   "${compose[@]}" logs >&2 || true
   exit 1
 fi
-for service in mysql mysql-second; do
+fixture_port=""
+second_fixture_port=""
+renewed_fixture_port=""
+for service in mysql mysql-second mysql-renewed; do
 published_address="$("${compose[@]}" port "$service" 3306 | head -n 1)"
 port="${published_address##*:}"
 if [[ ! "$port" =~ ^[0-9]+$ ]]; then
   echo "Could not determine the loopback-only fixture port." >&2
   exit 1
 fi
-if [[ "$service" == mysql ]]; then fixture_port="$port"; else second_fixture_port="$port"; fi
+case "$service" in
+  mysql) fixture_port="$port" ;;
+  mysql-second) second_fixture_port="$port" ;;
+  mysql-renewed) renewed_fixture_port="$port" ;;
+esac
 container_id="$("${compose[@]}" ps -q "$service")"
 ready=false
 for _ in $(seq 1 120); do
@@ -116,6 +123,7 @@ WMS_OPENVPN_MYSQL_TLS_INTEGRATION=1 \
 WMS_MYSQL_TLS_FIXTURE_DIR="$fixture_dir" \
 WMS_MYSQL_TLS_FIXTURE_PORT="$fixture_port" \
 WMS_MYSQL_TLS_SECOND_FIXTURE_PORT="$second_fixture_port" \
+WMS_MYSQL_TLS_RENEWED_FIXTURE_PORT="$renewed_fixture_port" \
   pnpm exec vitest run --config vitest.config.ts \
     artifacts/api-server/tests/wms-mysql.tls.integration.test.ts \
     artifacts/api-server/tests/wms-openvpn-mysql.tls.integration.test.ts || {
