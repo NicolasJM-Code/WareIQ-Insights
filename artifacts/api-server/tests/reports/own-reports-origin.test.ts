@@ -73,11 +73,17 @@ const siteSnapshot = async () =>
 function mutation(
   method: "post" | "delete",
   url: string,
-  options: { origin?: string; fetchSite?: string } = {},
+  options: {
+    origin?: string;
+    fetchSite?: string;
+    forwardedHost?: string;
+    forwardedProto?: string;
+  } = {},
 ) {
   let req = request(app)[method](url)
     .set("Host", "wareiq.test")
-    .set("X-Forwarded-Proto", "https");
+    .set("X-Forwarded-Proto", options.forwardedProto ?? "https");
+  if (options.forwardedHost !== undefined) req = req.set("X-Forwarded-Host", options.forwardedHost);
   if (options.origin !== undefined) req = req.set("Origin", options.origin);
   if (options.fetchSite !== undefined) req = req.set("Sec-Fetch-Site", options.fetchSite);
   return req;
@@ -118,6 +124,26 @@ describe("full-app origin protection for saved reports", () => {
     ["Origin with a path", { origin: "https://wareiq.test/reports" }],
     ["insecure HTTP Origin", { origin: "http://wareiq.test" }],
     ["mismatched fetch metadata", { origin: "https://wareiq.test", fetchSite: "cross-site" }],
+    ["forwarded host chain with a different public host", {
+      origin: "https://wareiq.test",
+      forwardedHost: "attacker.test, wareiq.test",
+    }],
+    ["malformed forwarded host in the chain", {
+      origin: "https://wareiq.test",
+      forwardedHost: "wareiq.test, attacker.test/",
+    }],
+    ["malformed forwarded host authority", {
+      origin: "https://attacker.test",
+      forwardedHost: "wareiq.test@attacker.test",
+    }],
+    ["conflicting forwarded protocols", {
+      origin: "https://wareiq.test",
+      forwardedProto: "https, http",
+    }],
+    ["malformed forwarded protocol", {
+      origin: "https://wareiq.test",
+      forwardedProto: "https;attacker=true",
+    }],
   ] as const;
 
   it.each(rejectedRequests)("blocks POST with %s and preserves every report row", async (_label, options) => {
@@ -153,6 +179,7 @@ describe("full-app origin protection for saved reports", () => {
     const response = await mutation("post", path, {
       origin: "https://wareiq.test",
       fetchSite: "same-origin",
+      forwardedHost: "wareiq.test, internal.test",
     }).send(createdDefinition);
 
     expect(response.status).toBe(200);

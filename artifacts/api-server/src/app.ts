@@ -44,15 +44,35 @@ app.use(clerkMiddleware((req) => ({
 app.use((req, res, next) => {
   if (!["GET", "HEAD", "OPTIONS"].includes(req.method)) {
     const origin = req.get("origin");
+    const forwardedHost = req.get("x-forwarded-host");
+    const forwardedProtocol = req.get("x-forwarded-proto");
     const host = getClerkProxyHost(req);
     // The edge supplies the public host and protocol. Compare the complete
     // serialized origin: matching a hostname alone also permits HTTP/FTP origins.
-    const protocol = req.get("x-forwarded-proto")?.split(",")[0]?.trim() || req.protocol;
+    // The trusted edge may append internal hosts; validate the whole chain,
+    // while retaining the documented leftmost public-host behavior.
+    const protocolValues = forwardedProtocol?.split(",").map((value) => value.trim());
+    const protocol = forwardedProtocol === undefined
+      ? req.protocol
+      : protocolValues?.length === 1 ? protocolValues[0] : undefined;
     let sameOrigin = false;
     try {
       const parsed = new URL(origin ?? "");
-      sameOrigin = (protocol === "http" || protocol === "https")
-        && parsed.origin === origin && parsed.origin === `${protocol}://${host}`;
+      const target = protocol && host ? new URL(`${protocol}://${host}`) : undefined;
+      const forwardedHostChainIsValid = forwardedHost === undefined
+        || forwardedHost.split(",").every((value) => {
+          const candidate = value.trim();
+          if (!candidate || candidate.includes("/") || candidate.includes("\\")
+            || candidate.includes("?") || candidate.includes("#")) return false;
+          const parsedHost = new URL(`https://${candidate}`);
+          return !parsedHost.username && !parsedHost.password
+            && parsedHost.pathname === "/" && !parsedHost.search && !parsedHost.hash;
+        });
+      sameOrigin = Boolean(forwardedHostChainIsValid && target
+        && !target.username && !target.password
+        && target.pathname === "/" && !target.search && !target.hash
+        && (protocol === "http" || protocol === "https")
+        && parsed.origin === origin && parsed.origin === target.origin);
     } catch { /* deny below */ }
     if (!sameOrigin || req.get("sec-fetch-site") === "cross-site") {
       res.status(403).json({ error: "A same-origin request is required." });
