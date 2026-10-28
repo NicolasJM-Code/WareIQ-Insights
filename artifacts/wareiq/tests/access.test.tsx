@@ -39,14 +39,37 @@ import { AccessGate } from "../src/components/access-gate";
 import { useOwnReportsState } from "../src/lib/own-reports-store";
 import { SECTIONS } from "../src/lib/report-catalog";
 
+// Run every authorization assertion with both legacy and populated branding.
+// The logo uses a reserved test domain; all transport remains mocked below.
+describe.each([
+  {
+    branding: "null branding",
+    fields: {
+      clientCompanyNumber: null, clientAddressLine1: null, clientAddressLine2: null,
+      clientCity: null, clientRegion: null, clientPostalCode: null,
+      clientCountry: null, clientLogoUrl: null,
+    },
+  },
+  {
+    branding: "populated branding",
+    fields: {
+      clientCompanyNumber: "TEST-000123",
+      clientAddressLine1: "123 Test Warehouse Road",
+      clientAddressLine2: "Unit 4",
+      clientCity: "Test City",
+      clientRegion: "Test Region",
+      clientPostalCode: "TEST 123",
+      clientCountry: "GB",
+      clientLogoUrl: "https://branding.invalid/isolated-client-logo.png",
+    },
+  },
+])("client access with $branding", ({ fields }) => {
 function access(admin = true, status: AccessSession["status"] = "active"): AccessSession {
   return {
     status, platformAdmin: admin, canCreateOwnReports: status === "active",
     ownReportSections: status === "active" ? ["inbound"] : [],
     clientId: "client_isolated", clientName: "Isolated client",
-    clientCompanyNumber: null, clientAddressLine1: null, clientAddressLine2: null,
-    clientCity: null, clientRegion: null, clientPostalCode: null,
-    clientCountry: null, clientLogoUrl: null,
+    ...fields,
     reportIds: [SECTIONS[0].defaults[0].id], sites: [],
   };
 }
@@ -328,4 +351,5 @@ describe("sign-out and session isolation", () => {
     unmount();
     expect(clerk.unsubscribe).toHaveBeenCalled();
   });
+});
 });
