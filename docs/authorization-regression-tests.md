@@ -574,7 +574,16 @@ CLERK_PROVIDER_RECOVERY_LOCK_ACTION=inspect \
 pnpm test:auth:provider
 ```
 
-Inspection reports whether the recorded process is active, confirmed absent, or
+New recovery locks record the process ID, a random lock token, and the Linux
+host-boot ID from `/proc/sys/kernel/random/boot_id` when available. Inspection
+requires a valid boot ID in both the lock and the current host. A lock from a
+different boot is confirmed abandoned without checking its PID, since that PID
+could now belong to an unrelated process. For a lock from the current boot,
+inspection also checks whether its process is active or absent. Missing or
+unverifiable boot evidence, malformed locks, and uncertain process results fail
+closed; they never permit automatic removal.
+
+Inspection reports whether the lock is active, confirmed abandoned, or
 uncertain. Only when it explicitly reports a confirmed abandoned lock, run the
 separate explicit clear action:
 

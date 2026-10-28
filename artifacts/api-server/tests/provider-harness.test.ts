@@ -23,6 +23,7 @@ const safeEnv = {
 };
 const providerDetail = "FAKE_PRIVATE_PROVIDER_RESPONSE";
 const outage = () => new Error(providerDetail);
+const testBootId = "11111111-1111-4111-8111-111111111111";
 const tsx = createRequire(new URL("../../../scripts/package.json", import.meta.url)).resolve("tsx");
 const saved: Manifest = {
   userId: "user_offline_fixture",
@@ -49,7 +50,12 @@ describe("offline provider harness safety", () => {
   };
   const check = vi.fn<(manifest: Manifest) => Promise<void>>();
   const info = vi.fn();
-  const dependencies = () => ({ users, journalDirectory: directory, info });
+  const dependencies = () => ({
+    users,
+    journalDirectory: directory,
+    info,
+    bootIdentityProbe: () => testBootId,
+  });
   const recoveryEnv = () => ({
     ...safeEnv, CLERK_PROVIDER_CLEANUP_MANIFEST: join(directory, "recovery.json"),
   });
@@ -266,6 +272,11 @@ describe("offline provider harness safety", () => {
 
     const firstAttempt = runProviderCheck(env, dependencies(), check);
     await lookupStarted;
+    expect(JSON.parse(await readFile(lockPath(env), "utf8"))).toEqual({
+      pid: expect.any(Number),
+      token: expect.stringMatching(/^[a-f0-9-]{36}$/),
+      bootId: testBootId,
+    });
 
     const secondAttemptError = await failure(runProviderCheck(env, dependencies(), check));
     expect(secondAttemptError).toContain("Recovery already in progress");
@@ -289,6 +300,48 @@ describe("offline provider harness safety", () => {
     expect(users.createUser).not.toHaveBeenCalled();
     expect(check).not.toHaveBeenCalled();
     expect(await readdir(directory)).toEqual([]);
+  });
+
+  it("does not allow clearing a lock created without boot identity evidence", async () => {
+    const env = await seed();
+    let signalLookupStarted!: () => void;
+    const lookupStarted = new Promise<void>((resolve) => { signalLookupStarted = resolve; });
+    let releaseLookup!: () => void;
+    const lookupGate = new Promise<void>((resolve) => { releaseLookup = resolve; });
+    users.getUser.mockImplementationOnce(async () => {
+      signalLookupStarted();
+      await lookupGate;
+      return user;
+    });
+    users.deleteUser.mockRejectedValueOnce(outage());
+
+    const attempt = runProviderCheck(env, {
+      ...dependencies(),
+      bootIdentityProbe: () => undefined,
+    }, check);
+    await lookupStarted;
+
+    const lock = lockPath(env);
+    const lockContents = await readFile(lock, "utf8");
+    expect(JSON.parse(lockContents)).not.toHaveProperty("bootId");
+
+    const processProbe = vi.fn(() => "active" as const);
+    await expect(runProviderCheck({
+      ...env,
+      CLERK_PROVIDER_RECOVERY_LOCK_ACTION: "clear-abandoned",
+    }, {
+      ...dependencies(),
+      processProbe,
+      bootIdentityProbe: () => testBootId,
+    }, check)).rejects.toThrow("status is uncertain");
+
+    expect(await readFile(lock, "utf8")).toBe(lockContents);
+    expect(processProbe).not.toHaveBeenCalled();
+
+    releaseLookup();
+    await expect(attempt).rejects.toThrow("Cleanup failed or ownership check refused deletion");
+    expect(await readFile(env.CLERK_PROVIDER_CLEANUP_MANIFEST, "utf8")).toContain(saved.userId);
+    await expect(readFile(lock, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("excludes recovery in separate processes while the first fake provider call is paused", async () => {
@@ -327,6 +380,8 @@ describe("offline provider harness safety", () => {
       try { await readFile(pausedPath, "utf8"); return true; } catch { return false; }
     }, { timeout: 10_000, interval: 25 }).toBe(true);
     expect(await readFile(join(directory, "holder-provider-called"), "utf8")).toBe("called");
+    expect(JSON.parse(await readFile(lockPath(env), "utf8")).bootId)
+      .toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/);
 
     const contender = launch("contender", contenderResultPath);
     expect(await contender.exited).toBe(0);
@@ -348,7 +403,9 @@ describe("offline provider harness safety", () => {
   it("reports an active recovery and refuses to clear its lock", async () => {
     const inspectEnv = lockActionEnv("inspect");
     const lock = lockPath(inspectEnv);
-    await writeFile(lock, JSON.stringify({ pid: process.pid, token: saved.runId }), { mode: 0o600 });
+    await writeFile(lock, JSON.stringify({
+      pid: process.pid, token: saved.runId, bootId: testBootId,
+    }), { mode: 0o600 });
 
     await runProviderCheck(inspectEnv, dependencies(), check);
     expect(info).toHaveBeenCalledExactlyOnceWith(expect.stringContaining(`active: process ${process.pid}`));
@@ -370,7 +427,9 @@ describe("offline provider harness safety", () => {
   it("clears a lock only after an explicit action confirms its owner is gone", async () => {
     const inspectEnv = lockActionEnv("inspect");
     const lock = lockPath(inspectEnv);
-    const contents = JSON.stringify({ pid: 2_147_483_647, token: saved.runId });
+    const contents = JSON.stringify({
+      pid: 2_147_483_647, token: saved.runId, bootId: testBootId,
+    });
     await writeFile(lock, contents, { mode: 0o600 });
     const processProbe = vi.fn(() => "abandoned" as const);
     const deps = { ...dependencies(), processProbe };
@@ -398,7 +457,9 @@ describe("offline provider harness safety", () => {
   it("retains a lock when its process state is uncertain", async () => {
     const env = lockActionEnv("clear-abandoned");
     const lock = lockPath(env);
-    const contents = JSON.stringify({ pid: 2_147_483_647, token: saved.runId });
+    const contents = JSON.stringify({
+      pid: 2_147_483_647, token: saved.runId, bootId: testBootId,
+    });
     await writeFile(lock, contents, { mode: 0o600 });
 
     await expect(runProviderCheck(
@@ -454,6 +515,72 @@ describe("offline provider harness safety", () => {
     expect(journal.rename).not.toHaveBeenCalled();
     expect(journal.unlink).not.toHaveBeenCalled();
     expect(journal.writeFile).not.toHaveBeenCalled();
+    expect(users.getUser).not.toHaveBeenCalled();
+    expect(users.deleteUser).not.toHaveBeenCalled();
+    expect(users.getUserList).not.toHaveBeenCalled();
+    expect(users.createUser).not.toHaveBeenCalled();
+    expect(check).not.toHaveBeenCalled();
+  });
+
+  it("identifies a prior-boot lock without probing a reused active PID", async () => {
+    const inspectEnv = lockActionEnv("inspect");
+    const lock = lockPath(inspectEnv);
+    const contents = JSON.stringify({
+      pid: process.pid, token: saved.runId, bootId: "22222222-2222-4222-8222-222222222222",
+    });
+    await writeFile(lock, contents, { mode: 0o600 });
+    const processProbe = vi.fn(() => "active" as const);
+
+    await runProviderCheck(inspectEnv, {
+      ...dependencies(),
+      processProbe,
+      bootIdentityProbe: () => testBootId,
+    }, check);
+
+    expect(info).toHaveBeenCalledExactlyOnceWith(expect.stringContaining("prior host boot"));
+    expect(processProbe).not.toHaveBeenCalled();
+    expect(await readFile(lock, "utf8")).toBe(contents);
+
+    await runProviderCheck({
+      ...inspectEnv,
+      CLERK_PROVIDER_RECOVERY_LOCK_ACTION: "clear-abandoned",
+    }, {
+      ...dependencies(),
+      processProbe,
+      bootIdentityProbe: () => testBootId,
+    }, check);
+    await expect(readFile(lock, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(processProbe).not.toHaveBeenCalled();
+    expect(users.deleteUser).not.toHaveBeenCalled();
+    expect(check).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["missing lock boot identity", { pid: 2_147_483_647, token: saved.runId }, testBootId],
+    ["malformed lock boot identity", {
+      pid: 2_147_483_647, token: saved.runId, bootId: "not-a-boot-id",
+    }, testBootId],
+    ["missing current boot identity", {
+      pid: 2_147_483_647, token: saved.runId, bootId: testBootId,
+    }, undefined],
+    ["malformed current boot identity", {
+      pid: 2_147_483_647, token: saved.runId, bootId: testBootId,
+    }, "unknown"],
+  ])("never clears a lock with %s", async (_description, lockRecord, currentBootId) => {
+    const env = lockActionEnv("clear-abandoned");
+    const lock = lockPath(env);
+    const contents = JSON.stringify(lockRecord);
+    await writeFile(lock, contents, { mode: 0o600 });
+    const processProbe = vi.fn(() => "abandoned" as const);
+
+    await expect(runProviderCheck(env, {
+      ...dependencies(),
+      processProbe,
+      bootIdentityProbe: () => currentBootId,
+    }, check)).rejects.toThrow("status is uncertain");
+
+    expect(await readFile(lock, "utf8")).toBe(contents);
+    expect(processProbe).not.toHaveBeenCalled();
     expect(users.getUser).not.toHaveBeenCalled();
     expect(users.deleteUser).not.toHaveBeenCalled();
     expect(users.getUserList).not.toHaveBeenCalled();

@@ -32,13 +32,29 @@ type Dependencies = {
   journalDirectory?: string;
   info?: (message: string) => void;
   processProbe?: (pid: number) => RecoveryProcessState;
+  bootIdentityProbe?: () => string | undefined | Promise<string | undefined>;
 };
 type RecoveryProcessState = "active" | "abandoned" | "uncertain";
 type RecoveryLockStatus =
   | { state: "absent" }
   | { state: "active"; pid: number }
-  | { state: "abandoned"; pid: number; contents: string }
+  | { state: "abandoned"; pid: number; contents: string; priorBoot: boolean }
   | { state: "uncertain"; reason: string };
+const bootIdentityPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+
+function normalizeBootIdentity(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  return bootIdentityPattern.test(normalized) ? normalized : undefined;
+}
+
+async function probeHostBootIdentity() {
+  try {
+    return normalizeBootIdentity(await readFile("/proc/sys/kernel/random/boot_id", "utf8"));
+  } catch {
+    return undefined;
+  }
+}
 
 // Clerk's secret key does not expose its instance ID locally. This fingerprint
 // binds the exact pair an operator has verified in the Clerk dashboard.
@@ -122,6 +138,7 @@ async function recoveryLockStatus(
   lockPath: string,
   journal: typeof journalIO,
   processProbe: (pid: number) => RecoveryProcessState,
+  bootIdentityProbe: () => string | undefined | Promise<string | undefined>,
 ): Promise<RecoveryLockStatus> {
   let contents: string;
   try {
@@ -136,15 +153,28 @@ async function recoveryLockStatus(
   if (!lock || typeof lock !== "object") {
     return { state: "uncertain", reason: "the lock file is malformed" };
   }
-  const { pid, token } = lock as { pid?: unknown; token?: unknown };
+  const { pid, token, bootId } = lock as { pid?: unknown; token?: unknown; bootId?: unknown };
   if (!Number.isSafeInteger(pid) || (pid as number) < 1
     || typeof token !== "string"
-    || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(token)) {
+    || !bootIdentityPattern.test(token)) {
     return { state: "uncertain", reason: "the lock file has an invalid owner record" };
+  }
+  const recordedBootId = normalizeBootIdentity(bootId);
+  if (!recordedBootId) {
+    return { state: "uncertain", reason: "the lock has no verifiable host-boot identity" };
+  }
+  const currentBootId = normalizeBootIdentity(await bootIdentityProbe());
+  if (!currentBootId) {
+    return { state: "uncertain", reason: "the current host-boot identity could not be verified" };
+  }
+  if (recordedBootId !== currentBootId) {
+    return { state: "abandoned", pid: pid as number, contents, priorBoot: true };
   }
   const processState = processProbe(pid as number);
   if (processState === "active") return { state: "active", pid: pid as number };
-  if (processState === "abandoned") return { state: "abandoned", pid: pid as number, contents };
+  if (processState === "abandoned") {
+    return { state: "abandoned", pid: pid as number, contents, priorBoot: false };
+  }
   return { state: "uncertain", reason: "the recorded process state could not be confirmed" };
 }
 
@@ -155,6 +185,9 @@ function recoveryLockMessage(status: RecoveryLockStatus, lockPath: string) {
     case "active":
       return `Recovery lock is active: process ${status.pid} is still running. Do not clear it.`;
     case "abandoned":
+      if (status.priorBoot) {
+        return `Recovery lock is confirmed abandoned: it belongs to a prior host boot, so process ${status.pid} cannot own a process on this boot. Use CLERK_PROVIDER_RECOVERY_LOCK_ACTION=clear-abandoned in a separate command to clear it.`;
+      }
       return `Recovery lock is confirmed abandoned: process ${status.pid} is not running. Use CLERK_PROVIDER_RECOVERY_LOCK_ACTION=clear-abandoned in a separate command to clear it.`;
     case "uncertain":
       return `Recovery lock status is uncertain because ${status.reason}. Do not clear it; investigate manually.`;
@@ -166,9 +199,10 @@ async function handleRecoveryLockAction(
   lockPath: string,
   journal: typeof journalIO,
   processProbe: (pid: number) => RecoveryProcessState,
+  bootIdentityProbe: () => string | undefined | Promise<string | undefined>,
   info: (message: string) => void,
 ) {
-  const status = await recoveryLockStatus(lockPath, journal, processProbe);
+  const status = await recoveryLockStatus(lockPath, journal, processProbe, bootIdentityProbe);
   if (action === "inspect") {
     info(recoveryLockMessage(status, lockPath));
     return;
@@ -176,7 +210,7 @@ async function handleRecoveryLockAction(
   if (status.state !== "abandoned") {
     throw new Error(`${recoveryLockMessage(status, lockPath)} The lock was not removed.`);
   }
-  const confirmation = await recoveryLockStatus(lockPath, journal, processProbe);
+  const confirmation = await recoveryLockStatus(lockPath, journal, processProbe, bootIdentityProbe);
   if (confirmation.state !== "abandoned" || confirmation.contents !== status.contents) {
     throw new Error(`${recoveryLockMessage(confirmation, lockPath)} The lock changed during confirmation and was not removed.`);
   }
@@ -241,12 +275,14 @@ export async function runProviderCheck(
     ? resolve(recovery)
     : resolve(dependencies.journalDirectory ?? ".cache/clerk-provider", `${runId}.json`);
   const processProbe = dependencies.processProbe ?? probeRecoveryProcess;
+  const bootIdentityProbe = dependencies.bootIdentityProbe ?? probeHostBootIdentity;
   if (lockAction === "inspect" || lockAction === "clear-abandoned") {
     await handleRecoveryLockAction(
       lockAction,
       `${path}.recovery.lock`,
       journal,
       processProbe,
+      bootIdentityProbe,
       info,
     );
     return;
@@ -286,9 +322,14 @@ export async function runProviderCheck(
     if (recovery) {
       recoveryLockPath = `${path}.recovery.lock`;
       try {
+        const bootId = normalizeBootIdentity(await bootIdentityProbe());
         await journal.writeFile(
           recoveryLockPath,
-          JSON.stringify({ pid: process.pid, token: randomUUID() }),
+          JSON.stringify({
+            pid: process.pid,
+            token: randomUUID(),
+            ...(bootId ? { bootId } : {}),
+          }),
           { mode: 0o600, flag: "wx" },
         );
         recoveryLockAcquired = true;
