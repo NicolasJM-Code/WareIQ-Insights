@@ -49,7 +49,7 @@ export const db = drizzle(pool);
 let started = false;
 let stopped = false;
 
-export function configureReportFixtureSuite(value: "own-reports-api" | "own-reports-origin" | "provider-evidence") {
+export function configureReportFixtureSuite(value: "own-reports-api" | "own-reports-origin" | "provider-evidence" | "capture-outage") {
   suiteId = value;
   // Only the two report-isolation suites participate in the peer handshake.
   // Evidence persistence must also run alone with its own registry identity.
@@ -291,6 +291,28 @@ export async function assertFixtureIsolation() {
       || ownRows.rows[0].fixture_id !== fixtureId || ownRows.rows[0].touched_by !== null) {
     throw new Error("A report persistence suite can observe another suite's fixture row");
   }
+}
+
+// Simulate a real storage outage, not a rejected mock or a missing table.
+// Drain only idle fixture connections first: this check tests unavailable
+// storage, not asynchronous connection loss on an in-flight operation.
+export async function pauseDatabase() {
+  if (!started || stopped || pool.waitingCount || pool.totalCount !== pool.idleCount) {
+    throw new Error("Only a running, idle private report database can be paused");
+  }
+  while (pool.totalCount) {
+    const client = await pool.connect();
+    client.release(true);
+  }
+  run("pg_ctl", ["-D", data, "-m", "fast", "-w", "stop"]);
+  started = false;
+}
+
+export async function resumeDatabase() {
+  if (started || stopped) throw new Error("Private report database is not paused");
+  run("pg_ctl", ["-D", data, "-l", join(directory, "postgres.log"), "-o",
+    `-F -k ${directory} -c listen_addresses=''`, "-w", "start"]);
+  started = true;
 }
 
 export async function stopDatabase() {
