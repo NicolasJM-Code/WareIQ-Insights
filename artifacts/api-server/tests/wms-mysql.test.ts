@@ -14,7 +14,7 @@ vi.mock("node:net", async (original) => ({
 }));
 import { testConnection } from "../src/lib/wms-connection";
 import {
-  getMysqlReportMapping, mysqlGrantsAreReadOnly, runMysqlReport,
+  getMysqlReportMapping, mysqlGrantsAreReadOnly, runMysqlReport, testMysqlConnection,
 } from "../src/lib/wms-mysql-connection";
 
 const input = {
@@ -137,6 +137,25 @@ test("grant checks reject write, elevated, role, column and grant-option permiss
     expect(mysqlGrantsAreReadOnly([grant]), grant).toBe(false);
   }
   expect(mysqlGrantsAreReadOnly([])).toBe(false);
+});
+
+test("both MySQL paths preserve hostname checks and keep site trust separate from direct trust", async () => {
+  const mapping = { view: "v_stock", clientColumn: "client", siteColumn: "site", columns: { sku: "sku" } };
+  vi.stubEnv("WMS_MYSQL_CA_CERT", "direct-only CA");
+  for (const trust of [{ ca: "site-only CA" }, {}, undefined]) {
+    await testMysqlConnection(input, "fixture", "8.8.8.8", undefined, trust);
+    await runMysqlReport(input, "fixture", "8.8.8.8", mapping,
+      { clientKey: "client", siteKey: "site" }, undefined, undefined, trust);
+  }
+  expect(fake.create.mock.calls.map(([options]) => options.ssl)).toEqual([
+    { rejectUnauthorized: true, verifyIdentity: true, ca: "site-only CA" },
+    { rejectUnauthorized: true, verifyIdentity: true, ca: "site-only CA" },
+    { rejectUnauthorized: true, verifyIdentity: true },
+    { rejectUnauthorized: true, verifyIdentity: true },
+    { rejectUnauthorized: true, verifyIdentity: true, ca: "direct-only CA" },
+    { rejectUnauthorized: true, verifyIdentity: true, ca: "direct-only CA" },
+  ]);
+  expect(fake.create.mock.calls.every(([options]) => options.host === input.host)).toBe(true);
 });
 
 test("active roles, absent views, and inaccessible schemas cannot pass", async () => {

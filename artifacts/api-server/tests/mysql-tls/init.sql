@@ -7,6 +7,9 @@ CREATE TABLE reporting.fixture_rows (
 );
 INSERT INTO reporting.fixture_rows VALUES (1, 'disposable fixture row');
 CREATE VIEW reporting.fixture_view AS SELECT id, label FROM reporting.fixture_rows;
+CREATE VIEW reporting.fixture_scoped_view AS
+  SELECT id, label, 'fixture-client' AS client_code, 'fixture-site' AS site_code
+  FROM reporting.fixture_rows;
 
 CREATE USER 'fixture_reader'@'%' IDENTIFIED BY 'disposable-reader-password';
 GRANT SELECT, SHOW VIEW ON reporting.* TO 'fixture_reader'@'%';

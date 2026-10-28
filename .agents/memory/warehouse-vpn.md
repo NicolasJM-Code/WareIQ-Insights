@@ -23,3 +23,15 @@ explicit owner approval required by the multi-warehouse security boundary.
 **How to apply:** Require an explicit client/site approval even for a single
 warehouse; document the coordinated connector/API configuration migration rather
 than adding a legacy VPN fallback.
+
+A global database CA bundle is not evidence that every warehouse approves all
+of its roots. Keep connector HTTPS trust and warehouse SQL trust independent;
+omitting private SQL trust means system roots, not inherited global trust.
+
+**Why:** Warehouses can use identical private DNS identities with different
+certificate authorities. Combining roots would let one warehouse's certificate
+authenticate as another warehouse's database.
+
+**How to apply:** Preserve this boundary in configuration migrations and
+certificate-renewal work; never automatically copy a shared CA bundle into each
+warehouse's approval.

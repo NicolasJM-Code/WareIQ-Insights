@@ -6,7 +6,7 @@ import ipaddr from "ipaddr.js";
 import type { WmsConnectionInput, WmsConnectionResult, WmsNetworkResult } from "@workspace/api-zod";
 import { checkOpenVpn, mysqlConnectionPath, openVpnMysqlStream } from "./wms-openvpn";
 import { ConnectionFailure } from "./wms-connection-error";
-import { siteVpnInput, siteVpnPassword, type WmsSiteScope } from "./wms-site-config";
+import { siteVpnInput, siteVpnPassword, siteVpnSqlTrust, type WmsSiteScope } from "./wms-site-config";
 import { runMysqlReport, testMysqlConnection, type MysqlReportMapping, type MysqlReportScope } from "./wms-mysql-connection";
 export { ConnectionFailure } from "./wms-connection-error";
 
@@ -214,8 +214,9 @@ export async function executeApprovedMysqlReport(
     throw new ConnectionFailure("TLS_HOSTNAME_REQUIRED", "Use an approved MySQL DNS hostname matching its TLS certificate.");
   const password = vpn ? siteVpnPassword(input, dependencies.siteScope) : reportingPassword(input);
   if (vpn) {
+    const trust = siteVpnSqlTrust(dependencies.siteScope);
     const stream = await openVpnMysqlStream(input, dependencies.siteScope);
-    try { return await runMysqlReport(input, password, input.host, mapping, scope, fields, stream); }
+    try { return await runMysqlReport(input, password, input.host, mapping, scope, fields, stream, trust); }
     finally { stream.destroy(); }
   }
   const address = await approvedAddress(input.host, process.env,
@@ -255,8 +256,9 @@ export async function testConnection(
     const vpn = input.engine === "mysql" && mysqlConnectionPath() === "openvpn";
     const password = vpn ? siteVpnPassword(input, dependencies.siteScope) : reportingPassword(input);
     if (vpn) {
+      const trust = siteVpnSqlTrust(dependencies.siteScope);
       const stream = await openVpnMysqlStream(input, dependencies.siteScope);
-      try { return await testMysqlConnection(input, password, input.host, stream); }
+      try { return await testMysqlConnection(input, password, input.host, stream, trust); }
       finally { stream.destroy(); }
     }
     const address = await approvedAddress(input.host, process.env,

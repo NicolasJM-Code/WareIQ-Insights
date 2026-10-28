@@ -8,6 +8,12 @@ const identifierPattern = /^[A-Za-z_][A-Za-z0-9_$]{0,62}$/;
 const maxReportRows = 500;
 const maxReportBytes = 1_000_000;
 
+/** Supplied only by server configuration, never from WmsConnectionInput. */
+export interface MysqlTrustRoots { ca?: string }
+function directTrustRoots(): MysqlTrustRoots {
+  return process.env.WMS_MYSQL_CA_CERT ? { ca: process.env.WMS_MYSQL_CA_CERT } : {};
+}
+
 export interface MysqlReportMapping {
   view: string;
   clientColumn: string;
@@ -90,6 +96,7 @@ export async function runMysqlReport(
   scope: MysqlReportScope,
   selectedFields?: string[],
   stream?: Duplex,
+  trust: MysqlTrustRoots = directTrustRoots(),
 ): Promise<{ columns: string[]; rows: Array<Record<string, string | number | boolean | null>>; truncated: boolean }> {
   const fields = selectedFields ?? Object.keys(mapping.columns);
   if (!fields.length || fields.length > 50 || fields.some((field) => !Object.hasOwn(mapping.columns, field)))
@@ -106,7 +113,7 @@ export async function runMysqlReport(
     stream: () => stream ?? createSocket({ host: address, port: input.port }),
     ssl: {
       rejectUnauthorized: true, verifyIdentity: true,
-      ...(process.env.WMS_MYSQL_CA_CERT ? { ca: process.env.WMS_MYSQL_CA_CERT } : {}),
+      ...(trust.ca ? { ca: trust.ca } : {}),
     },
     connectTimeout: 8000, multipleStatements: false,
     enableKeepAlive: false, maxPreparedStatements: 0,
@@ -145,6 +152,7 @@ export async function runMysqlReport(
 export async function testMysqlConnection(
   input: WmsConnectionInput, password: string, address: string,
   stream?: Duplex,
+  trust: MysqlTrustRoots = directTrustRoots(),
 ): Promise<WmsConnectionResult> {
   const timeout = Math.min(input.queryTimeoutSec * 1000, 15000);
   const connection = mysql.createConnection({
@@ -155,7 +163,7 @@ export async function testMysqlConnection(
     stream: () => stream ?? createSocket({ host: address, port: input.port }),
     ssl: {
       rejectUnauthorized: true, verifyIdentity: true,
-      ...(process.env.WMS_MYSQL_CA_CERT ? { ca: process.env.WMS_MYSQL_CA_CERT } : {}),
+      ...(trust.ca ? { ca: trust.ca } : {}),
     },
     connectTimeout: 8000, multipleStatements: false,
     enableKeepAlive: false, maxPreparedStatements: 0,

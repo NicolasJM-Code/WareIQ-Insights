@@ -1,9 +1,18 @@
-import { createServer, type Socket } from "node:net";
+import { createConnection, createServer, type Socket } from "node:net";
 import { readFile } from "node:fs/promises";
 import { beforeAll, afterAll, expect, test, vi } from "vitest";
 import type { WmsConnectionInput, WmsConnectionResult } from "@workspace/api-zod";
-import { safeConnectionFailure } from "../src/lib/wms-connection";
+import { safeConnectionFailure, testConnection, executeApprovedMysqlReport } from "../src/lib/wms-connection";
 import { testMysqlConnection } from "../src/lib/wms-mysql-connection";
+
+// Only replace the HTTPS transport. Real mysql2 TLS runs over a disposable
+// loopback stream, just as it does over the connector's opaque byte tunnel.
+vi.mock("../src/lib/wms-openvpn", () => ({
+  mysqlConnectionPath: () => "openvpn",
+  openVpnMysqlStream: async (target: { port: number }) =>
+    createConnection({ host: "127.0.0.1", port: target.port }),
+  checkOpenVpn: vi.fn(),
+}));
 
 const enabled = process.env.WMS_MYSQL_TLS_INTEGRATION === "1";
 const input: WmsConnectionInput = {
@@ -25,17 +34,23 @@ const fixturePasswords = {
 
 const fixtureAddress = "127.0.0.1";
 let fixturePort = 0;
+let secondFixturePort = 0;
 let trustedCa = "";
+let secondCa = "";
 
 beforeAll(async () => {
   if (!enabled) return;
   const fixtureDir = process.env.WMS_MYSQL_TLS_FIXTURE_DIR;
   const port = Number(process.env.WMS_MYSQL_TLS_FIXTURE_PORT);
-  if (!fixtureDir || !Number.isInteger(port) || port < 1 || port > 65535) {
+  const secondPort = Number(process.env.WMS_MYSQL_TLS_SECOND_FIXTURE_PORT);
+  if (!fixtureDir || !Number.isInteger(port) || port < 1 || port > 65535 ||
+      !Number.isInteger(secondPort) || secondPort < 1 || secondPort > 65535) {
     throw new Error("The disposable MySQL TLS fixture runner did not provide its connection details.");
   }
   fixturePort = port;
+  secondFixturePort = secondPort;
   trustedCa = await readFile(`${fixtureDir}/certs/ca.pem`, "utf8");
+  secondCa = await readFile(`${fixtureDir}/certs-second/ca.pem`, "utf8");
   vi.stubEnv("WMS_MYSQL_CA_CERT", trustedCa);
 });
 
@@ -99,6 +114,69 @@ test.skipIf(!enabled)("a schema without reporting views is rejected", async () =
     username: "fixture_empty_reader",
   }, fixturePasswords.empty)).code).toBe("REPORTING_VIEWS_REQUIRED");
 });
+
+test.skipIf(!enabled)("two warehouses trust only their own private SQL CA for probes and reports", async () => {
+  const first = {
+    siteId: "11111111-1111-4111-8111-111111111111",
+    clientId: "22222222-2222-4222-8222-222222222222",
+    connectorUrl: "https://first.fixture.test", tokenEnv: "WMS_FIXTURE_FIRST_TOKEN",
+    passwordEnv: "WMS_FIXTURE_SQL_PASSWORD", sqlCaEnv: "WMS_FIXTURE_FIRST_SQL_CA",
+    host: input.host, port: fixturePort, database: input.database, username: input.username,
+  };
+  const second = { ...first, siteId: "33333333-3333-4333-8333-333333333333",
+    connectorUrl: "https://second.fixture.test", tokenEnv: "WMS_FIXTURE_SECOND_TOKEN",
+    sqlCaEnv: "WMS_FIXTURE_SECOND_SQL_CA", port: secondFixturePort };
+  vi.stubEnv(first.tokenEnv, "first-disposable-site-token-".repeat(3));
+  vi.stubEnv(second.tokenEnv, "second-disposable-site-token-".repeat(3));
+  vi.stubEnv(first.passwordEnv, fixturePasswords.reader);
+  vi.stubEnv(first.sqlCaEnv, trustedCa);
+  vi.stubEnv(second.sqlCaEnv, secondCa);
+  // A shared bundle that trusts both peers must not widen either site's trust.
+  vi.stubEnv("WMS_MYSQL_CA_CERT", `${trustedCa}\n${secondCa}`);
+  const mapping = { view: "fixture_scoped_view", clientColumn: "client_code",
+    siteColumn: "site_code", columns: { id: "id", label: "label" } };
+  const reportScope = { clientKey: "fixture-client", siteKey: "fixture-site" };
+  const setSites = () => vi.stubEnv("WMS_OPENVPN_SITES", JSON.stringify([first, second]));
+  const probeSite = (site: typeof first) => testConnection(
+    { ...input, siteId: site.siteId, host: site.host, port: site.port }, { siteScope: site });
+  const reportSite = (site: typeof first) => executeApprovedMysqlReport(
+    mapping, reportScope, undefined, { siteScope: site });
+  try {
+    setSites();
+    for (const site of [first, second]) {
+      expect(await probeSite(site)).toMatchObject({ status: "connected", code: "CONNECTED" });
+      expect(await reportSite(site)).toMatchObject({
+        rows: [{ id: 1, label: "disposable fixture row" }], truncated: false,
+      });
+    }
+    // Exchange only the CAs: both databases keep the same valid DNS identity.
+    vi.stubEnv(first.sqlCaEnv, secondCa);
+    vi.stubEnv(second.sqlCaEnv, trustedCa);
+    for (const site of [first, second]) {
+      expect(await probeSite(site)).toMatchObject({ status: "error", code: "TLS_FAILED" });
+      await expect(reportSite(site).catch((error) => { throw safeConnectionFailure(error); }))
+        .rejects.toMatchObject({ code: "TLS_FAILED" });
+    }
+    // No per-site CA means system roots, not the shared bundle trusting both.
+    vi.stubEnv("WMS_OPENVPN_SITES", JSON.stringify([first, second].map(({ sqlCaEnv: _ca, ...site }) => site)));
+    for (const site of [first, second]) {
+      expect(await probeSite(site)).toMatchObject({ status: "error", code: "TLS_FAILED" });
+      await expect(reportSite(site).catch((error) => { throw safeConnectionFailure(error); }))
+        .rejects.toMatchObject({ code: "TLS_FAILED" });
+    }
+    vi.stubEnv(first.sqlCaEnv, trustedCa);
+    vi.stubEnv(second.sqlCaEnv, secondCa);
+    for (const site of [first, second]) {
+      site.host = "wrong.fixture.test";
+      setSites();
+      expect(await probeSite(site)).toMatchObject({ status: "error", code: "TLS_FAILED" });
+      await expect(reportSite(site).catch((error) => { throw safeConnectionFailure(error); }))
+        .rejects.toMatchObject({ code: "TLS_FAILED" });
+    }
+  } finally {
+    vi.stubEnv("WMS_MYSQL_CA_CERT", trustedCa);
+  }
+}, 30000);
 
 test.skipIf(!enabled)("a stalled MySQL handshake times out and closes its socket", async () => {
   const accepted: Socket[] = [];

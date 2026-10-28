@@ -92,14 +92,15 @@ test("authorized site scope is server-derived and browser connector choices are 
     port: 3306, database: "reporting", schema: "reporting", username: "reporter",
     sslMode: "verify-full", queryTimeoutSec: 15 };
   for (const extra of [{ clientId: "foreign" }, { connectorUrl: "https://attacker.example.test" },
-    { tokenEnv: "WMS_OTHER_TOKEN" }, { password: "browser-password" }]) {
+    { tokenEnv: "WMS_OTHER_TOKEN" }, { password: "browser-password" },
+    { sqlCaEnv: "WMS_OTHER_CA" }, { ca: "browser-ca" }, { rejectUnauthorized: false }]) {
     expect((await request(app).post("/wms/connection/test").send({ ...input, ...extra })).status).toBe(400);
   }
   fake.sql.mockResolvedValue({ status: "error", code: "VPN_NOT_READY", message: "Unavailable",
     testedAt: new Date().toISOString() });
   expect((await request(app).post("/wms/connection/test").send(input)).status).toBe(200);
   expect(fake.sql).toHaveBeenCalledWith(input, { siteScope: vpnScope });
-  expect(fake.access).toHaveBeenCalledTimes(5);
+  expect(fake.access).toHaveBeenCalledTimes(8);
 });
 
 test("VPN endpoint rejects browser passwords and rate limits valid checks separately from SQL", async () => {

@@ -22,31 +22,34 @@ if ! command -v openssl >/dev/null 2>&1; then
   exit 1
 fi
 
-mkdir -p "$fixture_dir/certs"
 fixture_gid="$(id -g)"
 chmod 755 "$fixture_dir"
-chmod 770 "$fixture_dir/certs"
+for certs in "$fixture_dir/certs" "$fixture_dir/certs-second"; do
+mkdir -p "$certs"
+chmod 770 "$certs"
 openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 2 \
-  -keyout "$fixture_dir/certs/ca-key.pem" \
-  -out "$fixture_dir/certs/ca.pem" \
-  -subj "/CN=WareIQ disposable MySQL fixture CA" \
+  -keyout "$certs/ca-key.pem" \
+  -out "$certs/ca.pem" \
+  -subj "/CN=WareIQ disposable MySQL $(basename "$certs") CA" \
   -addext "basicConstraints=critical,CA:TRUE" \
   -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null
 docker run --rm --user 999:999 --group-add "$fixture_gid" \
-  --volume "$fixture_dir/certs:/certs" \
+  --volume "$certs:/certs" \
   --entrypoint openssl mysql:8.4 req -newkey rsa:2048 -sha256 -nodes \
   -keyout /certs/server-key.pem -out /certs/server.csr \
   -subj "/CN=mysql.fixture.test" 2>/dev/null
-chmod 755 "$fixture_dir/certs"
+chmod 755 "$certs"
 printf '%s\n' \
   'subjectAltName=DNS:mysql.fixture.test' \
   'extendedKeyUsage=serverAuth' \
   'keyUsage=digitalSignature,keyEncipherment' \
-  > "$fixture_dir/certs/server.ext"
-openssl x509 -req -in "$fixture_dir/certs/server.csr" \
-  -CA "$fixture_dir/certs/ca.pem" -CAkey "$fixture_dir/certs/ca-key.pem" \
-  -CAcreateserial -out "$fixture_dir/certs/server-cert.pem" -days 2 -sha256 \
-  -extfile "$fixture_dir/certs/server.ext" 2>/dev/null
+  > "$certs/server.ext"
+openssl x509 -req -in "$certs/server.csr" \
+  -CA "$certs/ca.pem" -CAkey "$certs/ca-key.pem" \
+  -CAcreateserial -out "$certs/server-cert.pem" -days 2 -sha256 \
+  -extfile "$certs/server.ext" 2>/dev/null
+chmod 644 "$certs/server-cert.pem" "$certs/ca.pem"
+done
 openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 2 \
   -keyout "$fixture_dir/certs/untrusted-ca-key.pem" \
   -out "$fixture_dir/certs/untrusted-ca.pem" \
@@ -58,16 +61,18 @@ chmod 644 "$fixture_dir/certs/server-cert.pem" "$fixture_dir/certs/ca.pem" \
 
 export WMS_MYSQL_TLS_FIXTURE_DIR="$fixture_dir"
 if ! "${compose[@]}" up --detach; then
-  "${compose[@]}" logs mysql >&2 || true
+  "${compose[@]}" logs >&2 || true
   exit 1
 fi
-published_address="$("${compose[@]}" port mysql 3306 | head -n 1)"
-fixture_port="${published_address##*:}"
-if [[ ! "$fixture_port" =~ ^[0-9]+$ ]]; then
+for service in mysql mysql-second; do
+published_address="$("${compose[@]}" port "$service" 3306 | head -n 1)"
+port="${published_address##*:}"
+if [[ ! "$port" =~ ^[0-9]+$ ]]; then
   echo "Could not determine the loopback-only fixture port." >&2
   exit 1
 fi
-container_id="$("${compose[@]}" ps -q mysql)"
+if [[ "$service" == mysql ]]; then fixture_port="$port"; else second_fixture_port="$port"; fi
+container_id="$("${compose[@]}" ps -q "$service")"
 ready=false
 for _ in $(seq 1 120); do
   if docker logs "$container_id" 2>&1 | grep -q 'ready for connections.*port: 3306'; then
@@ -77,17 +82,19 @@ for _ in $(seq 1 120); do
   sleep 1
 done
 if [[ "$ready" != true ]]; then
-  "${compose[@]}" logs mysql >&2 || true
+  "${compose[@]}" logs "$service" >&2 || true
   echo "Disposable MySQL fixture did not become ready within 120 seconds." >&2
   exit 1
 fi
+done
 
 cd "$repo_root"
 WMS_MYSQL_TLS_INTEGRATION=1 \
 WMS_MYSQL_TLS_FIXTURE_DIR="$fixture_dir" \
 WMS_MYSQL_TLS_FIXTURE_PORT="$fixture_port" \
+WMS_MYSQL_TLS_SECOND_FIXTURE_PORT="$second_fixture_port" \
   pnpm exec vitest run --config vitest.config.ts \
     artifacts/api-server/tests/wms-mysql.tls.integration.test.ts || {
-      "${compose[@]}" logs mysql >&2 || true
+      "${compose[@]}" logs >&2 || true
       exit 1
     }

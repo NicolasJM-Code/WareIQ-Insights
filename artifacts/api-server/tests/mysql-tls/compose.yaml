@@ -1,5 +1,5 @@
 services:
-  mysql:
+  mysql: &mysql
     image: mysql:8.4
     environment:
       MYSQL_ROOT_PASSWORD: disposable-fixture-root-password
@@ -17,6 +17,17 @@ services:
     volumes:
       - type: bind
         source: ${WMS_MYSQL_TLS_FIXTURE_DIR:?fixture directory is required}/certs
+        target: /etc/mysql/certs
+        read_only: true
+      - type: bind
+        source: ./init.sql
+        target: /docker-entrypoint-initdb.d/001-fixture.sql
+        read_only: true
+  mysql-second:
+    <<: *mysql
+    volumes:
+      - type: bind
+        source: ${WMS_MYSQL_TLS_FIXTURE_DIR:?fixture directory is required}/certs-second
         target: /etc/mysql/certs
         read_only: true
       - type: bind

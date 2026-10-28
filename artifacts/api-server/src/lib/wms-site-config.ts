@@ -7,6 +7,7 @@ const secretName = z.string().regex(/^WMS_[A-Z0-9_]+$/);
 const entry = z.object({
   siteId: z.string().uuid(), clientId: z.string().uuid(),
   connectorUrl: z.string().url(), tokenEnv: secretName, caEnv: secretName.optional(),
+  sqlCaEnv: secretName.optional(),
   passwordEnv: secretName,
   host: z.string().min(1).max(253).regex(/^[A-Za-z0-9][A-Za-z0-9.-]*$/),
   port: z.number().int().min(1).max(65535),
@@ -41,6 +42,16 @@ export function siteVpnInput(scope?: WmsSiteScope): WmsConnectionInput {
   return { engine: "mysql", host: config.host, port: config.port,
     database: config.database, schema: config.database, username: config.username,
     sslMode: "verify-full", queryTimeoutSec: 15, siteId: config.siteId };
+}
+
+/** SQL trust is site-owned, separate from connector HTTPS and direct-mode trust. */
+export function siteVpnSqlTrust(scope?: WmsSiteScope): { ca?: string } {
+  const config = siteVpnConfig(scope);
+  if (!config.sqlCaEnv) return {}; // System roots only; never inherit the global bundle.
+  const ca = process.env[config.sqlCaEnv];
+  if (!ca?.trim())
+    throw new ConnectionFailure("SQL_CA_NOT_CONFIGURED", "Configure this warehouse's SQL certificate authority securely on the server.");
+  return { ca };
 }
 
 export function siteVpnPassword(input: WmsConnectionInput, scope?: WmsSiteScope, required = true) {

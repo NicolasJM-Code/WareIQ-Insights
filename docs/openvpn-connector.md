@@ -110,6 +110,7 @@ SQL destination. For example (illustrative IDs only):
     "connectorUrl": "https://warehouse-one.example.com:8443",
     "tokenEnv": "WMS_WAREHOUSE_ONE_TOKEN",
     "passwordEnv": "WMS_WAREHOUSE_ONE_PASSWORD",
+    "sqlCaEnv": "WMS_WAREHOUSE_ONE_SQL_CA",
     "host": "mysql.internal.example.com",
     "port": 3306,
     "database": "reporting",
@@ -123,10 +124,15 @@ warehouse's VPN-connected server. Each connector must have matching
 `WAREIQ_SITE_ID`, `WAREIQ_CLIENT_ID`, target approvals and a **unique token**.
 Private database addresses/hostnames may overlap across VPNs; site IDs must not.
 Duplicate site IDs or reused tokens invalidate the registry.
-`tokenEnv`, `passwordEnv` and optional `caEnv` name server-only environment
+`tokenEnv`, `passwordEnv`, optional `caEnv` and optional `sqlCaEnv` name server-only environment
 settings beginning with `WMS_`; put the token and SQL password in Secrets, not
 in the JSON, frontend, repository or chat. An optional `caEnv` names that
 connector's private CA PEM setting; when specified it must exist.
+An optional `sqlCaEnv` names the PEM CA bundle trusted for that warehouse's
+MySQL certificate, not the connector HTTPS certificate. A configured SQL CA
+reference must contain a nonblank value or SQL tests and reports fail with
+`SQL_CA_NOT_CONFIGURED` before opening a tunnel. Invalid certificate contents
+fail verified TLS; there is no trust fallback.
 No registry values, secret names, URLs, tokens or passwords are returned to the browser.
 
 Migration from the single-connector path requires explicit entries even for a
@@ -151,11 +157,33 @@ without its own route; this connector is the authenticated HTTPS ingress.
 In VPN mode the registry's exact host, port, database and username approval and
 site password replace the global MySQL destination/password settings. Direct
 mode retains the settings in `docs/wms-mysql.md`. All target fields must match
-on both sides. If MySQL uses private CAs, `WMS_MYSQL_CA_CERT` can contain the
-approved CA bundle for those databases and is separate from connector CAs.
+on both sides. For private MySQL CAs, configure each entry's `sqlCaEnv` and store
+only that warehouse's approved CA bundle in the named server secret. For example,
+a second warehouse can use `WMS_WAREHOUSE_TWO_SQL_CA` with a different private CA,
+even if its MySQL DNS hostname overlaps the first warehouse's.
+SQL tests and live reports use the same site-specific trust and always verify
+the original MySQL DNS hostname, including over the connector stream.
+When `sqlCaEnv` is omitted, SQL uses system trust roots only.
+VPN mode never inherits `WMS_MYSQL_CA_CERT`, another site's SQL CA, or the
+connector's HTTPS `caEnv`. `WMS_MYSQL_CA_CERT` remains available in **direct mode
+only**, with unchanged behavior. When migrating a private-CA VPN deployment,
+move each warehouse's approved roots out of the shared bundle into its own
+`sqlCaEnv` setting; do not copy a combined cross-warehouse bundle.
+The browser cannot supply or override either CA reference, CA contents or TLS
+verification settings.
 The browser never receives either password or token.
 The VPN-only check needs the four destination approvals and connector token, but
 does not require a MySQL password yet. SQL credentials are required at the SQL step.
+
+To verify SQL trust isolation without accessing a warehouse, run
+`pnpm --filter @workspace/api-server run test:wms:mysql-tls`. The opt-in fixture
+requires Docker Compose and OpenSSL, creates two loopback-only MySQL servers
+with different temporary private CAs and a shared DNS identity, and checks
+connection tests and mapped reports. It covers matching trust, swapped-site CA
+rejection, omitted-CA rejection despite a global bundle, and hostname mismatch.
+The connector HTTPS transport is replaced with local byte streams for this
+fixture; it does not validate a real VPN or HTTPS connector. No WMS credentials
+or warehouse databases are used, and generated certificates/data are removed.
 
 Restart the API after configuration changes. Development and published services
 must each have the intended settings. Existing direct-route

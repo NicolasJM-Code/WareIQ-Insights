@@ -66,7 +66,7 @@ test("SQL receives only the connector stream and cleans it up on completion", as
   const stream = new PassThrough();
   fake.open.mockResolvedValue(stream);
   await testConnection(input, { siteScope: vpnScope });
-  expect(fake.mysql).toHaveBeenCalledWith(input, "fixture", input.host, stream);
+  expect(fake.mysql).toHaveBeenCalledWith(input, "fixture", input.host, stream, {});
   expect(stream.destroyed).toBe(true);
   expect(fake.lookup).not.toHaveBeenCalled();
 });
@@ -90,7 +90,7 @@ test("live reports use the same mandatory tunnel and clean it up after SQL failu
   fake.report.mockRejectedValue(new Error("query failed"));
   await expect(executeApprovedMysqlReport(mapping, { clientKey: "client", siteKey: "site" }, undefined, { siteScope: vpnScope }))
     .rejects.toThrow("query failed");
-  expect(fake.report.mock.calls[0].at(-1)).toBe(stream);
+  expect(fake.report.mock.calls[0].at(-2)).toBe(stream);
   expect(stream.destroyed).toBe(true);
   expect(fake.lookup).not.toHaveBeenCalled();
 });
@@ -114,4 +114,54 @@ test("SQL and reports reject another client's or site's credentials without any 
   expect(fake.mysql).not.toHaveBeenCalled();
   expect(fake.report).not.toHaveBeenCalled();
   expect(fake.lookup).not.toHaveBeenCalled();
+});
+
+test("probes and reports receive only their site's SQL CA, never connector or global trust", async () => {
+  const first = { ...vpnSite, caEnv: "WMS_HTTPS_CA", sqlCaEnv: "WMS_FIRST_SQL_CA" };
+  const second = { ...first, siteId: "33333333-3333-4333-8333-333333333333",
+    tokenEnv: "WMS_SECOND_TOKEN", sqlCaEnv: "WMS_SECOND_SQL_CA" };
+  vi.stubEnv(second.tokenEnv, "second-site-token-".repeat(4));
+  vi.stubEnv("WMS_OPENVPN_SITES", JSON.stringify([first, second]));
+  vi.stubEnv("WMS_HTTPS_CA", "connector CA");
+  vi.stubEnv("WMS_MYSQL_CA_CERT", "global CA");
+  vi.stubEnv(first.sqlCaEnv, "first SQL CA");
+  vi.stubEnv(second.sqlCaEnv, "second SQL CA");
+  for (const site of [first, second]) {
+    await testConnection({ ...input, siteId: site.siteId }, { siteScope: site });
+    await executeApprovedMysqlReport(mapping, { clientKey: "client", siteKey: "site" }, undefined, { siteScope: site });
+  }
+  expect(fake.mysql.mock.calls.map((call) => call.at(-1))).toEqual([{ ca: "first SQL CA" }, { ca: "second SQL CA" }]);
+  expect(fake.report.mock.calls.map((call) => call.at(-1))).toEqual([{ ca: "first SQL CA" }, { ca: "second SQL CA" }]);
+});
+
+test.each([undefined, "", " \n "])("missing configured SQL CA (%j) blocks probes and reports before network access", async (ca) => {
+  vi.stubEnv("WMS_OPENVPN_SITES", JSON.stringify([{ ...vpnSite, sqlCaEnv: "WMS_MISSING_SQL_CA" }]));
+  vi.stubEnv("WMS_MISSING_SQL_CA", ca);
+  vi.stubEnv("WMS_MYSQL_CA_CERT", "must not fall back");
+  expect(await testConnection(input, { siteScope: vpnScope }))
+    .toMatchObject({ status: "error", code: "SQL_CA_NOT_CONFIGURED" });
+  await expect(executeApprovedMysqlReport(mapping, { clientKey: "client", siteKey: "site" }, undefined, { siteScope: vpnScope }))
+    .rejects.toMatchObject({ code: "SQL_CA_NOT_CONFIGURED" });
+  expect(fake.open).not.toHaveBeenCalled();
+  expect(fake.mysql).not.toHaveBeenCalled();
+  expect(fake.report).not.toHaveBeenCalled();
+  expect(fake.lookup).not.toHaveBeenCalled();
+  // VPN readiness remains independent of SQL trust/password setup.
+  expect((await testWmsVpn(input, vpnScope)).status).toBe("ready");
+});
+
+test("an omitted SQL CA uses system trust even with browser overrides and a global CA", async () => {
+  vi.stubEnv("WMS_MYSQL_CA_CERT", "global CA");
+  const untrusted = { ...input, ca: "browser CA", sqlCaEnv: "WMS_BROWSER_CA", rejectUnauthorized: false };
+  await testConnection(untrusted, { siteScope: vpnScope });
+  await executeApprovedMysqlReport(mapping, { clientKey: "client", siteKey: "site" }, undefined, { siteScope: vpnScope });
+  expect(fake.mysql.mock.calls[0].at(-1)).toEqual({});
+  expect(fake.report.mock.calls[0].at(-1)).toEqual({});
+});
+
+test.each(["OTHER_SQL_CA", "", "WMS_BAD-NAME"])("invalid SQL CA reference %j rejects registry", async (sqlCaEnv) => {
+  vi.stubEnv("WMS_OPENVPN_SITES", JSON.stringify([{ ...vpnSite, sqlCaEnv }]));
+  expect(await testConnection(input, { siteScope: vpnScope }))
+    .toMatchObject({ status: "error", code: "VPN_NOT_CONFIGURED" });
+  expect(fake.open).not.toHaveBeenCalled();
 });
