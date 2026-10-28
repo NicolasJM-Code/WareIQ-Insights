@@ -7,6 +7,6 @@ export default defineConfig({
   test: {
     ...browser.test,
     env: { CLERK_BROWSER_SCENARIO: "renewal-multitab" },
-    testTimeout: 420_000,
+    testTimeout: 660_000,
   },
 });

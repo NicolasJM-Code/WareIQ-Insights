@@ -30,7 +30,6 @@ vi.mock("../src/lib/logger", () => ({
 vi.mock("pino-http", () => ({
   default: () => (req: { log: unknown }, _res: unknown, next: () => void) => {
     req.log = { warn() {}, error() {} }; next();
-    req.log = { warn() {}, error() {} }; next();
   },
 }));
 
@@ -70,7 +69,6 @@ type BrowserClerk = {
   setActive: (p: { session: string }) => Promise<void>;
   signOut: (callback: () => void, options: { sessionId: string }) => Promise<void>;
 };
-declare global { interface Window { Clerk: BrowserClerk } }
 declare global { interface Window { Clerk: BrowserClerk } }
 
 async function signIn(userId: string) {
@@ -430,17 +428,63 @@ async function renewal(userId: string, cycles: 1 | 2) {
   }
 }
 
-async function revokedRenewal(userId: string) {
+async function observeRevokedLock(page: Page) {
+  return page.evaluateHandle(() => {
+    let unlocked = false;
+    let activeSummary = false;
+    const originalFetch = window.fetch;
+    window.fetch = async (...args: Parameters<typeof fetch>) => {
+      const response = await originalFetch.apply(window, args);
+      if (new URL(response.url).pathname === "/api/access/me" && response.status === 200) {
+        const summary = await response.clone().json();
+        activeSummary ||= summary.status === "active" || summary.platformAdmin === true
+          || (Array.isArray(summary.reportIds) && summary.reportIds.length > 0);
+      }
+      return response;
+    };
+    const check = () => {
+      const permissions = document.querySelector('[data-testid="permissions"]');
+      unlocked ||= permissions?.textContent?.trim() !== "locked"
+        || permissions?.getAttribute("data-can-administer") !== "false"
+        || permissions?.getAttribute("data-can-report") !== "false"
+        || !!document.querySelector('[data-testid="report-gate"], [data-testid="admin-gate"]');
+    };
+    check();
+    const observer = new MutationObserver(check);
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true });
+    return {
+      result: () => { check(); return { unlocked, activeSummary }; },
+      dispose: () => { observer.disconnect(); window.fetch = originalFetch; },
+    };
+  });
+}
+
+async function revokedRenewal(userId: string, tabCount: 1 | 2 = 1) {
   phase = "revoked recovery browser-authenticated positive control";
   const { context, page, sessionId } = await signIn(userId);
   try {
+    const pages = [page];
+    if (tabCount === 2) {
+      const second = await context.newPage();
+      await second.goto(origin);
+      await second.getByTestId("admin-gate").waitFor({ state: "visible" });
+      pages.push(second);
+    }
+    let navigations = 0;
+    for (const tab of pages) {
+      expect(await tab.evaluate(() => window.Clerk.session?.id)).toBe(sessionId);
+      await cookieControl(tab);
+      tab.on("framenavigated", frame => { if (frame === tab.mainFrame()) navigations++; });
+    }
     const outage = await freezeRefresh(context);
     phase = "revoked recovery post-block cookie control";
-    await cookieControl(page);
+    for (const tab of pages) await cookieControl(tab);
     const last = await sessionCookie(context);
     expect(last.sid).toBe(sessionId);
     expect(last.exp * 1000 - Date.now()).toBeGreaterThan(10_000);
     const before = reached;
+    // Foreground before revoking so the first document's real polling runs.
+    await page.bringToFront();
     const recheck = watchRevalidation(page);
     phase = "revoke disposable session during SDK outage";
     const revoked = await clerkClient.sessions.revokeSession(sessionId);
@@ -449,41 +493,32 @@ async function revokedRenewal(userId: string) {
     // Prove revocation, rather than another natural-expiry denial.
     expect(last.exp * 1000 - Date.now()).toBeGreaterThan(5_000);
 
-    const observation = await page.evaluateHandle(() => {
-      let unlocked = false;
-      let activeSummary = false;
-      const originalFetch = window.fetch;
-      window.fetch = async (...args: Parameters<typeof fetch>) => {
-        const response = await originalFetch.apply(window, args);
-        if (new URL(response.url).pathname === "/api/access/me" && response.status === 200) {
-          const summary = await response.clone().json();
-          activeSummary ||= summary.status === "active" || summary.platformAdmin === true
-            || (Array.isArray(summary.reportIds) && summary.reportIds.length > 0);
-        }
-        return response;
-      };
-      const check = () => {
-        const permissions = document.querySelector('[data-testid="permissions"]');
-        unlocked ||= permissions?.textContent?.trim() !== "locked"
-          || permissions?.getAttribute("data-can-administer") !== "false"
-          || permissions?.getAttribute("data-can-report") !== "false"
-          || !!document.querySelector('[data-testid="report-gate"], [data-testid="admin-gate"]');
-      };
-      check();
-      const observer = new MutationObserver(check);
-      observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true });
-      return {
-        result: () => { check(); return { unlocked, activeSummary }; },
-        dispose: () => { observer.disconnect(); window.fetch = originalFetch; },
-      };
-    });
+    const observations: Awaited<ReturnType<typeof observeRevokedLock>>[] = [];
     let sdkResponses = 0;
     const observeSdk = (response: Response) => {
       const url = new URL(response.url());
-      if (url.origin !== origin && /\/client(?:\/|$)/.test(url.pathname)) sdkResponses++;
+      if (url.origin !== origin && /\/client(?:\/|$)/.test(url.pathname)
+        && response.status() < 500) sdkResponses++;
     };
     context.on("response", observeSdk);
     try {
+      // Start observing each document as soon as it locks. The first remains
+      // monitored while foregrounding and locking the second, and neither
+      // observer is released while the other tab revalidates its stale cache.
+      observations.push(await observeRevokedLock(page));
+      for (const [index, tab] of pages.entries()) {
+        if (index === 0) continue;
+        const recheck = watchRevalidation(tab);
+        await tab.bringToFront();
+        await locked(tab, recheck, `revoked outage tab ${index + 1}`);
+        observations.push(await observeRevokedLock(tab));
+      }
+      // Both documents must have rejected the still-unexpired shared cookie:
+      // otherwise the second tab could merely be passing an expiry check.
+      expect(last.exp * 1000 - Date.now()).toBeGreaterThan(5_000);
+      // Ignore any response from the outage itself; only count recovered SDK
+      // traffic after removing our block. No SDK/token/cookie state is injected.
+      sdkResponses = 0;
       phase = "restore SDK networking for revoked session";
       await outage.restore();
       // A final locked snapshot alone could pass if networking never recovered.
@@ -491,20 +526,35 @@ async function revokedRenewal(userId: string) {
       await expect.poll(() => sdkResponses, { timeout: 90_000 }).toBeGreaterThan(0);
       phase = "revoked recovery beyond pre-outage cookie expiry";
       if (last.exp * 1000 + 6_000 > Date.now()) await pastExpiry(last.exp);
-      await locked(page, watchRevalidation(page), "revoked after SDK recovery");
-      await locked(page, watchRevalidation(page), "continued revoked recovery");
+      for (const label of ["revoked after SDK recovery", "continued revoked recovery"]) {
+        for (const [index, tab] of pages.entries()) {
+          const recheck = watchRevalidation(tab);
+          await tab.bringToFront();
+          await locked(tab, recheck, `${label} tab ${index + 1}`);
+          // Inspect *both* continuous histories after each tab's API controls,
+          // including the background tab, not just two final locked snapshots.
+          for (const observation of observations) {
+            expect(await observation.evaluate(state => state.result())).toEqual({ unlocked: false, activeSummary: false });
+          }
+        }
+      }
       phase = "revoked recovery continuous lock evidence";
-      expect(await observation.evaluate(state => state.result())).toEqual({ unlocked: false, activeSummary: false });
       // SDK sign-out is allowed, but it must not silently select a new session.
-      expect(await page.evaluate(id => window.Clerk.session === null || window.Clerk.session.id === id, sessionId)).toBe(true);
+      for (const tab of pages) {
+        expect(await tab.evaluate(id => window.Clerk.session === null || window.Clerk.session.id === id, sessionId)).toBe(true);
+      }
+      expect(context.pages()).toHaveLength(tabCount);
+      expect(navigations).toBe(0);
       expect((await clerkClient.sessions.getSession(sessionId)).status).toBe("revoked");
       expect(reached).toBe(before);
       expect(databasePoolConstructor).not.toHaveBeenCalled();
-      console.info("Revoked session stayed locked after real SDK connectivity returned; protected APIs denied access.");
+      console.info(`${tabCount} open tab(s) stayed locked after revoked-session SDK recovery; protected APIs denied access.`);
     } finally {
       context.off("response", observeSdk);
-      await observation.evaluate(state => state.dispose());
-      await observation.dispose();
+      for (const observation of observations) {
+        try { await observation.evaluate(state => state.dispose()); }
+        finally { await observation.dispose(); }
+      }
     }
   } finally {
     await context.close();
@@ -616,7 +666,7 @@ const multiTabRun = process.env.CLERK_BROWSER_SCENARIO === "renewal-multitab";
 it(lateSignOutRun
   ? "keeps signed-out reporting locked when an earlier successful authorization response arrives late"
   : multiTabRun
-  ? "requires independent fresh server authorization in two open tabs after an SDK outage"
+  ? "recovers valid shared sessions but keeps both open tabs locked after revocation during an SDK outage"
   : repeatRun
   ? "recovers reporting through two SDK networking outages in the same document and session"
   : renewalRun
@@ -654,7 +704,11 @@ it(lateSignOutRun
     phase = "disposable fixture creation";
     const userId = await createFixture();
     if (lateSignOutRun) { await lateAccessAfterSignOut(userId); return; }
-    if (multiTabRun) { await multiTabRenewal(userId); return; }
+    if (multiTabRun) {
+      await multiTabRenewal(userId);
+      await revokedRenewal(userId, 2);
+      return;
+    }
     if (repeatRun) { await renewal(userId, 2); return; }
     if (renewalRun) {
       await renewal(userId, 1);

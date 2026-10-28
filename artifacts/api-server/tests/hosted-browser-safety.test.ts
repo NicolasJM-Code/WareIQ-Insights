@@ -315,7 +315,7 @@ it("selects the longer two-tab outage only through its dedicated live command", 
   expect(config).toContain('import browser from "./vitest.browser.config"');
   expect(config).toContain("...browser.test");
   expect(config).toContain('env: { CLERK_BROWSER_SCENARIO: "renewal-multitab" }');
-  expect(config).toContain("testTimeout: 420_000");
+  expect(config).toContain("testTimeout: 660_000");
   const offline = readFileSync("vitest.config.ts", "utf8");
   expect(offline).not.toContain("browser-tests");
   expect(offline).not.toContain("multitab");
@@ -341,6 +341,7 @@ it("selects the late sign-out response race only through its dedicated live comm
 
 it.each([
   ["ticket", "artifacts/api-server/browser-tests/clerk.test.ts"],
+  ["two-tab", "artifacts/api-server/browser-tests/clerk.test.ts"],
   ["hosted", "artifacts/api-server/browser-tests/hosted.test.ts"],
 ])("stops the %s runner on missing or stale attestations before startup", async (runner, entrypoint) => {
   const workspaceRoot = resolve(process.cwd());
@@ -357,9 +358,10 @@ it.each([
   const blockedAppPath = join(directory, "blocked-app.ts");
   const sideEffectLog = join(directory, "side-effects.jsonl");
   const journalPath = join(workspaceRoot, ".cache/clerk-browser/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa.json");
-  const browserOptIn = runner === "ticket"
-    ? { CLERK_BROWSER_TESTS: "isolated-development-only" }
-    : { CLERK_HOSTED_TESTS: "isolated-development-only" };
+  const browserOptIn = runner === "hosted"
+    ? { CLERK_HOSTED_TESTS: "isolated-development-only" }
+    : { CLERK_BROWSER_TESTS: "isolated-development-only",
+      ...(runner === "two-tab" ? { CLERK_BROWSER_SCENARIO: "renewal-multitab" } : {}) };
 
   try {
     writeFileSync(networkBlockerPath, networkBlockerModule);

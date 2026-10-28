@@ -466,7 +466,8 @@ This separately selected live scenario uses
 `vitest.browser-renewal-multitab.config.ts`
 (`CLERK_BROWSER_SCENARIO=renewal-multitab`). It is not selected by the ordinary
 offline suite, other browser commands, authorization workflow, or builds.
-Budget about four minutes; the test timeout is seven minutes plus the shared
+Budget about six minutes for valid recovery and revoked-session checks; the
+test timeout is eleven minutes plus the shared
 60-second cleanup timeout. The explicit opt-in, isolated Development key pair
 and local pairing attestation, Chromium and provider networking requirements
 are the same as for the other browser checks. Never enable it globally.
@@ -497,6 +498,30 @@ the second must remain locked despite the shared refreshed cookie and the
 first tab's successful permission cache. Only releasing the second tab's own
 fresh authorization response may restore its markers. Both pages must still
 have the original session and no post-control navigations.
+
+The same command then opens a **fresh disposable context and session**, with
+two harmless pages sharing that session (not another account). Both pages prove
+real cookie-authenticated access before and after SDK networking is blocked.
+The runner revokes only this generated session during the outage and requires
+both pages' access rechecks and protected API controls to deny access while the
+shared cookie is still unexpired. Each page gets a continuous observer as soon
+as it locks; the first stays monitored while the second is foregrounded and
+revalidates, so neither page can regain markers or permissions from the other's
+previously successful cache.
+
+After removing the context-wide SDK block, the runner requires a real Clerk
+client network response (not a server error) before claiming connectivity
+recovered. It waits beyond the pre-outage cookie's expiry, then foregrounds
+each page for two rounds of fresh production access rechecks. In **both pages**,
+reporting, administrator settings and own-report API requests must return 401,
+and the access summary must deny permissions; the harmless report handler must
+never be reached. Both observers remain installed throughout all these checks,
+including time in the background. They latch any permission/marker recovery or
+active server summary, and both histories are checked after every page's round.
+SDK sign-out is allowed, but selecting another session, opening another page
+or navigating either document is not. The provider must still report the
+shared session as revoked. This adds two-tab revoked-session evidence alongside
+the existing valid-session recovery case, without changing other live commands.
 
 The scenario reuses the real production provider, hooks, guards and API,
 database-environment isolation, blocked PostgreSQL pool construction, separate
