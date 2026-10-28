@@ -225,6 +225,63 @@ it.each(
   }]);
 });
 
+it.each<Kind>(["api", "command"])("%s rejects a disconnected waiting role lock before provider dispatch and remains available", async (kind) => {
+  const holder = launch(kind === "api" ? "command" : "api");
+  await holder.wait("dispatch");
+  const waiter = launch(kind);
+  const { id } = await waiter.wait("intent");
+  const entry = (await history()).find((row) => row.id === id)!;
+  expect(entry).toMatchObject({
+    id, actorId: kind === "api" ? "user_actor" : "operator:integration",
+    targetId: kind === "api" ? "user_target" : null,
+    requestedRole: "supervisor", previousRole: null, resultingRole: null,
+    outcome: "unconfirmed", reason: "confirmation_pending", finishedAt: null,
+  });
+  expect(Number.isFinite(Date.parse(entry.createdAt))).toBe(true);
+
+  // Find the actual blocked query, not an idle pool client or the granted
+  // holder. All backends belong to this suite's private PostgreSQL cluster.
+  let waitingPid: number | undefined;
+  await expect.poll(async () => {
+    const result = await database.pool.query<{ pid: number }>(`
+      SELECT waiter.pid FROM pg_locks waiter JOIN pg_locks holder
+        ON waiter.locktype = holder.locktype AND waiter.database = holder.database
+        AND waiter.classid = holder.classid AND waiter.objid = holder.objid
+        AND waiter.objsubid = holder.objsubid
+      WHERE waiter.locktype = 'advisory' AND NOT waiter.granted
+        AND holder.granted AND waiter.pid <> holder.pid
+        AND holder.pid = ANY(pg_blocking_pids(waiter.pid))`);
+    waitingPid = result.rows[0]?.pid;
+    return result.rowCount;
+  }, { timeout: 3_000 }).toBe(1);
+  expect(waiter.messages.some((m) => m.event === "dispatch")).toBe(false);
+  const killed = await database.pool.query(
+    "SELECT pg_terminate_backend($1) AS killed", [waitingPid]);
+  expect(killed.rows).toEqual([{ killed: true }]);
+
+  // Query rejection and subsequent client error events must be handled by
+  // production locking, without fixture-only error listeners.
+  await waiter.wait("failure");
+  expect(waiter.child.exitCode).toBeNull();
+  const finished = (await history()).find((row) => row.id === entry.id)!;
+  expect(finished).toEqual({
+    ...entry, outcome: "failed", reason: "change_not_started",
+    finishedAt: expect.any(String),
+  });
+  expect(Date.parse(finished.finishedAt!)).toBeGreaterThanOrEqual(Date.parse(entry.createdAt));
+
+  // The unaffected holder must still finish. Only then can the same waiting
+  // worker acquire a fresh production lock and report availability.
+  holder.release();
+  await holder.wait("success");
+  await waiter.wait("available");
+  await waiter.exited;
+  expect(waiter.child.exitCode).toBe(0);
+  expect(waiter.child.signalCode).toBeNull();
+  expect(waiter.messages.some((m) => m.event === "dispatch" || m.event === "success")).toBe(false);
+  expect((await history()).find((row) => row.id === entry.id)).toEqual(finished);
+});
+
 it.each<Kind>(["api", "command"])("%s preserves its intent when the shared role lock times out", async (kind) => {
   const holder = launch(kind === "api" ? "command" : "api");
   await holder.wait("dispatch");
