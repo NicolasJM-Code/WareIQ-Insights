@@ -122,6 +122,41 @@ describe("admin failed access email retries", () => {
     queryClient.clear();
   });
 
+  it("keeps access controls usable when notification history is unavailable", () => {
+    fixtures.adminData = {
+      clients: [],
+      sites: [],
+      roles: [],
+      users: [],
+      reports: [],
+      notificationSummary: {
+        status: "unavailable",
+        queued: 0,
+        queuedOverThreshold: 0,
+        oldestQueuedAgeSeconds: null,
+        queueWarningAfterSeconds: 300,
+        retrying: 0,
+        accepted: 0,
+        failed: 0,
+        uncertain: 0,
+      },
+      uncertainNotifications: [],
+    };
+    fixtures.listFailed.mockResolvedValue({ failedNotifications: [], nextCursor: null });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <UserAccess />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText(/Delivery status and some email history are currently unavailable/)).toBeInTheDocument();
+    expect(screen.getByTestId("text-uncertain-notifications-unavailable")).toBeInTheDocument();
+    expect(screen.queryByTestId("text-no-uncertain-notifications")).not.toBeInTheDocument();
+    expect(screen.getByTestId("button-new-client")).toBeEnabled();
+    queryClient.clear();
+  });
+
   it("warns about old queued notices without disabling access changes", () => {
     fixtures.adminData = {
       clients: [],

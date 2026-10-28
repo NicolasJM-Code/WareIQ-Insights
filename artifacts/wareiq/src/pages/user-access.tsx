@@ -194,7 +194,7 @@ function Directory({ dir }: { dir: AccessDirectory }) {
               <NotificationCount label="Uncertain" count={dir.notificationSummary.uncertain} />
             </div>
           ) : (
-            <p role="status" className="max-w-lg text-sm text-muted-foreground">Delivery status is currently unavailable. This does not change access settings or confirm email delivery.</p>
+            <p role="status" className="max-w-lg text-sm text-muted-foreground">Delivery status and some email history are currently unavailable. This does not change access settings or confirm email delivery.</p>
           )}
         </div>
         {dir.notificationSummary.status === 'available' && dir.notificationSummary.oldestQueuedAgeSeconds !== null && (
@@ -288,7 +288,9 @@ function Directory({ dir }: { dir: AccessDirectory }) {
         <p className="mt-1 text-sm text-muted-foreground">
           The provider did not confirm whether these messages were accepted. They are not eligible for resend because that could send a duplicate.
         </p>
-        {dir.uncertainNotifications.length === 0 ? (
+        {dir.notificationSummary.status === 'unavailable' ? (
+          <p role="status" className="mt-3 text-sm text-muted-foreground" data-testid="text-uncertain-notifications-unavailable">Uncertain email history is unavailable. The system could not verify whether any messages have an unclear delivery outcome.</p>
+        ) : dir.uncertainNotifications.length === 0 ? (
           <p className="mt-3 text-sm text-muted-foreground" data-testid="text-no-uncertain-notifications">No uncertain email deliveries.</p>
         ) : (
           <ul className="mt-3 divide-y" data-testid="list-uncertain-notifications">

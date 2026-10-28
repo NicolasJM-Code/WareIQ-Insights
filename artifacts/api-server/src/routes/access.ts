@@ -80,17 +80,12 @@ router.get("/access/me", handler(async (req, res) => {
 }));
 router.get("/access/admin", handler(async (req, res) => {
   await requireAccessAdmin(req);
-  const [clients, sites, roles, users, uncertainNotifications] = await Promise.all([
+  const [clients, sites, roles, users] = await Promise.all([
     db.select().from(clientsTable).orderBy(clientsTable.name),
     db.select().from(sitesTable).orderBy(sitesTable.name),
     db.select().from(rolesTable).orderBy(rolesTable.name),
     db.select().from(membersTable).orderBy(membersTable.name),
-    listUncertainAccessNotifications(),
   ]);
-  const uncertainNotificationList = uncertainNotifications.map((notice) => ({
-    id: notice.id, recipient: notice.recipient, roleName: notice.role_name,
-    kind: notice.kind, createdAt: notice.created_at, attempts: notice.attempts,
-  }));
   let notificationSummary: {
     status: "available" | "unavailable";
     queued: number;
@@ -102,10 +97,26 @@ router.get("/access/admin", handler(async (req, res) => {
     failed: number;
     uncertain: number;
   };
+  let uncertainNotificationList: {
+    id: string;
+    recipient: string;
+    roleName: string;
+    kind: "reporting" | "platform" | "vpn_outage" | "vpn_recovery";
+    createdAt: Date;
+    attempts: number;
+  }[];
   try {
-    notificationSummary = { status: "available", ...await getAccessNotificationSummary() };
+    const [summary, uncertainNotifications] = await Promise.all([
+      getAccessNotificationSummary(),
+      listUncertainAccessNotifications(),
+    ]);
+    notificationSummary = { status: "available", ...summary };
+    uncertainNotificationList = uncertainNotifications.map((notice) => ({
+      id: notice.id, recipient: notice.recipient, roleName: notice.role_name,
+      kind: notice.kind, createdAt: notice.created_at, attempts: notice.attempts,
+    }));
   } catch {
-    req.log.warn({ event: "access_notification_summary_unavailable" }, "Email delivery status unavailable");
+    req.log.warn({ event: "access_notification_history_unavailable" }, "Email delivery status unavailable");
     notificationSummary = {
       status: "unavailable",
       queued: 0,
@@ -117,6 +128,7 @@ router.get("/access/admin", handler(async (req, res) => {
       failed: 0,
       uncertain: 0,
     };
+    uncertainNotificationList = [];
   }
   res.json(GetAccessAdminResponse.parse({
     clients, sites,

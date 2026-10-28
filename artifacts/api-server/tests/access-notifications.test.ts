@@ -424,6 +424,50 @@ describe("durable delivery and duplicate protection", () => {
       uncertain: 0,
     });
     expect(JSON.stringify(response.body)).not.toMatch(/database connection failed|provider response contained private details/i);
+    expect(mocks.warn).toHaveBeenCalledWith(
+      { event: "access_notification_history_unavailable" },
+      "Email delivery status unavailable",
+    );
+    expect(JSON.stringify(mocks.warn.mock.calls)).not.toMatch(/database connection failed|provider response contained private details/i);
+  });
+  it("keeps the access directory available when uncertain email history cannot be read", async () => {
+    mocks.authUserId = "admin-user";
+    mocks.getUser.mockResolvedValue({
+      publicMetadata: { role: "admin" }, banned: false, locked: false,
+      primaryEmailAddressId: "primary",
+      emailAddresses: [{ id: "primary", emailAddress: "admin@example.test", verification: { status: "verified" } }],
+    });
+    mocks.summaryQuery.mockResolvedValue({ rows: [{
+      queued: "2", queued_over_threshold: "1", oldest_queued_age_seconds: "420",
+      retrying: "1", accepted: "4", failed: "3", uncertain: "1",
+    }] });
+    mocks.poolQuery.mockRejectedValue(new Error("database connection failed: provider response contained private details"));
+
+    const response = await request(accessApp).get("/api/access/admin");
+
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    expect(response.body.clients).toEqual([]);
+    expect(response.body.sites).toEqual([]);
+    expect(response.body.roles).toEqual([]);
+    expect(response.body.users).toEqual([]);
+    expect(response.body.notificationSummary).toEqual({
+      status: "unavailable",
+      queued: 0,
+      queuedOverThreshold: 0,
+      oldestQueuedAgeSeconds: null,
+      queueWarningAfterSeconds: 300,
+      retrying: 0,
+      accepted: 0,
+      failed: 0,
+      uncertain: 0,
+    });
+    expect(response.body.uncertainNotifications).toEqual([]);
+    expect(JSON.stringify(response.body)).not.toMatch(/database connection failed|provider response contained private details|admin@example\.test/);
+    expect(mocks.warn).toHaveBeenCalledWith(
+      { event: "access_notification_history_unavailable" },
+      "Email delivery status unavailable",
+    );
+    expect(JSON.stringify(mocks.warn.mock.calls)).not.toMatch(/database connection failed|provider response contained private details|admin@example\.test/);
   });
   it("commits an attempt before sending and uses a stable provider idempotency key across retries", async () => {
     await deliverAccessNotifications();
