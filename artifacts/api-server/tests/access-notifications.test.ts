@@ -31,6 +31,7 @@ vi.mock("../src/lib/logger", () => ({ logger: { warn: mocks.warn } }));
 
 import {
   cleanupCompletedAccessNotifications, deliverAccessNotifications, getAccessNotificationSummary, listConfirmedFailedAccessNotifications,
+  listUncertainAccessNotifications,
   queueAccessNotifications, retryAllowed, retryConfirmedFailedAccessNotification,
   preparePlatformNotification, confirmPlatformNotification,
 } from "../src/lib/access-notifications";
@@ -147,14 +148,16 @@ describe("durable delivery and duplicate protection", () => {
   it("exposes only aggregate delivery counts to administrator views", async () => {
     mocks.summaryQuery.mockResolvedValue({ rows: [{
       queued: "2", queued_over_threshold: "1", oldest_queued_age_seconds: "420",
-      retrying: "1", accepted: "4", failed: "3",
+      retrying: "1", accepted: "4", failed: "3", uncertain: "1",
     }] });
     await expect(getAccessNotificationSummary()).resolves.toEqual({
       queued: 2, queuedOverThreshold: 1, oldestQueuedAgeSeconds: 420,
-      queueWarningAfterSeconds: 300, retrying: 1, accepted: 4, failed: 3,
+      queueWarningAfterSeconds: 300, retrying: 1, accepted: 4, failed: 3, uncertain: 1,
     });
     const statement = mocks.summaryQuery.mock.calls[0][0] as string;
     expect(statement).toContain("count(*) FILTER");
+    expect(statement).toContain("state = 'confirmed_failed'");
+    expect(statement).toContain("state = 'failed'");
     expect(statement).not.toMatch(/recipient|role_name|provider/i);
     expect(statement).toContain("state IN ('pending', 'confirming') AND attempts = 0");
     expect(mocks.summaryQuery.mock.calls[0][1]).toEqual([300]);
@@ -162,7 +165,7 @@ describe("durable delivery and duplicate protection", () => {
   it("reports no oldest age when no first-attempt notices are queued", async () => {
     mocks.summaryQuery.mockResolvedValue({ rows: [{
       queued: 0, queued_over_threshold: 0, oldest_queued_age_seconds: null,
-      retrying: 0, accepted: 0, failed: 0,
+      retrying: 0, accepted: 0, failed: 0, uncertain: 0,
     }] });
     await expect(getAccessNotificationSummary()).resolves.toMatchObject({
       queued: 0, queuedOverThreshold: 0, oldestQueuedAgeSeconds: null,
@@ -213,7 +216,7 @@ describe("durable delivery and duplicate protection", () => {
     mocks.summaryQuery.mockResolvedValue({
       rows: [{
         queued: "2", queued_over_threshold: "1", oldest_queued_age_seconds: "420",
-        retrying: "1", accepted: "4", failed: "3",
+        retrying: "1", accepted: "4", failed: "3", uncertain: "1",
       }],
     });
 
@@ -223,11 +226,12 @@ describe("durable delivery and duplicate protection", () => {
     expect(response.body.notificationSummary).toEqual({
       status: "available", queued: 2, queuedOverThreshold: 1,
       oldestQueuedAgeSeconds: 420, queueWarningAfterSeconds: 300,
-      retrying: 1, accepted: 4, failed: 3,
+      retrying: 1, accepted: 4, failed: 3, uncertain: 1,
     });
     expect(Object.keys(response.body.notificationSummary).sort()).toEqual([
       "accepted", "failed", "oldestQueuedAgeSeconds", "queueWarningAfterSeconds",
       "queued", "queuedOverThreshold", "retrying", "status",
+      "uncertain",
     ]);
     expect(JSON.stringify(response.body.notificationSummary)).not.toMatch(
       /recipient|role.?name|notification.?id|provider|admin@example\.test/i,
@@ -372,6 +376,22 @@ describe("durable delivery and duplicate protection", () => {
 
     mocks.poolQuery.mockResolvedValueOnce({ rows: [] });
     await expect(retryConfirmedFailedAccessNotification("event-one")).resolves.toBe(false);
+  });
+  it("lists ambiguous terminal notices without provider details or retry eligibility", async () => {
+    const uncertainNotice = {
+      id: "event-one", recipient: member.email, role_name: "Supervisor",
+      kind: "reporting", created_at: new Date(), attempts: 2,
+    };
+    mocks.poolQuery.mockResolvedValueOnce({ rows: [uncertainNotice] });
+    await expect(listUncertainAccessNotifications()).resolves.toEqual([uncertainNotice]);
+    const [listSql] = mocks.poolQuery.mock.calls[0]!;
+    expect(listSql).toContain("state = 'failed'");
+    expect(listSql).not.toMatch(/provider|response|error_body/i);
+
+    mocks.poolQuery.mockResolvedValueOnce({ rows: [] });
+    await expect(retryConfirmedFailedAccessNotification("event-one")).resolves.toBe(false);
+    const [retrySql] = mocks.poolQuery.mock.calls[1]!;
+    expect(retrySql).toContain("state = 'confirmed_failed'");
   });
   it("isolates outbox insertion failure inside a savepoint", async () => {
     const transaction = vi.fn(async () => { throw new Error("insert failed"); });

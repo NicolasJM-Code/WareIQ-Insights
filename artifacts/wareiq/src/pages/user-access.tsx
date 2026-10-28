@@ -191,6 +191,7 @@ function Directory({ dir }: { dir: AccessDirectory }) {
               <NotificationCount label="Retrying" count={dir.notificationSummary.retrying} />
               <NotificationCount label="Accepted" count={dir.notificationSummary.accepted} />
               <NotificationCount label="Failed" count={dir.notificationSummary.failed} />
+              <NotificationCount label="Uncertain" count={dir.notificationSummary.uncertain} />
             </div>
           ) : (
             <p role="status" className="max-w-lg text-sm text-muted-foreground">Delivery status is currently unavailable. This does not change access settings or confirm email delivery.</p>
@@ -206,9 +207,9 @@ function Directory({ dir }: { dir: AccessDirectory }) {
             {dir.notificationSummary.queuedOverThreshold} {dir.notificationSummary.queuedOverThreshold === 1 ? 'notice has' : 'notices have'} been queued for at least {Math.ceil(dir.notificationSummary.queueWarningAfterSeconds / 60)} minutes without a delivery attempt. Access changes remain active; automatic delivery is unchanged.
           </p>
         )}
-        {dir.notificationSummary.status === 'available' && (dir.notificationSummary.retrying > 0 || dir.notificationSummary.failed > 0) && (
+        {dir.notificationSummary.status === 'available' && (dir.notificationSummary.retrying > 0 || dir.notificationSummary.failed > 0 || dir.notificationSummary.uncertain > 0) && (
           <p role="status" className="mt-3 rounded-sm border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">
-            Some emails have not been accepted or permanently failed. Check the Resend connection and verified sender setup. Access changes remain active; pending deliveries will be retried automatically where possible.
+            Some emails are awaiting retry, failed, or have an uncertain delivery outcome. Check the email connection and verified sender setup. Access changes remain active.
           </p>
         )}
       </section>
@@ -279,6 +280,28 @@ function Directory({ dir }: { dir: AccessDirectory }) {
               {failedNotices.isFetchingNextPage ? 'Loading older emails…' : 'Load older failed emails'}
             </Button>
           </div>
+        )}
+      </section>
+
+      <section className="rounded-md border bg-card p-4" aria-labelledby="uncertain-notice-title" data-testid="section-uncertain-notifications">
+        <h2 id="uncertain-notice-title" className="font-semibold">Uncertain email delivery</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          The provider did not confirm whether these messages were accepted. They are not eligible for resend because that could send a duplicate.
+        </p>
+        {dir.uncertainNotifications.length === 0 ? (
+          <p className="mt-3 text-sm text-muted-foreground" data-testid="text-no-uncertain-notifications">No uncertain email deliveries.</p>
+        ) : (
+          <ul className="mt-3 divide-y" data-testid="list-uncertain-notifications">
+            {dir.uncertainNotifications.map((notice) => (
+              <li key={notice.id} data-testid={`row-uncertain-notification-${notice.id}`} className="py-3 text-sm">
+                <p className="font-medium">{notice.recipient}</p>
+                <p className="text-muted-foreground">
+                  {notice.kind === 'platform' ? 'Platform access' : 'Reporting access'} · {notice.roleName} · {notice.attempts} {notice.attempts === 1 ? 'attempt' : 'attempts'}
+                </p>
+                <p className="text-xs text-muted-foreground">Created {new Date(notice.createdAt).toLocaleString()}</p>
+              </li>
+            ))}
+          </ul>
         )}
       </section>
 

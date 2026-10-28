@@ -26,4 +26,6 @@ export type AccessDirectoryNotificationSummary = {
   accepted: number;
   /** @minimum 0 */
   failed: number;
+  /** @minimum 0 */
+  uncertain: number;
 };

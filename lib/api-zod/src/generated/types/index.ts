@@ -45,6 +45,8 @@ export * from './accessRunResultStatus';
 export * from './accessSession';
 export * from './accessSessionStatus';
 export * from './accessSite';
+export * from './accessUncertainNotification';
+export * from './accessUncertainNotificationKind';
 export * from './accessUser';
 export * from './accessUserInput';
 export * from './accessUserNotification';

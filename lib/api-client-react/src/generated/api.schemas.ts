@@ -482,7 +482,27 @@ export type AccessDirectoryNotificationSummary = {
   accepted: number;
   /** @minimum 0 */
   failed: number;
+  /** @minimum 0 */
+  uncertain: number;
 };
+
+export type AccessUncertainNotificationKind = typeof AccessUncertainNotificationKind[keyof typeof AccessUncertainNotificationKind];
+
+
+export const AccessUncertainNotificationKind = {
+  reporting: 'reporting',
+  platform: 'platform',
+} as const;
+
+export interface AccessUncertainNotification {
+  id: string;
+  recipient: string;
+  roleName: string;
+  kind: AccessUncertainNotificationKind;
+  createdAt: string;
+  /** @minimum 1 */
+  attempts: number;
+}
 
 export interface AccessDirectory {
   clients: AccessClient[];
@@ -490,6 +510,7 @@ export interface AccessDirectory {
   roles: AccessRole[];
   users: AccessUser[];
   reports: AccessReport[];
+  uncertainNotifications: AccessUncertainNotification[];
   notificationSummary: AccessDirectoryNotificationSummary;
 }
 

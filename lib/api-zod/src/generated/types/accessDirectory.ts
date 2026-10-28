@@ -10,6 +10,7 @@ import type { AccessDirectoryNotificationSummary } from './accessDirectoryNotifi
 import type { AccessReport } from './accessReport';
 import type { AccessRole } from './accessRole';
 import type { AccessSite } from './accessSite';
+import type { AccessUncertainNotification } from './accessUncertainNotification';
 import type { AccessUser } from './accessUser';
 
 export interface AccessDirectory {
@@ -18,5 +19,6 @@ export interface AccessDirectory {
   roles: AccessRole[];
   users: AccessUser[];
   reports: AccessReport[];
+  uncertainNotifications: AccessUncertainNotification[];
   notificationSummary: AccessDirectoryNotificationSummary;
 }

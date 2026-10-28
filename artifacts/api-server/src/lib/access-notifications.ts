@@ -21,6 +21,7 @@ export type AccessNotificationSummary = {
   retrying: number;
   accepted: number;
   failed: number;
+  uncertain: number;
 };
 const FAILED_NOTIFICATION_PAGE_SIZE = 100;
 
@@ -41,6 +42,7 @@ export async function getAccessNotificationSummary(): Promise<AccessNotification
     retrying: number | string;
     accepted: number | string;
     failed: number | string;
+    uncertain: number | string;
   }>(`SELECT
       count(*) FILTER (WHERE state IN ('pending', 'confirming') AND attempts = 0)::int AS queued,
       count(*) FILTER (
@@ -52,7 +54,8 @@ export async function getAccessNotificationSummary(): Promise<AccessNotification
       ))))::int AS oldest_queued_age_seconds,
       count(*) FILTER (WHERE state = 'pending' AND attempts > 0)::int AS retrying,
       count(*) FILTER (WHERE state = 'sent')::int AS accepted,
-      count(*) FILTER (WHERE state IN ('failed', 'confirmed_failed'))::int AS failed
+      count(*) FILTER (WHERE state = 'confirmed_failed')::int AS failed,
+      count(*) FILTER (WHERE state = 'failed')::int AS uncertain
     FROM wareiq_access_notifications`, [ACCESS_NOTIFICATION_QUEUE_WARNING_AFTER_SECONDS]);
   const summary = rows[0];
   if (!summary) throw new Error("Notification summary unavailable");
@@ -66,6 +69,7 @@ export async function getAccessNotificationSummary(): Promise<AccessNotification
     retrying: Number(summary.retrying),
     accepted: Number(summary.accepted),
     failed: Number(summary.failed),
+    uncertain: Number(summary.uncertain),
   };
 }
 
@@ -195,6 +199,17 @@ export async function listConfirmedFailedAccessNotifications(cursor?: string) {
     rows: page.map(({ cursor_created_at: _cursorCreatedAt, ...notice }) => notice),
     nextCursor: hasMore && last ? encodeFailedNotificationCursor(last.cursor_created_at, last.id) : null,
   };
+}
+
+export async function listUncertainAccessNotifications() {
+  const { rows } = await pool.query<{
+    id: string; recipient: string; role_name: string; kind: "reporting" | "platform";
+    created_at: Date; attempts: number;
+  }>(`SELECT id, recipient, role_name, kind, created_at, attempts
+      FROM wareiq_access_notifications
+      WHERE state = 'failed'
+      ORDER BY created_at DESC LIMIT 100`);
+  return rows;
 }
 
 export async function retryConfirmedFailedAccessNotification(id: string): Promise<boolean> {

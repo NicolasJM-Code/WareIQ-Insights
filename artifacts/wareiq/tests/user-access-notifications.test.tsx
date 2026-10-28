@@ -22,7 +22,16 @@ const fixtures = vi.hoisted(() => ({
       retrying: 0,
       accepted: 0,
       failed: 1,
+      uncertain: 1,
     },
+    uncertainNotifications: [{
+      id: "5c8974c7-bbef-43d5-8650-6f53690ad58b",
+      recipient: "uncertain@example.test",
+      roleName: "Supervisor",
+      kind: "reporting",
+      createdAt: "2026-10-27T12:00:00Z",
+      attempts: 3,
+    }],
   },
 }));
 
@@ -72,6 +81,24 @@ describe("admin failed access email retries", () => {
     attempts: 2,
   };
 
+  it("shows uncertain delivery without a resend action", () => {
+    fixtures.listFailed.mockResolvedValue({ failedNotifications: [], nextCursor: null });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <UserAccess />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText("Uncertain email delivery")).toBeInTheDocument();
+    expect(screen.getByText("uncertain@example.test")).toBeInTheDocument();
+    expect(screen.getByText(/not eligible for resend/)).toBeInTheDocument();
+    expect(screen.getByTestId("row-uncertain-notification-5c8974c7-bbef-43d5-8650-6f53690ad58b")).toBeInTheDocument();
+    expect(screen.queryByTestId("button-retry-notification-5c8974c7-bbef-43d5-8650-6f53690ad58b")).not.toBeInTheDocument();
+    expect(fixtures.retry).not.toHaveBeenCalled();
+    queryClient.clear();
+  });
+
   it("shows a retry action for confirmed failures and queues the original notice", async () => {
     fixtures.retry.mockResolvedValue({ status: "queued" });
     fixtures.listFailed.mockResolvedValue({ failedNotifications: [notice], nextCursor: null });
@@ -111,7 +138,9 @@ describe("admin failed access email retries", () => {
         retrying: 0,
         accepted: 0,
         failed: 0,
+        uncertain: 0,
       },
+      uncertainNotifications: [],
     };
     fixtures.listFailed.mockResolvedValue({ failedNotifications: [], nextCursor: null });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
