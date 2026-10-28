@@ -176,6 +176,55 @@ describe("active reporting membership guard", () => {
     expect(await screen.findByText("Protected reporting content (supervisor)")).toBeInTheDocument();
   });
 
+  it.each(["/", "/dashboard", SECTIONS[0].overview])(
+    "shows approved-without-sites guidance and granted report navigation at %s", async (path) => {
+      clerk.path = path;
+      clerk.getSession.mockResolvedValue(access(false, "pending_sites"));
+      const { rerender, update } = mount();
+
+      expect(await screen.findByRole("heading", { name: "Isolated client · Your reports" })).toBeInTheDocument();
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Your account is approved, but no imported sites are assigned yet. Report execution remains blocked until the WMS is connected and your administrator assigns sites.",
+      );
+      expect(screen.getByRole("link", { name: SECTIONS[0].label })).toHaveAttribute(
+        "href", `${SECTIONS[0].base}/reports`,
+      );
+      for (const section of SECTIONS.slice(1)) {
+        expect(screen.queryByRole("link", { name: section.label })).not.toBeInTheDocument();
+      }
+      expect(screen.queryByText("No reports have been granted to your role.")).not.toBeInTheDocument();
+      expectLocked();
+
+      // Follow the actual link target through the suite's controlled router.
+      // Browsing grants is permitted; execution is separately enforced by the API.
+      clerk.path = screen.getByRole("link", { name: SECTIONS[0].label }).getAttribute("href")!;
+      rerender(update());
+      expect(await screen.findByText("Protected reporting content (supervisor)")).toBeInTheDocument();
+      expect(clerk.getSettings).not.toHaveBeenCalled();
+      expect(clerk.getOwnReports).not.toHaveBeenCalled();
+    },
+  );
+
+  it("removes the no-sites warning after assigned sites are revalidated", async () => {
+    clerk.path = "/dashboard";
+    clerk.getSession.mockResolvedValue(access(false, "pending_sites"));
+    const { client } = mount();
+    await screen.findByRole("heading", { name: "Isolated client · Your reports" });
+    expect(screen.getByRole("status")).toHaveTextContent("Your account is approved");
+
+    clerk.getSession.mockResolvedValue({
+      ...access(false),
+      sites: [{ id: "site_isolated", clientId: "client_isolated", sourceId: "warehouse_isolated",
+        name: "Isolated warehouse", active: true, addressLine1: "", addressLine2: "",
+        city: "", region: "", postalCode: "", country: "", contactPhone: "" }],
+    } satisfies AccessSession);
+    await act(async () => { await client.invalidateQueries({ queryKey: ["/api/access/me"] }); });
+    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+    expect(screen.getByRole("link", { name: SECTIONS[0].label })).toHaveAttribute(
+      "href", `${SECTIONS[0].base}/reports`,
+    );
+  });
+
   it("allows administrators and uses session-keyed cookie-only no-store transport", async () => {
     const { client } = mount();
     expect(await screen.findByText("Protected reporting content (admin)")).toBeInTheDocument();

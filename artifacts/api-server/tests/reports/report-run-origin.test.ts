@@ -64,6 +64,23 @@ const otherMember = {
   email: "reporter-b@example.test",
   name: "Synthetic second reporter",
 };
+const clientBrandings = [
+  {
+    name: "null branding",
+    fields: {
+      companyNumber: null, addressLine1: null, addressLine2: null, city: null,
+      region: null, postalCode: null, country: null, logoPath: null,
+    },
+  },
+  {
+    name: "populated branding",
+    fields: {
+      companyNumber: "COMPANY-01", addressLine1: "42 Test Street", addressLine2: "Unit 7",
+      city: "Example City", region: "Example Region", postalCode: "AB12 3CD", country: "GB",
+      logoPath: "/objects/client-logos/client-a/logo.png",
+    },
+  },
+];
 const client = {
   id: "client-a",
   name: "Synthetic client",
@@ -93,10 +110,18 @@ const site = {
   type: "test",
   name: "Synthetic site",
   active: true,
+  addressLine1: "",
+  addressLine2: "",
+  city: "",
+  region: "",
+  postalCode: "",
+  country: "",
+  contactPhone: "",
 };
 
 let memberFixture = member;
-let clientFixture = client;
+let clientFixture: Omit<typeof client, keyof typeof clientBrandings[number]["fields"]>
+  & Record<keyof typeof clientBrandings[number]["fields"], string | null> = client;
 let roleFixture = role;
 const privateReports = [
   {
@@ -193,6 +218,87 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("full-app authorization for report runs", () => {
+  describe.each(clientBrandings)("approved users with $name", ({ fields }) => {
+    it.each(["inbound-1", "reporter-a-report"])(
+      "denies %s without assigned sites and authorizes it after assignment", async (reportId) => {
+        clientFixture = { ...client, ...fields };
+        memberFixture = { ...member, siteIds: [] };
+        // An imported active site exists, but its ID must not be usable until
+        // this member is assigned it. Mappings ensure denial is not a no-WMS fallback.
+        const mapping = {
+          view: "v_receipts", clientColumn: "client_code", siteColumn: "warehouse_code",
+          columns: { id: "receipt_id" },
+        };
+        vi.stubEnv("WMS_MYSQL_REPORT_MAPPINGS", JSON.stringify({
+          "inbound-1": mapping, "own:inbound:receipts": mapping,
+        }));
+
+        const pending = await request(app).get("/api/access/me");
+        expect(pending.status).toBe(200);
+        expect(pending.body).toMatchObject({
+          status: "pending_sites", platformAdmin: false, clientId: client.id,
+          reportIds: role.reportIds, ownReportSections: role.ownReportSections,
+          canCreateOwnReports: true, sites: [],
+          clientCompanyNumber: fields.companyNumber,
+          clientAddressLine1: fields.addressLine1, clientAddressLine2: fields.addressLine2,
+          clientCity: fields.city, clientRegion: fields.region,
+          clientPostalCode: fields.postalCode, clientCountry: fields.country,
+          clientLogoUrl: fields.logoPath ? "/api/access/clients/client-a/logo" : null,
+        });
+
+        const denied = await runRequest({
+          reportId, origin: "https://wareiq.test", fetchSite: "same-origin",
+        });
+        expect(denied.status).toBe(403);
+        expect(denied.body).toEqual({ error: "This site is not assigned to you." });
+        expect(executeMysqlReport).not.toHaveBeenCalled();
+        expect(poolConstructor).not.toHaveBeenCalled();
+
+        memberFixture = { ...member };
+        const active = await request(app).get("/api/access/me");
+        expect(active.status).toBe(200);
+        expect(active.body).toMatchObject({
+          status: "active", sites: [{ id: site.id, clientId: client.id, sourceId: site.sourceId }],
+        });
+
+        const authorized = await runRequest({
+          reportId, origin: "https://wareiq.test", fetchSite: "same-origin",
+        });
+        expect(authorized.status).toBe(200);
+        if (fields.companyNumber) {
+          expect(authorized.body.status).toBe("completed");
+          expect(executeMysqlReport).toHaveBeenCalledOnce();
+          expect(executeMysqlReport).toHaveBeenCalledWith(
+            expect.objectContaining({ view: "v_receipts" }),
+            { clientKey: fields.companyNumber, siteKey: site.sourceId },
+            reportId === "inbound-1" ? undefined : ["id"],
+            { siteScope: { siteId: site.id, clientId: client.id } },
+          );
+        } else {
+          // Site approval does not replace the required client reporting key.
+          expect(authorized.body).toMatchObject({ status: "not_connected", rows: [] });
+          expect(executeMysqlReport).not.toHaveBeenCalled();
+        }
+        expect(poolConstructor).not.toHaveBeenCalled();
+      },
+    );
+
+    it("keeps execution denied when assigned sites have not been imported", async () => {
+      clientFixture = { ...client, ...fields };
+      siteFixtures = [];
+      const pending = await request(app).get("/api/access/me");
+      expect(pending.status).toBe(200);
+      expect(pending.body).toMatchObject({
+        status: "pending_sites", reportIds: role.reportIds, sites: [],
+      });
+      const denied = await runRequest({ origin: "https://wareiq.test", fetchSite: "same-origin" });
+      expect(denied.status).toBe(403);
+      expect(denied.body).toEqual({ error: "This site is not assigned to you." });
+      expect(executeMysqlReport).not.toHaveBeenCalled();
+      expect(poolConstructor).not.toHaveBeenCalled();
+    });
+  });
+
   it.each([
     ["missing Origin", {}],
     ["foreign Origin", { origin: "https://foreign.test" }],
