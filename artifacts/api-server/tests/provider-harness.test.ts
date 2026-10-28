@@ -509,6 +509,36 @@ describe("offline provider harness safety", () => {
     expect(await readdir(directory)).toEqual([]);
   });
 
+  it("retains an absent intent and reports journal removal failure without provider details", async () => {
+    const path = join(directory, "absent-intent-unlink-failure.json");
+    const intent = { state: "intent", runId: saved.runId, email: saved.email };
+    await writeFile(path, JSON.stringify(intent), { mode: 0o600 });
+    users.getUserList.mockResolvedValueOnce({ data: [], totalCount: 0 });
+    const journal = {
+      ...journalIO,
+      unlink: vi.fn<typeof journalIO.unlink>().mockImplementation(async (target) => {
+        if (target === path) throw outage();
+        return journalIO.unlink(target);
+      }),
+    };
+    const message = await failure(runProviderCheck(
+      { ...safeEnv, CLERK_PROVIDER_CLEANUP_MANIFEST: path },
+      { ...dependencies(), journal },
+      check,
+    ));
+
+    expect(message).toContain("No account matched the exact generated email");
+    expect(message).toContain("The intent journal could not be removed");
+    expect(message).toContain("No account was changed");
+    expect(message).not.toContain("Recovery complete");
+    expect(users.getUserList).toHaveBeenCalledExactlyOnceWith({ emailAddress: [saved.email], limit: 2 });
+    expect(users.createUser).not.toHaveBeenCalled();
+    expect(users.deleteUser).not.toHaveBeenCalled();
+    expect(check).not.toHaveBeenCalled();
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual(intent);
+    expect(await readdir(directory)).toEqual([path.split("/").at(-1)]);
+  });
+
   it("retains an intent when exact-email recovery cannot reach the provider", async () => {
     const path = join(directory, "lookup-outage-intent.json");
     await writeFile(path, JSON.stringify({ state: "intent", runId: saved.runId, email: saved.email }), { mode: 0o600 });
