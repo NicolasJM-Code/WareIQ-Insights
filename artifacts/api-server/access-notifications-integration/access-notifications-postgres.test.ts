@@ -675,6 +675,77 @@ describe("access notification transaction ordering in private PostgreSQL", () =>
     ]);
   });
 
+  it("delivers a pending notice while cleanup is deleting expired history", async () => {
+    expect(pool.options.host).toBe(socketDirectory);
+    await pool.query(`
+      UPDATE wareiq_access_notifications
+      SET state = 'sent', created_at = now() - interval '91 days'
+      WHERE id = $1
+    `, [oldNotice.id]);
+    await pool.query(`
+      INSERT INTO wareiq_access_notifications
+        (id, recipient, role_name, kind, state, target_id, attempts, next_attempt_at)
+      VALUES ('delivery-during-cleanup', 'member@example.test', 'Manager',
+              'reporting', 'pending', 'member-1', 0, now())
+    `);
+    await pool.query(`
+      CREATE FUNCTION notification_cleanup_barrier() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        PERFORM pg_advisory_xact_lock(314159, 265358);
+        RETURN OLD;
+      END
+      $$;
+      CREATE TRIGGER notification_cleanup_barrier
+      BEFORE DELETE ON wareiq_access_notifications
+      FOR EACH ROW EXECUTE FUNCTION notification_cleanup_barrier()
+    `);
+    mocks.send.mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: "provider-id" }),
+    });
+
+    const blocker = await pool.connect();
+    await blocker.query("SELECT pg_advisory_lock(314159, 265358)");
+    let cleanup: Promise<number> | undefined;
+    let delivery: Promise<void> | undefined;
+    try {
+      cleanup = cleanupCompletedAccessNotifications();
+      await waitForActivity((activity) =>
+        activity.wait_event_type === "Lock"
+          && activity.wait_event === "advisory"
+          && activity.query.includes("WITH expired AS"));
+
+      delivery = deliverAccessNotifications();
+      await delivery;
+
+      const duringCleanup = await pool.query<{ id: string; state: string }>(`
+        SELECT id, state FROM wareiq_access_notifications
+        WHERE id IN ($1, 'delivery-during-cleanup')
+        ORDER BY id
+      `, [oldNotice.id]);
+      expect(duringCleanup.rows).toEqual([
+        { id: "delivery-during-cleanup", state: "sent" },
+        { id: oldNotice.id, state: "sent" },
+      ]);
+      expect(mocks.send).toHaveBeenCalledOnce();
+
+      await blocker.query("SELECT pg_advisory_unlock(314159, 265358)");
+      expect(await cleanup).toBe(1);
+    } finally {
+      await blocker.query("SELECT pg_advisory_unlock(314159, 265358)").catch(() => undefined);
+      blocker.release();
+      await Promise.all([
+        cleanup?.catch(() => 0),
+        delivery?.catch(() => undefined),
+      ]);
+    }
+
+    const { rows } = await pool.query<{ id: string; state: string }>(
+      "SELECT id, state FROM wareiq_access_notifications ORDER BY id",
+    );
+    expect(rows).toEqual([{ id: "delivery-during-cleanup", state: "sent" }]);
+  });
+
   it("keeps failed-notice pages stable when a newer confirmed failure arrives", async () => {
     expect(pool.options.host).toBe(socketDirectory);
     await pool.query(`
