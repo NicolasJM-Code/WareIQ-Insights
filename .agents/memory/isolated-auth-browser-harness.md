@@ -19,6 +19,29 @@ When delaying an authorization response to prove recovery ordering, observe the 
 **Why:** During real Development cookie recovery, Playwright `route.fetch()` did not produce the authenticated access summary even though the SDK had restored the session cookie; forwarding the original browser fetch preserved the actual handshake and passed.
 
 **How to apply:** Delay only delivery to the hook, preserve the original request and response, restore fetch in cleanup, and never manufacture cookies or permission summaries.
+
+For cross-tab recovery evidence, hold authorization delivery separately in each
+document and keep observing the unreleased document while another tab recovers.
+
+**Why:** A shared SDK cookie proves session recovery, not that each document
+consumed fresh authorization. A final two-tab snapshot cannot distinguish
+independent revalidation from one tab unlocking another through cached success.
+
+**How to apply:** Require a real response in each document, release one at a
+time, and leave the other continuously locked through a subsequent access poll
+in the recovered tab.
+
+Bring each document to the foreground when waiting for its production access
+recheck, registering the response observer before switching tabs.
+
+**Why:** TanStack Query can pause interval refetches in hidden documents.
+Waiting for both tabs to poll concurrently can hang despite correct application
+behavior; a foreground switch can also trigger an immediate response.
+
+**How to apply:** Use actual tab foregrounding, not synthetic visibility events
+or query-policy overrides. Keep the other document's continuous lock observer
+installed, and foreground the recovered tab before releasing its held response
+when a later full interval poll is needed.
 ## Verified email versus fresh-browser verification
 
 A backend-created, verified email can still encounter Clerk's client-trust email challenge in a new browser. Do not disable the challenge or replace the screen with a sign-in ticket to make a hosted-screen check pass.

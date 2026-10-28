@@ -167,3 +167,21 @@ it("keeps hosted checks separate from offline and ticket browser discovery", () 
   expect(entry).not.toContain("signInTokens.");
   expect(entry).not.toContain("setActive(");
 });
+
+it("selects the longer two-tab outage only through its dedicated live command", () => {
+  const { scripts } = JSON.parse(readFileSync("package.json", "utf8"));
+  expect(scripts["test:auth:browser:renewal:multitab"])
+    .toBe("vitest run --config vitest.browser-renewal-multitab.config.ts");
+  for (const command of ["test:auth", "test:auth:typecheck", "test:auth:browser",
+    "test:auth:browser:renewal", "test:auth:browser:renewal:repeat", "build"]) {
+    expect(scripts[command]).not.toContain("multitab");
+  }
+  const config = readFileSync("vitest.browser-renewal-multitab.config.ts", "utf8");
+  expect(config).toContain('import browser from "./vitest.browser.config"');
+  expect(config).toContain("...browser.test");
+  expect(config).toContain('env: { CLERK_BROWSER_SCENARIO: "renewal-multitab" }');
+  expect(config).toContain("testTimeout: 420_000");
+  const offline = readFileSync("vitest.config.ts", "utf8");
+  expect(offline).not.toContain("browser-tests");
+  expect(offline).not.toContain("multitab");
+});

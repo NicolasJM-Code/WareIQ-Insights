@@ -400,6 +400,60 @@ checked cleanup journal and `afterAll` cleanup apply unchanged; no report data o
 real database access is involved. If interrupted, use the existing browser cleanup
 recovery command above against the same Development instance before retrying.
 
+## Opt-in two-tab browser renewal outage
+
+```sh
+CLERK_BROWSER_TESTS=isolated-development-only \
+CLERK_BROWSER_EXECUTABLE="$(command -v chromium)" \
+pnpm test:auth:browser:renewal:multitab
+```
+
+This separately selected live scenario uses
+`vitest.browser-renewal-multitab.config.ts`
+(`CLERK_BROWSER_SCENARIO=renewal-multitab`). It is not selected by the ordinary
+offline suite, other browser commands, authorization workflow, or builds.
+Budget about four minutes; the test timeout is seven minutes plus the shared
+60-second cleanup timeout. The explicit opt-in, isolated Development key pair
+and local pairing attestation, Chromium and provider networking requirements
+are the same as for the other browser checks. Never enable it globally.
+
+One generated account signs in once in a disposable browser context. A second
+harmless harness page opens in the same context and proves the same Clerk
+session and real cookie-authenticated reporting access. Both documents then
+stay open without navigation, reload, focus simulation, token injection,
+manual renewal, or another sign-in. The runner explicitly brings each tab to
+the foreground for its rechecks, as a user switching tabs would: the production
+query hook pauses interval fetches in hidden documents and also revalidates on
+focus. No synthetic focus/visibility events or query-policy overrides are used.
+SDK networking is interrupted across
+the context; the runner snapshots the latest shared cookie, observes a blocked
+renewal attempt, waits beyond its natural expiry, and requires each tab's
+permissions and reporting/admin markers to lock. Another full poll in each
+tab must keep access locked; protected APIs deny access without reaching the
+harmless report handler.
+
+After SDK networking returns, passive cookie observation must show advancing
+issuance and expiry for the same session. Each document's original browser
+fetch must independently obtain a fresh active server authorization response.
+Those real responses are held separately before delivery to the production
+hook, while continuous observers check that permissions and markers stay
+locked. The first tab's response is released, restoring its markers and
+cookie-only positive controls. Through a further complete poll in that tab,
+the second must remain locked despite the shared refreshed cookie and the
+first tab's successful permission cache. Only releasing the second tab's own
+fresh authorization response may restore its markers. Both pages must still
+have the original session and no post-control navigations.
+
+The scenario reuses the real production provider, hooks, guards and API,
+database-environment isolation, blocked PostgreSQL pool construction, separate
+Vite cache and harmless report catalog. It loads no report content and saves
+no screenshots, traces, storage state, tickets or cookies. Browser errors remain
+sanitized. Response holds and observers are disposed on failure, the context
+is closed, and shared `afterAll` cleanup ownership-checks and deletes only the
+generated account. After interruption or failed cleanup, retain the private
+journal and use the existing browser cleanup recovery command against the
+same Development instance before retrying.
+
 ## Opt-in hosted sign-in screen check
 
 ```sh

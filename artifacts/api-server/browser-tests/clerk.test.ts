@@ -196,13 +196,10 @@ async function pastExpiry(exp: number) {
   await new Promise(done => setTimeout(done, wait));
 }
 
-async function recoverRenewal(
-  context: BrowserContext, page: Page, last: Awaited<ReturnType<typeof sessionCookie>>,
-  restore: () => Promise<void>, label: string,
-) {
+async function holdRecovery(page: Page) {
   // Observe the whole recovery window, not just a final snapshot: cached
   // permissions must never unlock either guard before fresh server evidence.
-  const recovery = await page.evaluateHandle(() => {
+  return page.evaluateHandle(() => {
     let unlocked = false;
     let activeSummary = false;
     let release!: () => void;
@@ -222,19 +219,31 @@ async function recoverRenewal(
       return response;
     };
     const check = () => {
-      unlocked ||= document.querySelector('[data-testid="permissions"]')?.textContent !== "locked"
+      const permissions = document.querySelector('[data-testid="permissions"]');
+      unlocked ||= permissions?.textContent?.trim() !== "locked"
+        || permissions?.getAttribute("data-can-administer") !== "false"
+        || permissions?.getAttribute("data-can-report") !== "false"
         || !!document.querySelector('[data-testid="report-gate"], [data-testid="admin-gate"]');
     };
     check();
     const observer = new MutationObserver(check);
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true });
     return {
       received: () => activeSummary,
       release,
-      stop: () => { check(); observer.disconnect(); return unlocked; },
+      // Keep observing until this tab's own response is released.
+      locked: () => { check(); return !unlocked; },
+      allow: () => { check(); observer.disconnect(); release(); return !unlocked; },
       dispose: () => { release(); observer.disconnect(); window.fetch = originalFetch; },
     };
   });
+}
+
+async function recoverRenewal(
+  context: BrowserContext, page: Page, last: Awaited<ReturnType<typeof sessionCookie>>,
+  restore: () => Promise<void>, label: string,
+) {
+  const recovery = await holdRecovery(page);
   try {
     phase = `${label}: restored SDK networking and passive cookie recovery`;
     await restore();
@@ -249,18 +258,120 @@ async function recoverRenewal(
     // Even with a fresh SDK cookie and the server's successful response waiting
     // at the network boundary, the old cached summary must not grant access.
     phase = `${label}: cached permissions remain locked before fresh summary delivery`;
-    expect(await recovery.evaluate(state => state.stop())).toBe(false);
+    expect(await recovery.evaluate(state => state.locked())).toBe(true);
     expect(await page.getByTestId("permissions").textContent()).toBe("locked");
     expect(await page.getByTestId("report-gate").count()).toBe(0);
     expect(await page.getByTestId("admin-gate").count()).toBe(0);
 
     phase = `${label}: fresh access summary delivery and reporting recovery`;
-    await recovery.evaluate(state => state.release());
+    expect(await recovery.evaluate(state => state.allow())).toBe(true);
     await page.getByTestId("admin-gate").waitFor({ state: "visible" });
     await cookieControl(page);
   } finally {
     await recovery.evaluate(state => state.dispose());
     await recovery.dispose();
+  }
+}
+
+async function multiTabRenewal(userId: string) {
+  phase = "two-tab browser-authenticated positive controls";
+  const { context, page: first, sessionId } = await signIn(userId);
+  try {
+    // A second document, not a second login/context: cookies and the SDK session
+    // are shared, but each document owns its production QueryClient and guards.
+    const second = await context.newPage();
+    await second.goto(origin);
+    await second.getByTestId("admin-gate").waitFor({ state: "visible" });
+    const pages = [first, second];
+    for (const page of pages) {
+      expect(await page.evaluate(() => window.Clerk.session?.id)).toBe(sessionId);
+      await cookieControl(page);
+    }
+    let navigations = 0;
+    for (const page of pages) {
+      page.on("framenavigated", frame => { if (frame === page.mainFrame()) navigations++; });
+    }
+
+    phase = "two-tab SDK outage and latest shared cookie snapshot";
+    const outage = await freezeRefresh(context);
+    for (const page of pages) await cookieControl(page);
+    const last = await sessionCookie(context);
+    expect(last.sid).toBe(sessionId);
+    phase = "two-tab natural expiry with SDK networking blocked";
+    await pastExpiry(last.exp);
+    // Production QueryClient pauses interval refetches in hidden documents.
+    // Switch tabs like a user, without synthesizing events or changing hooks.
+    // Arm the response observer first: foregrounding may revalidate immediately.
+    for (const [index, page] of pages.entries()) {
+      const recheck = watchRevalidation(page);
+      await page.bringToFront();
+      await locked(page, recheck, `tab ${index + 1} expiry`);
+    }
+    expect(outage.blockedRenewals()).toBeGreaterThan(0);
+    for (const [index, page] of pages.entries()) {
+      const recheck = watchRevalidation(page);
+      await page.bringToFront();
+      await locked(page, recheck, `tab ${index + 1} continued outage`);
+    }
+
+    // Hold each browser's original successful response independently. Never
+    // replace permissions, replay another tab's response, or use route.fetch().
+    const holds: Awaited<ReturnType<typeof holdRecovery>>[] = [];
+    try {
+      for (const page of pages) holds.push(await holdRecovery(page));
+      phase = "two-tab passive SDK recovery in the same session";
+      await outage.restore();
+      await expect.poll(async () => {
+        const fresh = await sessionCookie(context);
+        return fresh.sid === sessionId && fresh.iat > last.iat && fresh.exp > last.exp
+          && fresh.exp * 1000 > Date.now();
+      }, { timeout: 90_000, interval: 500 }).toBe(true);
+
+      phase = "each tab receives its own fresh server authorization";
+      for (const [index, hold] of holds.entries()) {
+        await pages[index].bringToFront();
+        await expect.poll(() => hold.evaluate(state => state.received()), { timeout: 35_000 }).toBe(true);
+        expect(await hold.evaluate(state => state.locked())).toBe(true);
+      }
+      phase = "first tab authorized while second tab remains locked";
+      // Foreground before release, while the first fetch is still in flight.
+      // Its subsequent full interval poll then runs without another focus event.
+      await first.bringToFront();
+      expect(await holds[0].evaluate(state => state.allow())).toBe(true);
+      await first.getByTestId("admin-gate").waitFor({ state: "visible" });
+      await cookieControl(first);
+      // Observe a complete subsequent poll in the authorized tab. The other
+      // tab must stay locked throughout, despite the shared fresh SDK cookie
+      // and the first tab's now-successful permission cache.
+      const response = await watchRevalidation(first);
+      expect(response.status()).toBe(200);
+      const summary = await response.json();
+      expect(summary.status === "active" && summary.platformAdmin === true && summary.reportIds.length > 0).toBe(true);
+      expect(await holds[1].evaluate(state => state.locked())).toBe(true);
+      expect(await second.getByTestId("permissions").textContent()).toBe("locked");
+      expect(await second.getByTestId("report-gate").count()).toBe(0);
+      expect(await second.getByTestId("admin-gate").count()).toBe(0);
+
+      phase = "second tab restores only after its own authorization delivery";
+      await second.bringToFront();
+      expect(await holds[1].evaluate(state => state.allow())).toBe(true);
+      await second.getByTestId("admin-gate").waitFor({ state: "visible" });
+      for (const page of pages) {
+        await cookieControl(page);
+        expect(await page.evaluate(() => window.Clerk.session?.id)).toBe(sessionId);
+      }
+      expect(context.pages()).toHaveLength(2);
+      expect(navigations).toBe(0);
+      expect(databasePoolConstructor).not.toHaveBeenCalled();
+      console.info("Both open tabs locked after expiry and recovered only after their own fresh server authorization.");
+    } finally {
+      for (const hold of holds) {
+        try { await hold.evaluate(state => state.dispose()); }
+        finally { await hold.dispose(); }
+      }
+    }
+  } finally {
+    await context.close();
   }
 }
 
@@ -401,7 +512,10 @@ async function revokedRenewal(userId: string) {
 
 const repeatRun = process.env.CLERK_BROWSER_SCENARIO === "renewal-repeat";
 const renewalRun = process.env.CLERK_BROWSER_SCENARIO === "renewal";
-it(repeatRun
+const multiTabRun = process.env.CLERK_BROWSER_SCENARIO === "renewal-multitab";
+it(multiTabRun
+  ? "requires independent fresh server authorization in two open tabs after an SDK outage"
+  : repeatRun
   ? "recovers reporting through two SDK networking outages in the same document and session"
   : renewalRun
   ? "recovers valid browser sessions after renewal outages but keeps revoked sessions locked"
@@ -437,6 +551,7 @@ it(repeatRun
     origin = `http://127.0.0.1:${address.port}`;
     phase = "disposable fixture creation";
     const userId = await createFixture();
+    if (multiTabRun) { await multiTabRenewal(userId); return; }
     if (repeatRun) { await renewal(userId, 2); return; }
     if (renewalRun) {
       await renewal(userId, 1);

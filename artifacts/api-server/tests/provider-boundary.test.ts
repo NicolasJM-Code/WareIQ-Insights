@@ -237,11 +237,12 @@ async function expectProviderDatabaseIsolation() {
   }
 }
 
-it("keeps browser execution isolated from application and WMS databases", async () => {
-  await expectBrowserDatabaseIsolation();
+it.each(["vitest.browser.config.ts", "vitest.browser-renewal-multitab.config.ts"])(
+  "keeps browser execution isolated from application and WMS databases with %s", async config => {
+  await expectBrowserDatabaseIsolation(config);
 }, 60_000);
 
-async function expectBrowserDatabaseIsolation() {
+async function expectBrowserDatabaseIsolation(config: string) {
   const tempRoot = join(workspaceRoot, "tmp");
   await mkdir(tempRoot, { recursive: true });
   const directory = await mkdtemp(join(tempRoot, "wareiq-browser-database-"));
@@ -255,7 +256,7 @@ async function expectBrowserDatabaseIsolation() {
         join(workspaceRoot, "node_modules/vitest/vitest.mjs"),
         "run",
         "--config",
-        join(workspaceRoot, "vitest.browser.config.ts"),
+        join(workspaceRoot, config),
         "--root",
         workspaceRoot,
         "--reporter=verbose",
