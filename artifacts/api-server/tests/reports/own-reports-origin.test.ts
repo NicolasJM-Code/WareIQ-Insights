@@ -97,6 +97,9 @@ beforeAll(async () => {
 afterAll(stopDatabase);
 beforeEach(async () => {
   await pool.query(`
+    DROP TRIGGER IF EXISTS concurrent_insert_barrier ON wareiq_own_reports;
+    DROP FUNCTION IF EXISTS report_insert_barrier();
+    DROP SEQUENCE IF EXISTS own_report_insert_barrier;
     TRUNCATE wareiq_own_reports, wareiq_members, wareiq_sites, wareiq_roles, wareiq_clients;
     INSERT INTO wareiq_clients VALUES ('client-a', 'Synthetic A', true), ('client-b', 'Synthetic B', true);
     INSERT INTO wareiq_sites VALUES ('site-a', 'client-a', 'test', 'Synthetic site', true);
@@ -249,6 +252,70 @@ describe("full-app origin protection for saved reports", () => {
     });
     expect(await snapshot()).toEqual(before);
   });
+
+  it("rolls back every report in the losing concurrent same-origin import", async () => {
+    const before = await snapshot();
+    await pool.query(`
+      CREATE SEQUENCE own_report_insert_barrier;
+      CREATE FUNCTION report_insert_barrier() RETURNS trigger LANGUAGE plpgsql AS $$
+      DECLARE
+        ticket bigint;
+        attempt integer;
+      BEGIN
+        ticket := nextval('own_report_insert_barrier');
+        IF ticket <= 2 THEN
+          FOR attempt IN 1..500 LOOP
+            EXIT WHEN (SELECT last_value FROM own_report_insert_barrier) >= 2;
+            PERFORM pg_sleep(0.01);
+          END LOOP;
+          IF (SELECT last_value FROM own_report_insert_barrier) < 2 THEN
+            RAISE EXCEPTION 'Concurrent report import barrier timed out';
+          END IF;
+        END IF;
+        RETURN NEW;
+      END $$;
+      CREATE TRIGGER concurrent_insert_barrier BEFORE INSERT ON wareiq_own_reports
+        FOR EACH ROW EXECUTE FUNCTION report_insert_barrier();
+    `);
+
+    const firstBatch = [
+      { ...definition, name: "First batch only before conflict" },
+      { ...definition, name: "Concurrent shared report" },
+      { ...definition, name: "First batch only after conflict" },
+    ];
+    const secondBatch = [
+      { ...definition, name: "Second batch only before conflict" },
+      { ...definition, name: "Concurrent shared report" },
+      { ...definition, name: "Second batch only after conflict" },
+    ];
+    const sameOrigin = { origin: "https://wareiq.test", fetchSite: "same-origin" };
+    const [first, second] = await Promise.all([
+      mutation("post", importPath, sameOrigin).send({ ...importBody, reports: firstBatch }),
+      mutation("post", importPath, sameOrigin).send({ ...importBody, reports: secondBatch }),
+    ]);
+
+    const success = first.status === 200 ? first : second;
+    const conflict = first.status === 409 ? first : second;
+    const winningBatch = first.status === 200 ? firstBatch : secondBatch;
+    const losingBatch = first.status === 409 ? firstBatch : secondBatch;
+    expect([first.status, second.status].sort()).toEqual([200, 409]);
+    expect(conflict.body).toEqual({
+      error: "This entry already exists. Use a unique name or email.",
+    });
+    expect(success.body).toHaveLength(winningBatch.length);
+    expect(success.body.map((report: { name: string }) => report.name))
+      .toEqual(winningBatch.map((report) => report.name));
+
+    const after = await snapshot();
+    expect(after).toHaveLength(before.length + winningBatch.length);
+    const persistedNames = after
+      .filter((row) => row.owner_id === "owner-a" && row.client_id === "client-a")
+      .map((row) => row.definition.name);
+    for (const report of winningBatch) expect(persistedNames).toContain(report.name);
+    for (const report of losingBatch) {
+      if (report.name !== "Concurrent shared report") expect(persistedNames).not.toContain(report.name);
+    }
+  }, 15_000);
 
   it("allows a same-origin DELETE to remove a report through the full application", async () => {
     const before = await snapshot();

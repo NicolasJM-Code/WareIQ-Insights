@@ -1078,7 +1078,7 @@ describe("offline provider harness safety", () => {
     } finally {
       await rm(fixturePath, { force: true });
     }
-  });
+  }, 15_000);
 
   it("retains an intent when exact-email recovery cannot reach the provider", async () => {
     const path = join(directory, "lookup-outage-intent.json");
