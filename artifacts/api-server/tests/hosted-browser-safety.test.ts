@@ -1,16 +1,19 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
+import { createKeyPairAttestation } from "../provider-tests/harness";
 
 const fake = vi.hoisted(() => ({
   createUser: vi.fn(), getUser: vi.fn(), deleteUser: vi.fn(),
-  writeFile: vi.fn(), mkdir: vi.fn(), rename: vi.fn(), unlink: vi.fn(),
+  getUserList: vi.fn(), writeFile: vi.fn(), mkdir: vi.fn(), readFile: vi.fn(),
+  rename: vi.fn(), unlink: vi.fn(),
 }));
 vi.mock("@clerk/express", () => ({
-  clerkClient: { users: { createUser: fake.createUser, getUser: fake.getUser, deleteUser: fake.deleteUser } },
+  clerkClient: { users: {
+    createUser: fake.createUser, getUser: fake.getUser, getUserList: fake.getUserList, deleteUser: fake.deleteUser,
+  } },
 }));
 vi.mock("node:fs/promises", () => ({
-  writeFile: fake.writeFile, mkdir: fake.mkdir, rename: fake.rename, unlink: fake.unlink,
-  readFile: vi.fn(),
+  writeFile: fake.writeFile, mkdir: fake.mkdir, readFile: fake.readFile, rename: fake.rename, unlink: fake.unlink,
 }));
 
 beforeEach(() => {
@@ -20,6 +23,8 @@ beforeEach(() => {
   vi.stubEnv("CLERK_BROWSER_TESTS", "isolated-development-only");
   vi.stubEnv("CLERK_SECRET_KEY", "sk_test_synthetic");
   vi.stubEnv("CLERK_PUBLISHABLE_KEY", "pk_test_synthetic");
+  vi.stubEnv("CLERK_PROVIDER_KEY_PAIR_ATTESTATION",
+    createKeyPairAttestation("sk_test_synthetic", "pk_test_synthetic"));
   vi.stubEnv("NODE_ENV", "test");
   vi.spyOn(console, "info").mockImplementation(() => {});
 });
@@ -39,6 +44,49 @@ it.each(["CLERK_SECRET_KEY", "CLERK_PUBLISHABLE_KEY", "NODE_ENV"])(
     expect(fake.createUser).not.toHaveBeenCalled();
   },
 );
+
+it.each([
+  ["changed secret key", "CLERK_SECRET_KEY", "sk_test_changed"],
+  ["changed publishable key", "CLERK_PUBLISHABLE_KEY", "pk_test_changed"],
+])("refuses a stale key-pair attestation after a %s before provider or journal work", async (_label, key, value) => {
+  vi.stubEnv("CLERK_HOSTED_TESTS", "isolated-development-only");
+  vi.stubEnv(key, value);
+  const { preflight, createFixture, recoverFixture } = await import("../browser-tests/fixture");
+  expect(() => preflight("CLERK_HOSTED_TESTS")).toThrow("local pairing attestation");
+  await expect(createFixture()).rejects.toThrow("local pairing attestation");
+  await expect(recoverFixture(".cache/clerk-browser/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa.json"))
+    .rejects.toThrow("local pairing attestation");
+  for (const call of [
+    fake.createUser, fake.getUser, fake.getUserList, fake.deleteUser,
+    fake.mkdir, fake.readFile, fake.writeFile, fake.rename, fake.unlink,
+  ]) expect(call).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["missing", undefined],
+  ["malformed", "not-a-fingerprint"],
+])("refuses a %s browser attestation before provider or journal work", async (_label, attestation) => {
+  vi.stubEnv("CLERK_HOSTED_TESTS", "isolated-development-only");
+  vi.stubEnv("CLERK_PROVIDER_KEY_PAIR_ATTESTATION", attestation);
+  const { preflight, createFixture } = await import("../browser-tests/fixture");
+  expect(() => preflight("CLERK_HOSTED_TESTS")).toThrow("local pairing attestation");
+  await expect(createFixture()).rejects.toThrow("local pairing attestation");
+  for (const call of [
+    fake.createUser, fake.getUser, fake.getUserList, fake.deleteUser,
+    fake.mkdir, fake.readFile, fake.writeFile, fake.rename, fake.unlink,
+  ]) expect(call).not.toHaveBeenCalled();
+});
+
+it("rechecks the key pair before deleting a fixture after configuration drift", async () => {
+  fake.createUser.mockResolvedValue({ id: "user_generated" });
+  const { createFixture, cleanupFixture } = await import("../browser-tests/fixture");
+  await createFixture();
+  vi.stubEnv("CLERK_SECRET_KEY", "sk_test_changed");
+  await expect(cleanupFixture()).rejects.toThrow("local pairing attestation");
+  expect(fake.getUser).not.toHaveBeenCalled();
+  expect(fake.deleteUser).not.toHaveBeenCalled();
+  expect(fake.unlink).not.toHaveBeenCalled();
+});
 
 it("creates only a generated test-email account and keeps its password out of journals", async () => {
   fake.createUser.mockImplementation(async params => ({
@@ -112,6 +160,8 @@ it("keeps hosted checks separate from offline and ticket browser discovery", () 
   expect(ticket).not.toContain("hosted.test.ts");
   const hosted = readFileSync("vitest.hosted.config.ts", "utf8");
   expect(hosted).toContain("browser-tests/hosted.test.ts");
+  const ticketEntry = readFileSync("artifacts/api-server/browser-tests/clerk.test.ts", "utf8");
+  expect(ticketEntry.indexOf("preflight();")).toBeLessThan(ticketEntry.indexOf('await import("../src/app")'));
   const entry = readFileSync("artifacts/api-server/browser-tests/hosted.test.ts", "utf8");
   expect(entry.indexOf('preflight("CLERK_HOSTED_TESTS")')).toBeLessThan(entry.indexOf('await import("../src/app")'));
   expect(entry).not.toContain("signInTokens.");

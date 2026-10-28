@@ -51,6 +51,18 @@ export function createKeyPairAttestation(secretKey: string, publishableKey: stri
     .digest("hex");
 }
 
+export function assertKeyPairAttestation(
+  secretKey: string,
+  publishableKey: string,
+  attestation: string | undefined,
+) {
+  const expected = createKeyPairAttestation(secretKey, publishableKey);
+  if (!attestation || !/^[a-f0-9]{64}$/.test(attestation)
+    || !timingSafeEqual(Buffer.from(attestation, "hex"), Buffer.from(expected, "hex"))) {
+    throw new Error("Clerk checks refused: configured keys do not match the local pairing attestation. See docs/authorization-regression-tests.md.");
+  }
+}
+
 // Explicit input makes offline refusal tests independent of workspace secrets.
 export function preflight(env: NodeJS.ProcessEnv) {
   if (env.CLERK_PROVIDER_TESTS !== "isolated-development-only"
@@ -59,12 +71,9 @@ export function preflight(env: NodeJS.ProcessEnv) {
     || !env.CLERK_PUBLISHABLE_KEY?.startsWith("pk_test_")) {
     throw new Error("Provider checks require explicit opt-in and development-only Clerk keys. See docs/authorization-regression-tests.md.");
   }
-  const attestation = env.CLERK_PROVIDER_KEY_PAIR_ATTESTATION;
-  const expected = createKeyPairAttestation(env.CLERK_SECRET_KEY, env.CLERK_PUBLISHABLE_KEY);
-  if (!attestation || !/^[a-f0-9]{64}$/.test(attestation)
-    || !timingSafeEqual(Buffer.from(attestation, "hex"), Buffer.from(expected, "hex"))) {
-    throw new Error("Provider checks refused: configured Clerk keys do not match the local pairing attestation. See docs/authorization-regression-tests.md.");
-  }
+  assertKeyPairAttestation(
+    env.CLERK_SECRET_KEY, env.CLERK_PUBLISHABLE_KEY, env.CLERK_PROVIDER_KEY_PAIR_ATTESTATION,
+  );
 }
 
 // Provider exceptions can contain tokens; never expose their details or cause.

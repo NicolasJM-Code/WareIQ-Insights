@@ -29,8 +29,8 @@ ownership/email/ID mismatches, setup and assertion failures, invalid journals,
 provider outages, and journal write/unlink failures. This coverage is part of
 the ordinary offline suite, not `test:auth:provider`.
 The synthetic matching key pair has a local pairing attestation; tests also
-confirm that changing either key or removing the attestation stops before
-provider and journal work.
+confirm that changing either key or removing the attestation stops provider and
+journal work in the provider, ticket-browser, and hosted-browser runners.
 
 The offline suite also checks that the package scripts and Vitest configs keep
 the live test out of ordinary discovery. It runs the live test entrypoint in an
@@ -135,10 +135,12 @@ failure; those conditions are never reported as a skipped/pass result.
    `CLERK_PROVIDER_KEY_PAIR_ATTESTATION`. Recompute and update it whenever either
    Clerk key changes, and only after verifying the new pair in Clerk. This is an
    operator attestation, not an independent discovery of the secret key's
-   instance. The runner refuses missing, malformed, or stale fingerprints before
-   reading a recovery journal or making provider calls. It also refuses missing
-   or live keys, missing opt-in, and `NODE_ENV=production` before importing the
-   app or making provider calls.
+   instance. The provider, ticket-browser, and hosted-browser runners refuse
+   missing, malformed, or stale fingerprints before reading a recovery journal
+   or making provider calls. The browser runners also recheck the attestation
+   before each fixture account or recovery operation. Each runner also refuses
+   missing or live keys, missing opt-in, and `NODE_ENV=production` before
+   importing the app or making provider calls.
 3. Do not supply an existing email, account ID, session, token, or published app
    URL. The runner has no remote application target: Supertest hosts the real
    Express app/router on an ephemeral local listener. The app DB is an in-memory

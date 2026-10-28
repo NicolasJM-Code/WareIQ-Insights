@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { resolve, basename, dirname } from "node:path";
 import { clerkClient } from "@clerk/express";
+import { assertKeyPairAttestation } from "../provider-tests/harness";
 
 const directory = resolve(".cache/clerk-browser");
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
@@ -10,6 +11,14 @@ type Intent = { kind: "wareiq-browser"; state: "intent"; runId: string; email: s
 let manifest: Manifest | undefined;
 let path: string;
 
+function assertCurrentKeyPair() {
+  const { CLERK_SECRET_KEY, CLERK_PUBLISHABLE_KEY, CLERK_PROVIDER_KEY_PAIR_ATTESTATION } = process.env;
+  if (!CLERK_SECRET_KEY || !CLERK_PUBLISHABLE_KEY) {
+    throw new Error("Clerk browser checks refused: Development keys and their local pairing attestation are required.");
+  }
+  assertKeyPairAttestation(CLERK_SECRET_KEY, CLERK_PUBLISHABLE_KEY, CLERK_PROVIDER_KEY_PAIR_ATTESTATION);
+}
+
 export function preflight(optIn = "CLERK_BROWSER_TESTS") {
   if (process.env[optIn] !== "isolated-development-only"
     || process.env.NODE_ENV === "production"
@@ -17,6 +26,7 @@ export function preflight(optIn = "CLERK_BROWSER_TESTS") {
     || !process.env.CLERK_PUBLISHABLE_KEY?.startsWith("pk_test_")) {
     throw new Error("Browser checks require explicit opt-in and Development keys. See docs/authorization-regression-tests.md.");
   }
+  assertCurrentKeyPair();
 }
 
 // Provider and Playwright errors can contain credentials. Do not attach causes,
@@ -27,6 +37,7 @@ export async function safe<T>(label: string, action: () => Promise<T>): Promise<
 }
 
 export async function createFixture(password?: string) {
+  assertCurrentKeyPair();
   const runId = randomUUID();
   const email = `wareiq-browser-${runId}${password ? "+clerk_test" : ""}@example.com`;
   path = resolve(directory, `${runId}.json`);
@@ -70,6 +81,7 @@ export async function createHostedFixture() {
 }
 
 export async function recoverFixture(filename: string) {
+  assertCurrentKeyPair();
   path = resolve(filename);
   if (dirname(path) !== directory) throw new Error("Cleanup refused: journal must be in .cache/clerk-browser.");
   const candidate: unknown = JSON.parse(await readFile(path, "utf8"));
@@ -106,6 +118,7 @@ export async function recoverFixture(filename: string) {
 
 export async function cleanupFixture() {
   if (!manifest) return;
+  assertCurrentKeyPair();
   const m = manifest;
   const user = await safe("cleanup ownership verification", () => clerkClient.users.getUser(m.userId));
   if (user.id !== m.userId || user.privateMetadata.wareiqBrowserTest !== m.runId
