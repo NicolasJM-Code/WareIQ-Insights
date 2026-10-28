@@ -42,6 +42,20 @@ behavior; a foreground switch can also trigger an immediate response.
 or query-policy overrides. Keep the other document's continuous lock observer
 installed, and foreground the recovered tab before releasing its held response
 when a later full interval poll is needed.
+## Cold-tab outage checks
+
+For a tab first opened during an SDK outage, distinguish static script bootstrap
+from client/session networking. Do not require the cold SDK to finish loading
+or its production access hook to poll before connectivity returns.
+
+**Why:** Blocking the SDK script itself tests missing application code, while
+requiring a loaded SDK during an outage can reject legitimate fail-closed
+startup. Neither establishes independent authorization recovery.
+
+**How to apply:** Observe the new document before application startup, require
+locked UI and real cookie-only API denial during the outage, and require that
+document's own production-hook authorization response before recovery.
+
 ## Verified email versus fresh-browser verification
 
 A backend-created, verified email can still encounter Clerk's client-trust email challenge in a new browser. Do not disable the challenge or replace the screen with a sign-in ticket to make a hosted-screen check pass.

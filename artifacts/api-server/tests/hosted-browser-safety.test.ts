@@ -49,6 +49,23 @@ it.each(["CLERK_SECRET_KEY", "CLERK_PUBLISHABLE_KEY", "NODE_ENV"])(
   },
 );
 
+it("selects the new-tab outage only through its dedicated live command", () => {
+  const { scripts } = JSON.parse(readFileSync("package.json", "utf8"));
+  expect(scripts["test:auth:browser:renewal:newtab"])
+    .toBe("vitest run --config vitest.browser-renewal-newtab.config.ts");
+  for (const command of ["test:auth", "test:auth:typecheck", "test:auth:browser",
+    "test:auth:browser:renewal", "test:auth:browser:renewal:repeat",
+    "test:auth:browser:renewal:multitab", "build"]) {
+    expect(scripts[command]).not.toContain("newtab");
+  }
+  const config = readFileSync("vitest.browser-renewal-newtab.config.ts", "utf8");
+  expect(config).toContain('import browser from "./vitest.browser.config"');
+  expect(config).toContain("...browser.test");
+  expect(config).toContain('env: { CLERK_BROWSER_SCENARIO: "renewal-newtab" }');
+  expect(config).toContain("testTimeout: 420_000");
+  expect(readFileSync("vitest.config.ts", "utf8")).not.toContain("newtab");
+});
+
 it.each([
   ["changed secret key", "CLERK_SECRET_KEY", "sk_test_changed"],
   ["changed publishable key", "CLERK_PUBLISHABLE_KEY", "pk_test_changed"],

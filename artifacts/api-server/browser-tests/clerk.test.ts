@@ -24,14 +24,17 @@ vi.mock("@workspace/db", async () => ({
   ...await import("@workspace/db/schema"),
   db: { select: () => ({ from: () => ({ where: async () => [] }) }) },
 }));
-vi.mock("../src/lib/logger", () => ({
-  logger: { child: () => ({ info() {}, warn() {}, error() {}, debug() {}, level: "silent" }) },
-}));
-vi.mock("pino-http", () => ({
-  default: () => (req: { log: unknown }, _res: unknown, next: () => void) => {
-    req.log = { warn() {}, error() {} }; next();
-  },
-}));
+vi.mock("../src/lib/logger", () => {
+  const childLogger = { info() {}, warn() {}, error() {}, debug() {}, level: "silent" };
+  return { logger: { child: () => childLogger } };
+});
+vi.mock("pino-http", () => {
+  const middleware = (req: { log: unknown }, _res: unknown, next: () => void) => {
+    req.log = { warn() {}, error() {} };
+    next();
+  };
+  return { default: () => middleware };
+});
 
 let browser: Browser | undefined;
 let vite: ViteDevServer | undefined;
@@ -69,7 +72,13 @@ type BrowserClerk = {
   setActive: (p: { session: string }) => Promise<void>;
   signOut: (callback: () => void, options: { sessionId: string }) => Promise<void>;
 };
-declare global { interface Window { Clerk: BrowserClerk } }
+declare global {
+  interface Window {
+    Clerk: BrowserClerk;
+    browserRecoveryObservation: RecoveryObservation;
+  }
+}
+
 
 async function signIn(userId: string) {
   const context = await browser!.newContext({ serviceWorkers: "block" });
@@ -114,14 +123,18 @@ async function signIn(userId: string) {
   return { context, page, ...identity };
 }
 
-async function freezeRefresh(context: BrowserContext) {
+async function freezeRefresh(context: BrowserContext, allowSdkBootstrap = false) {
   // Keep the authentic cookie but stop Clerk refreshing it or learning about
   // revocation. The application's real /access/me polling must fail closed.
   let blockedRenewals = 0;
   const block = (route: Route) => {
     const url = new URL(route.request().url());
     if (url.origin !== origin && /\/client\/sessions\/[^/]+\/tokens(?:\/|$)/.test(url.pathname)) blockedRenewals++;
-    return url.origin === origin ? route.continue() : route.abort();
+    // A new document still needs the real SDK's static code. Only script
+    // assets are allowed; its client/session/token HTTP calls remain blocked.
+    const bootstrap = allowSdkBootstrap && route.request().resourceType() === "script"
+      && !/\/client(?:\/|$)/.test(url.pathname);
+    return url.origin === origin || bootstrap ? route.continue() : route.abort();
   };
   await context.route("**/*", block);
   return {
@@ -153,11 +166,11 @@ function watchRevalidation(page: Page) {
     { timeout: 35_000 });
 }
 
-async function locked(page: Page, recheck: ReturnType<typeof watchRevalidation>, label: string) {
+async function locked(page: Page, recheck: ReturnType<typeof watchRevalidation> | undefined, label: string) {
   // use-access.ts polls every 15s. access.tsx must stop granting permissions even
   // though React Query retains the last successful response on a refetch error.
   phase = `${label} access recheck`;
-  await recheck;
+  if (recheck) await recheck;
   phase = `${label} permission lock`;
   await page.waitForFunction(() => document.querySelector('[data-testid="permissions"]')?.textContent === "locked",
     undefined, { timeout: 35_000 });
@@ -195,10 +208,19 @@ async function pastExpiry(exp: number) {
   await new Promise(done => setTimeout(done, wait));
 }
 
-async function holdRecovery(page: Page) {
+type RecoveryObservation = {
+  received: () => boolean;
+  release: () => void;
+  locked: () => boolean;
+  allow: () => boolean;
+  dispose: () => void;
+};
+
+// Serializable for addInitScript: the late-opened tab is observed before any
+// application code runs, including its very first permission render.
+function installRecoveryObservation(): RecoveryObservation {
   // Observe the whole recovery window, not just a final snapshot: cached
   // permissions must never unlock either guard before fresh server evidence.
-  return page.evaluateHandle(() => {
     let unlocked = false;
     let activeSummary = false;
     let release!: () => void;
@@ -219,15 +241,16 @@ async function holdRecovery(page: Page) {
     };
     const check = () => {
       const permissions = document.querySelector('[data-testid="permissions"]');
-      unlocked ||= permissions?.textContent?.trim() !== "locked"
-        || permissions?.getAttribute("data-can-administer") !== "false"
-        || permissions?.getAttribute("data-can-report") !== "false"
+      // Before React mounts there is no indicator; absence grants nothing.
+      unlocked ||= (!!permissions && (permissions.textContent?.trim() !== "locked"
+        || permissions.getAttribute("data-can-administer") !== "false"
+        || permissions.getAttribute("data-can-report") !== "false"))
         || !!document.querySelector('[data-testid="report-gate"], [data-testid="admin-gate"]');
     };
     check();
     const observer = new MutationObserver(check);
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true });
-    return {
+    observer.observe(document, { childList: true, subtree: true, characterData: true, attributes: true });
+    return window.browserRecoveryObservation = {
       received: () => activeSummary,
       release,
       // Keep observing until this tab's own response is released.
@@ -235,7 +258,12 @@ async function holdRecovery(page: Page) {
       allow: () => { check(); observer.disconnect(); release(); return !unlocked; },
       dispose: () => { release(); observer.disconnect(); window.fetch = originalFetch; },
     };
-  });
+}
+
+async function holdRecovery(page: Page, installed = false) {
+  return installed
+    ? page.evaluateHandle(() => window.browserRecoveryObservation)
+    : page.evaluateHandle(installRecoveryObservation);
 }
 
 async function recoverRenewal(
@@ -272,16 +300,20 @@ async function recoverRenewal(
   }
 }
 
-async function multiTabRenewal(userId: string) {
+async function multiTabRenewal(userId: string, openDuringOutage = false) {
   phase = "two-tab browser-authenticated positive controls";
   const { context, page: first, sessionId } = await signIn(userId);
+  const holds: Awaited<ReturnType<typeof holdRecovery>>[] = [];
   try {
     // A second document, not a second login/context: cookies and the SDK session
     // are shared, but each document owns its production QueryClient and guards.
-    const second = await context.newPage();
-    await second.goto(origin);
-    await second.getByTestId("admin-gate").waitFor({ state: "visible" });
-    const pages = [first, second];
+    const pages = [first];
+    if (!openDuringOutage) {
+      const second = await context.newPage();
+      await second.goto(origin);
+      await second.getByTestId("admin-gate").waitFor({ state: "visible" });
+      pages.push(second);
+    }
     for (const page of pages) {
       expect(await page.evaluate(() => window.Clerk.session?.id)).toBe(sessionId);
       await cookieControl(page);
@@ -292,7 +324,7 @@ async function multiTabRenewal(userId: string) {
     }
 
     phase = "two-tab SDK outage and latest shared cookie snapshot";
-    const outage = await freezeRefresh(context);
+    const outage = await freezeRefresh(context, openDuringOutage);
     for (const page of pages) await cookieControl(page);
     const last = await sessionCookie(context);
     expect(last.sid).toBe(sessionId);
@@ -313,11 +345,34 @@ async function multiTabRenewal(userId: string) {
       await locked(page, recheck, `tab ${index + 1} continued outage`);
     }
 
+    for (const page of pages) holds.push(await holdRecovery(page));
+    if (openDuringOutage) {
+      phase = "open a new tab after shared cookie expiry while SDK networking is still blocked";
+      const second = await context.newPage();
+      await second.addInitScript(installRecoveryObservation);
+      await second.goto(origin);
+      await second.getByTestId("permissions").waitFor({ state: "attached" });
+      holds.push(await holdRecovery(second, true));
+      pages.push(second);
+      second.on("framenavigated", frame => { if (frame === second.mainFrame()) navigations++; });
+      // A cold SDK may not finish loading while offline, so its hook need not
+      // poll yet. Require real cookie-only API denials and locked UI regardless;
+      // recovery below still requires this document's own production-hook fetch.
+      await locked(second, undefined, "new tab first authorization during outage");
+      const firstRecheck = watchRevalidation(first);
+      await first.bringToFront();
+      await locked(first, firstRecheck, "existing tab while new tab is open");
+      await locked(second, undefined, "new tab continued outage");
+      expect(await holds[1].evaluate(state => state.locked())).toBe(true);
+      expect(await holds[0].evaluate(state => state.locked())).toBe(true);
+    }
+    const second = pages[1];
     // Hold each browser's original successful response independently. Never
     // replace permissions, replay another tab's response, or use route.fetch().
-    const holds: Awaited<ReturnType<typeof holdRecovery>>[] = [];
-    try {
-      for (const page of pages) holds.push(await holdRecovery(page));
+    for (const hold of holds) {
+      expect(await hold.evaluate(state => state.received())).toBe(false);
+      expect(await hold.evaluate(state => state.locked())).toBe(true);
+    }
       phase = "two-tab passive SDK recovery in the same session";
       await outage.restore();
       await expect.poll(async () => {
@@ -362,15 +417,16 @@ async function multiTabRenewal(userId: string) {
       expect(context.pages()).toHaveLength(2);
       expect(navigations).toBe(0);
       expect(databasePoolConstructor).not.toHaveBeenCalled();
-      console.info("Both open tabs locked after expiry and recovered only after their own fresh server authorization.");
-    } finally {
+      console.info(openDuringOutage
+        ? "A tab opened during the outage stayed locked from startup; both tabs required their own fresh server authorization."
+        : "Both open tabs locked after expiry and recovered only after their own fresh server authorization.");
+  } finally {
+    try {
       for (const hold of holds) {
         try { await hold.evaluate(state => state.dispose()); }
         finally { await hold.dispose(); }
       }
-    }
-  } finally {
-    await context.close();
+    } finally { await context.close(); }
   }
 }
 
@@ -663,8 +719,11 @@ const lateSignOutRun = process.env.CLERK_BROWSER_SCENARIO === "late-access-signo
 const repeatRun = process.env.CLERK_BROWSER_SCENARIO === "renewal-repeat";
 const renewalRun = process.env.CLERK_BROWSER_SCENARIO === "renewal";
 const multiTabRun = process.env.CLERK_BROWSER_SCENARIO === "renewal-multitab";
+const newTabRun = process.env.CLERK_BROWSER_SCENARIO === "renewal-newtab";
 it(lateSignOutRun
   ? "keeps signed-out reporting locked when an earlier successful authorization response arrives late"
+  : newTabRun
+  ? "keeps a tab opened during an SDK outage locked until its own fresh server authorization"
   : multiTabRun
   ? "recovers valid shared sessions but keeps both open tabs locked after revocation during an SDK outage"
   : repeatRun
@@ -704,6 +763,7 @@ it(lateSignOutRun
     phase = "disposable fixture creation";
     const userId = await createFixture();
     if (lateSignOutRun) { await lateAccessAfterSignOut(userId); return; }
+    if (newTabRun) { await multiTabRenewal(userId, true); return; }
     if (multiTabRun) {
       await multiTabRenewal(userId);
       await revokedRenewal(userId, 2);

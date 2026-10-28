@@ -285,6 +285,7 @@ it.each([
   "vitest.browser-renewal.config.ts",
   "vitest.browser-renewal-multitab.config.ts",
   "vitest.browser-late-access-signout.config.ts",
+  "vitest.browser-renewal-newtab.config.ts",
   "vitest.hosted.config.ts",
 ])(
   "keeps browser execution isolated from application and WMS databases with %s", async config => {

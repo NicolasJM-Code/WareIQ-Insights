@@ -533,6 +533,56 @@ generated account. After interruption or failed cleanup, retain the private
 journal and use the existing browser cleanup recovery command against the
 same Development instance before retrying.
 
+## Opt-in new tab opened during a session outage
+
+```sh
+CLERK_BROWSER_TESTS=isolated-development-only \
+CLERK_BROWSER_EXECUTABLE="$(command -v chromium)" \
+pnpm test:auth:browser:renewal:newtab
+```
+
+This separate live Development scenario selects
+`vitest.browser-renewal-newtab.config.ts`
+(`CLERK_BROWSER_SCENARIO=renewal-newtab`). Budget approximately four minutes,
+with a seven-minute test timeout plus the shared 60-second cleanup timeout.
+It is outside routine offline checks, the authorization workflow, builds and
+every other browser command. The same explicit opt-in, isolated Development
+keys, operator-verified key-pair attestation and Chromium requirements apply.
+
+The first tab proves real cookie-authenticated reporting and administration,
+then SDK client/session networking is blocked across the browser context.
+After the latest shared cookie expires naturally and the first tab locks
+through repeated production access rechecks, a second tab opens in the **same
+context**, without signing in again or copying permission data. Static SDK
+script downloads remain available so the new document can bootstrap the real
+provider; all external client/session/token requests remain interrupted.
+An init-script observer starts before application code, checking the first
+permission render and every subsequent change for reporting/admin grants.
+The new tab must show locked permissions, absent protected markers and real
+cookie-only protected-API denials both before and after another production
+access recheck in the original tab while the outage remains. A cold SDK may not
+finish loading offline, so the new tab is not required to start its production
+access polling until recovery; its locked UI and API denials are required
+regardless.
+
+Recovery uses the same independent response holds as the two-open-tab case:
+the cookie must advance within the original session; each document must obtain
+its own real active server authorization response; neither unlocks before that
+response is delivered to its own production hook. The existing tab recovers
+first and completes another authorization poll while the new tab stays
+continuously locked. Only releasing the new tab's own response restores it.
+Both must finish with cookie-only positive controls in the original session,
+without recovery reloads, manual token refresh, injected cookies or permissions.
+
+The harmless `artifacts/wareiq/browser-tests` catalog/markers, real production
+provider/hooks/guards, isolated database environment and blocked PostgreSQL pool
+are unchanged. No database or report content is loaded. The runner keeps
+credentials in memory, sanitizes errors and saves no screenshots, traces or
+storage state. All response holds are disposed and the browser context closes
+on failure. Shared private-journal, ownership-checked fixture cleanup applies;
+after interruption, use the existing cleanup recovery command against the same
+Development instance before retrying. A preflight refusal is not a live pass.
+
 ## Opt-in hosted sign-in screen check
 
 ```sh
