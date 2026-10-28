@@ -62,6 +62,8 @@ async function pinnedGateway(host: string) {
   finally { clearTimeout(timer); }
 }
 
+type GatewayResolver = (hostname: string) => Promise<string>;
+
 /** HTTPS transport auth is separate from MySQL auth. No database password is sent in these headers. */
 function targetHeaders(input: WmsConnectionInput, token: string, scope: WmsSiteScope) {
   return {
@@ -75,12 +77,17 @@ function targetHeaders(input: WmsConnectionInput, token: string, scope: WmsSiteS
   };
 }
 
-async function connectorRequest(input: WmsConnectionInput, tunnel: boolean, scope?: WmsSiteScope): Promise<Duplex | undefined> {
+async function connectorRequest(
+  input: WmsConnectionInput,
+  tunnel: boolean,
+  scope: WmsSiteScope | undefined,
+  resolveGateway: GatewayResolver,
+): Promise<Duplex | undefined> {
   if (mysqlConnectionPath() !== "openvpn")
     throw new ConnectionFailure("VPN_NOT_ENABLED", "The server is using the direct connection path. An owner must enable the OpenVPN connector path first.");
   siteVpnPassword(input, scope, false);
   const config = connectorConfig(scope);
-  const address = await pinnedGateway(config.url.hostname);
+  const address = await resolveGateway(config.url.hostname);
   return new Promise((resolve, reject) => {
     let settled = false;
     const req = https.request({
@@ -131,12 +138,22 @@ async function connectorRequest(input: WmsConnectionInput, tunnel: boolean, scop
   });
 }
 
-export async function checkOpenVpn(input: WmsConnectionInput, scope?: WmsSiteScope): Promise<void> {
-  await connectorRequest(input, false, scope);
+/**
+ * Build the connector transport. The optional resolver exists for isolated
+ * integration fixtures; production exports below always use pinnedGateway.
+ */
+export function createWmsOpenVpnTransport(dependencies: { resolveGateway?: GatewayResolver } = {}) {
+  const resolveGateway = dependencies.resolveGateway ?? pinnedGateway;
+  const checkOpenVpn = async (input: WmsConnectionInput, scope?: WmsSiteScope): Promise<void> => {
+    await connectorRequest(input, false, scope, resolveGateway);
+  };
+  const openVpnMysqlStream = async (input: WmsConnectionInput, scope?: WmsSiteScope): Promise<Duplex> => {
+    await checkOpenVpn(input, scope);
+    return (await connectorRequest(input, true, scope, resolveGateway))!;
+  };
+  return { checkOpenVpn, openVpnMysqlStream };
 }
 
-export async function openVpnMysqlStream(input: WmsConnectionInput, scope?: WmsSiteScope): Promise<Duplex> {
-  await checkOpenVpn(input, scope);
-  // The connector rechecks the route immediately before opening this tunnel.
-  return (await connectorRequest(input, true, scope))!;
-}
+const productionTransport = createWmsOpenVpnTransport();
+export const checkOpenVpn = productionTransport.checkOpenVpn;
+export const openVpnMysqlStream = productionTransport.openVpnMysqlStream;

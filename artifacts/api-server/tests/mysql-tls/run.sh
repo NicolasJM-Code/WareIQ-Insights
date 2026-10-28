@@ -50,6 +50,28 @@ openssl x509 -req -in "$certs/server.csr" \
   -extfile "$certs/server.ext" 2>/dev/null
 chmod 644 "$certs/server-cert.pem" "$certs/ca.pem"
 done
+connector_certs="$fixture_dir/connector-certs"
+mkdir -p "$connector_certs"
+openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 2 \
+  -keyout "$connector_certs/ca-key.pem" \
+  -out "$connector_certs/ca.pem" \
+  -subj "/CN=WareIQ disposable connector HTTPS CA" \
+  -addext "basicConstraints=critical,CA:TRUE" \
+  -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null
+openssl req -newkey rsa:2048 -sha256 -nodes \
+  -keyout "$connector_certs/server-key.pem" \
+  -out "$connector_certs/server.csr" \
+  -subj "/CN=connector.fixture.test" 2>/dev/null
+printf '%s\n' \
+  'subjectAltName=DNS:connector.fixture.test' \
+  'extendedKeyUsage=serverAuth' \
+  'keyUsage=digitalSignature,keyEncipherment' \
+  > "$connector_certs/server.ext"
+openssl x509 -req -in "$connector_certs/server.csr" \
+  -CA "$connector_certs/ca.pem" -CAkey "$connector_certs/ca-key.pem" \
+  -CAcreateserial -out "$connector_certs/server-cert.pem" -days 2 -sha256 \
+  -extfile "$connector_certs/server.ext" 2>/dev/null
+chmod 644 "$connector_certs/ca.pem" "$connector_certs/server-cert.pem"
 openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 2 \
   -keyout "$fixture_dir/certs/untrusted-ca-key.pem" \
   -out "$fixture_dir/certs/untrusted-ca.pem" \
@@ -90,11 +112,13 @@ done
 
 cd "$repo_root"
 WMS_MYSQL_TLS_INTEGRATION=1 \
+WMS_OPENVPN_MYSQL_TLS_INTEGRATION=1 \
 WMS_MYSQL_TLS_FIXTURE_DIR="$fixture_dir" \
 WMS_MYSQL_TLS_FIXTURE_PORT="$fixture_port" \
 WMS_MYSQL_TLS_SECOND_FIXTURE_PORT="$second_fixture_port" \
   pnpm exec vitest run --config vitest.config.ts \
-    artifacts/api-server/tests/wms-mysql.tls.integration.test.ts || {
+    artifacts/api-server/tests/wms-mysql.tls.integration.test.ts \
+    artifacts/api-server/tests/wms-openvpn-mysql.tls.integration.test.ts || {
       "${compose[@]}" logs >&2 || true
       exit 1
     }
