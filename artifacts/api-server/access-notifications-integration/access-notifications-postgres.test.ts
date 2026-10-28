@@ -15,18 +15,27 @@ vi.mock("@workspace/db", async () => ({
   db: (await import("./database")).db,
   pool: (await import("./database")).pool,
 }));
+vi.mock("../../../lib/db/src/index", async () => ({
+  ...await import("@workspace/db/schema"),
+  db: (await import("./database")).db,
+  pool: (await import("./database")).pool,
+}));
 vi.mock("@replit/connectors-sdk", () => ({
   ReplitConnectors: class { createProxyFetch() { return mocks.send; } },
 }));
 vi.mock("@clerk/express", () => ({ clerkClient: { users: { getUser: vi.fn() } } }));
-vi.mock("../src/lib/role-lock", () => ({ withRoleLock: async (run: () => Promise<unknown>) => run() }));
 vi.mock("../src/lib/logger", () => ({ logger: { warn: vi.fn() } }));
 
+import { clerkClient } from "@clerk/express";
 import {
   cleanupCompletedAccessNotifications,
+  confirmPlatformNotification,
   deliverAccessNotifications,
+  preparePlatformNotification,
   queueAccessNotifications,
 } from "../src/lib/access-notifications";
+import { withRoleLock } from "../src/lib/role-lock";
+import { changeRole } from "../src/lib/role-management";
 
 const oldNotice = {
   id: "older-notice",
@@ -80,6 +89,85 @@ async function waitForCleanupWaiters(count: number) {
 
 async function queueLatestNotice() {
   return db.transaction((tx) => queueAccessNotifications(tx, [newNotice]));
+}
+
+function makeUser(id: string, email: string, role: string, eventId?: string) {
+  return {
+    id,
+    firstName: "Test",
+    lastName: "Member",
+    primaryEmailAddressId: "primary",
+    emailAddresses: [{
+      id: "primary",
+      emailAddress: email,
+      verification: { status: "verified" },
+    }],
+    publicMetadata: { role },
+    privateMetadata: eventId ? { wareiqRoleNotificationId: eventId } : {},
+    banned: false,
+    locked: false,
+  } as unknown as Awaited<ReturnType<typeof clerkClient.users.getUser>>;
+}
+
+async function insertPlatformNotice(id: string, role: string) {
+  await pool.query(`
+    INSERT INTO wareiq_access_notifications
+      (id, recipient, role_name, kind, state, target_id, platform_role, attempts, next_attempt_at)
+    VALUES ($1, 'member@example.test', 'Legacy Supervisor', 'platform', 'pending',
+            'member-1', $2, 0, now())
+  `, [id, role]);
+  await pool.query(
+    "UPDATE wareiq_access_notifications SET created_at = now() - interval '1 minute' WHERE id = $1",
+    [id],
+  );
+}
+
+async function waitForRoleLockWaiter() {
+  await expect.poll(async () => {
+    const { rows } = await pool.query<{ count: number }>(`
+      SELECT count(*)::int AS count
+      FROM pg_stat_activity
+      WHERE datname = current_database()
+        AND pid <> pg_backend_pid()
+        AND state = 'active'
+        AND wait_event_type = 'Lock'
+        AND wait_event = 'advisory'
+        AND query ILIKE '%pg_advisory_xact_lock(174983, 1)%'
+    `);
+    return rows[0]?.count ?? 0;
+  }, { timeout: 5_000, interval: 10 }).toBe(1);
+}
+
+async function changeMemberRole(
+  target: Awaited<ReturnType<typeof clerkClient.users.getUser>>,
+  updateTarget: (user: Awaited<ReturnType<typeof clerkClient.users.getUser>>) => void,
+) {
+  const actor = makeUser("admin-1", "admin@example.test", "admin");
+  const users = {
+    getUser: vi.fn(async (id: string) => id === actor.id ? actor : target),
+    updateUserMetadata: vi.fn(async (
+      _id: string,
+      metadata: { publicMetadata?: Record<string, unknown>; privateMetadata?: Record<string, unknown> },
+    ) => {
+      const updated = {
+        ...target,
+        publicMetadata: { ...target.publicMetadata, ...metadata.publicMetadata },
+        privateMetadata: { ...target.privateMetadata, ...metadata.privateMetadata },
+      } as typeof target;
+      updateTarget(updated);
+      return updated;
+    }),
+  } as unknown as Parameters<typeof changeRole>[0];
+  const notifications = {
+    prepare: (recipient: string, targetId: string, role: "admin" | "supervisor" | "unassigned") =>
+      preparePlatformNotification({
+        recipient,
+        kind: "platform",
+        roleName: role === "admin" ? "Administrator" : role === "supervisor" ? "Legacy Supervisor" : "No platform role",
+      }, targetId, role),
+    confirm: confirmPlatformNotification,
+  };
+  return changeRole(users, actor.id, target.id, "admin", "supervisor", undefined, notifications);
 }
 
 describe("access notification transaction ordering in private PostgreSQL", () => {
@@ -188,6 +276,87 @@ describe("access notification transaction ordering in private PostgreSQL", () =>
     expect(rows).toHaveLength(2);
     expect(rows).toContainEqual({ id: "older-notice", role_name: "Supervisor", state: "sent" });
     expect(rows).toContainEqual(expect.objectContaining({ role_name: "Manager", state: "pending" }));
+  });
+
+  it("lets a role change cancel a stale platform email without deadlocking", async () => {
+    const oldEventId = "platform-old-event";
+    await insertPlatformNotice(oldEventId, "supervisor");
+    let target = makeUser("member-1", "member@example.test", "supervisor", oldEventId);
+    vi.mocked(clerkClient.users.getUser).mockImplementation(async (id) =>
+      id === "member-1" ? target : makeUser(id, "admin@example.test", "admin"),
+    );
+
+    let releaseMutation!: () => void;
+    let markMutationStarted!: () => void;
+    const mutationStarted = new Promise<void>((resolve) => { markMutationStarted = resolve; });
+    const mutationGate = new Promise<void>((resolve) => { releaseMutation = resolve; });
+    const mutation = withRoleLock(async () => {
+      markMutationStarted();
+      await mutationGate;
+      return changeMemberRole(target, (updated) => { target = updated; });
+    });
+    await mutationStarted;
+
+    const delivery = deliverAccessNotifications();
+    try {
+      await waitForRoleLockWaiter();
+      releaseMutation();
+      await Promise.all([mutation, delivery]);
+    } finally {
+      releaseMutation();
+      await Promise.all([mutation.catch(() => undefined), delivery.catch(() => undefined)]);
+    }
+
+    expect(target.publicMetadata.role).toBe("admin");
+    expect(target.privateMetadata.wareiqRoleNotificationId).not.toBe(oldEventId);
+    expect(mocks.send).not.toHaveBeenCalled();
+    const { rows } = await pool.query<{ id: string; state: string; platform_role: string | null }>(`
+      SELECT id, state, platform_role FROM wareiq_access_notifications
+      WHERE kind = 'platform' ORDER BY created_at, id
+    `);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ id: oldEventId, state: "cancelled", platform_role: "supervisor" });
+    expect(rows[1]).toMatchObject({ state: "pending", platform_role: "admin" });
+  });
+
+  it("sends a platform email under the role lock before a waiting role change", async () => {
+    const eventId = "platform-current-event";
+    await insertPlatformNotice(eventId, "supervisor");
+    let target = makeUser("member-1", "member@example.test", "supervisor", eventId);
+    vi.mocked(clerkClient.users.getUser).mockImplementation(async (id) =>
+      id === "member-1" ? target : makeUser(id, "admin@example.test", "admin"),
+    );
+
+    let resolveSend!: (response: { ok: true; json: () => Promise<{ id: string }> }) => void;
+    let markSendStarted!: () => void;
+    const sendStarted = new Promise<void>((resolve) => { markSendStarted = resolve; });
+    mocks.send.mockImplementation(() => {
+      markSendStarted();
+      return new Promise((resolve) => { resolveSend = resolve; });
+    });
+
+    const delivery = deliverAccessNotifications();
+    await sendStarted;
+    const mutation = withRoleLock(() =>
+      changeMemberRole(target, (updated) => { target = updated; }),
+    );
+    try {
+      await waitForRoleLockWaiter();
+      resolveSend({ ok: true, json: async () => ({ id: "provider-id" }) });
+      await Promise.all([delivery, mutation]);
+    } finally {
+      resolveSend?.({ ok: true, json: async () => ({ id: "provider-id" }) });
+      await Promise.all([delivery.catch(() => undefined), mutation.catch(() => undefined)]);
+    }
+
+    expect(mocks.send).toHaveBeenCalledOnce();
+    const { rows } = await pool.query<{ id: string; state: string; platform_role: string | null }>(`
+      SELECT id, state, platform_role FROM wareiq_access_notifications
+      WHERE kind = 'platform' ORDER BY created_at, id
+    `);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ id: eventId, state: "sent", platform_role: "supervisor" });
+    expect(rows[1]).toMatchObject({ state: "pending", platform_role: "admin" });
   });
 
   it("limits repeated and overlapping cleanup while preserving pending and failed notices", async () => {
