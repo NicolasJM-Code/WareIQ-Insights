@@ -212,7 +212,7 @@ describe("durable delivery and duplicate protection", () => {
     });
     mocks.summaryQuery.mockResolvedValue({
       rows: [{
-        queued: "2", queued_over_threshold: "0", oldest_queued_age_seconds: "120",
+        queued: "2", queued_over_threshold: "1", oldest_queued_age_seconds: "420",
         retrying: "1", accepted: "4", failed: "3",
       }],
     });
@@ -221,8 +221,8 @@ describe("durable delivery and duplicate protection", () => {
 
     expect(response.status).toBe(200);
     expect(response.body.notificationSummary).toEqual({
-      status: "available", queued: 2, queuedOverThreshold: 0,
-      oldestQueuedAgeSeconds: 120, queueWarningAfterSeconds: 300,
+      status: "available", queued: 2, queuedOverThreshold: 1,
+      oldestQueuedAgeSeconds: 420, queueWarningAfterSeconds: 300,
       retrying: 1, accepted: 4, failed: 3,
     });
     expect(Object.keys(response.body.notificationSummary).sort()).toEqual([

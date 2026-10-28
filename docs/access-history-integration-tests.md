@@ -52,8 +52,15 @@ running the normal `accessHistoryPage` query, not a fixture-specific read.
 - SIGKILL after dispatch: fresh application processes return exactly the same
   pending record, including timestamps and account IDs. A later recovery
   operation can acquire the released lock without rewriting the earlier attempt.
+- Immediate PostgreSQL shutdown after dispatch: the same private cluster restarts
+  without reinitializing its data directory or schema. Its log must confirm
+  interrupted startup and automatic recovery. Two fresh application processes
+  read back the identical pending record, including actor/target IDs, previous
+  role and timestamps. A subsequent operation acquires the released role lock
+  without changing that earlier evidence.
 
 These are service/database integration checks, not HTTP authentication or browser
-tests. They verify fresh-process read-back, not a physical database-host crash or
-power-loss recovery. They do not infer a historical success from a matching
-current provider role.
+tests. They verify fresh-process read-back and PostgreSQL crash recovery after
+immediate server shutdown, not physical database-host failure or power-loss
+durability of the underlying storage. They do not infer a historical success
+from a matching current provider role.

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Pool } from "pg";
@@ -13,14 +13,19 @@ export class PrivateDatabase {
   readonly directory = mkdtempSync(join(tmpdir(), "wareiq-audit-pg-"));
   private readonly data = join(this.directory, "data");
   readonly connectionString = `postgresql://audit_test@/postgres?host=${encodeURIComponent(this.directory)}`;
-  readonly pool = new Pool({
-    connectionString: this.connectionString,
-    password: "",
-    max: 4,
-    connectionTimeoutMillis: 2_000,
-  });
+  private currentPool = this.createPool();
+  get pool() { return this.currentPool; }
   private started = false;
   private stopped = false;
+
+  private createPool() {
+    return new Pool({
+      connectionString: this.connectionString,
+      password: "",
+      max: 4,
+      connectionTimeoutMillis: 2_000,
+    });
+  }
 
   private run(command: string, args: string[]) {
     execFileSync(command, args, {
@@ -30,13 +35,17 @@ export class PrivateDatabase {
     });
   }
 
+  private startPostgres() {
+    this.run("pg_ctl", ["-D", this.data, "-l", join(this.directory, "postgres.log"),
+      "-o", `-k ${this.directory} -c listen_addresses=''`, "-w", "start"]);
+    this.started = true;
+  }
+
   async start() {
     try {
       this.run("initdb", ["-D", this.data, "-U", "audit_test",
         "--auth-local=trust", "--auth-host=reject", "--no-locale"]);
-      this.run("pg_ctl", ["-D", this.data, "-l", join(this.directory, "postgres.log"),
-        "-o", `-k ${this.directory} -c listen_addresses=''`, "-w", "start"]);
-      this.started = true;
+      this.startPostgres();
       // Render the actual history schema, not a second handwritten table.
       const config = getTableConfig(accessHistoryTable);
       const dialect = new PgDialect();
@@ -61,6 +70,23 @@ export class PrivateDatabase {
       await this.stop();
       throw error; // Missing binaries or startup failure must fail, never skip.
     }
+  }
+
+  async crashAndRestart() {
+    if (!this.started || this.stopped) throw new Error("Private PostgreSQL is not running");
+    // Retire only the test observer's idle connections. Application workers
+    // remain connected and experience the real server interruption.
+    await this.currentPool.end();
+    // Keep teardown usable even if stopping or restarting PostgreSQL fails.
+    this.currentPool = this.createPool();
+    const log = join(this.directory, "postgres.log");
+    const previousLogLength = readFileSync(log, "utf8").length;
+    // Immediate shutdown aborts active transactions without a clean checkpoint;
+    // restart the same data directory, never initdb or recreate the schema.
+    this.run("pg_ctl", ["-D", this.data, "-m", "immediate", "-w", "stop"]);
+    this.started = false;
+    this.startPostgres();
+    return readFileSync(log, "utf8").slice(previousLogLength);
   }
 
   async stop() {

@@ -185,3 +185,33 @@ it.each<Kind>(["api", "command"])("%s survives process interruption after provid
   await recovery.wait("success");
   expect((await history()).find((row) => row.id === entry.id)).toEqual(entry);
 });
+
+it.each<Kind>(["api", "command"])("%s retains identical pending evidence after PostgreSQL crashes and restarts", async (kind) => {
+  const worker = launch(kind);
+  await worker.wait("dispatch");
+  // Read through accessHistoryPage in a separate process before the crash:
+  // both the intent and previous-role evidence must already be committed
+  // independently of the in-flight role-lock transaction.
+  const entry = await pending(worker, kind);
+  expect(entry.id).toEqual(expect.any(String));
+  expect(Number.isFinite(Date.parse(entry.createdAt))).toBe(true);
+
+  const recoveryLog = await database.crashAndRestart();
+  expect(recoveryLog).toContain("database system was interrupted");
+  expect(recoveryLog).toContain("automatic recovery in progress");
+  await worker.exited;
+  expect(worker.child.exitCode).not.toBe(0);
+  expect(worker.messages.some((m) => m.event === "success")).toBe(false);
+
+  // These fork fresh application processes, not just new queries on an old
+  // pool. Full equality covers IDs, actor/target, previous role, timestamps,
+  // and the still-unconfirmed outcome after PostgreSQL's WAL recovery.
+  expect(await history()).toEqual([entry]);
+  expect(await history()).toEqual([entry]);
+  // Recovery must also release the aborted transaction's advisory lock.
+  const recovery = launch(kind === "api" ? "command" : "api");
+  await recovery.wait("dispatch");
+  recovery.release();
+  await recovery.wait("success");
+  expect((await history()).find((row) => row.id === entry.id)).toEqual(entry);
+});
