@@ -484,6 +484,15 @@ export type AccessDirectoryNotificationSummary = {
   failed: number;
 };
 
+export interface AccessDirectory {
+  clients: AccessClient[];
+  sites: AccessSite[];
+  roles: AccessRole[];
+  users: AccessUser[];
+  reports: AccessReport[];
+  notificationSummary: AccessDirectoryNotificationSummary;
+}
+
 export type AccessFailedNotificationKind = typeof AccessFailedNotificationKind[keyof typeof AccessFailedNotificationKind];
 
 
@@ -502,14 +511,13 @@ export interface AccessFailedNotification {
   attempts: number;
 }
 
-export interface AccessDirectory {
-  clients: AccessClient[];
-  sites: AccessSite[];
-  roles: AccessRole[];
-  users: AccessUser[];
-  reports: AccessReport[];
+export interface AccessFailedNotificationPage {
   failedNotifications: AccessFailedNotification[];
-  notificationSummary: AccessDirectoryNotificationSummary;
+  /**
+     * @maxLength 512
+     * @nullable
+     */
+  nextCursor: string | null;
 }
 
 export type AccessNotificationRetryResultStatus = typeof AccessNotificationRetryResultStatus[keyof typeof AccessNotificationRetryResultStatus];
@@ -744,5 +752,12 @@ export type ListAccessUsersParams = {
  * @minimum 0
  */
 offset?: number;
+};
+
+export type ListFailedAccessNotificationsParams = {
+/**
+ * @maxLength 512
+ */
+cursor?: string;
 };
 

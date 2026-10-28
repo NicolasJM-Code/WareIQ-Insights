@@ -31,6 +31,7 @@ import type {
   AccessClientLogoUpload,
   AccessClientLogoUploadInput,
   AccessDirectory,
+  AccessFailedNotificationPage,
   AccessFailureResponse,
   AccessHistoryPage,
   AccessLegacyReportImportInput,
@@ -53,6 +54,7 @@ import type {
   HealthStatus,
   ListAccessHistoryParams,
   ListAccessUsersParams,
+  ListFailedAccessNotificationsParams,
   PlatformAccessRoleUpdate,
   PlatformAccessUser,
   PlatformAccessUserPage,
@@ -865,6 +867,108 @@ export function useGetAccessAdmin<TData = Awaited<ReturnType<typeof getAccessAdm
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getGetAccessAdminQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListFailedAccessNotificationsUrl = (params?: ListFailedAccessNotificationsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/access/notifications/failed?${stringifiedParams}` : `/api/access/notifications/failed`
+}
+
+export const listFailedAccessNotifications = async (params?: ListFailedAccessNotificationsParams, options?: Parameters<typeof customFetch>[1]): Promise<AccessFailedNotificationPage> => {
+
+  return customFetch<AccessFailedNotificationPage>(getListFailedAccessNotificationsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListFailedAccessNotificationsQueryKey = (params?: ListFailedAccessNotificationsParams,) => {
+    return [
+    `/api/access/notifications/failed`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListFailedAccessNotificationsQueryOptions = <TData = Awaited<ReturnType<typeof listFailedAccessNotifications>>, TError = ErrorType<AccessFailureResponse>>(params?: ListFailedAccessNotificationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listFailedAccessNotifications>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListFailedAccessNotificationsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listFailedAccessNotifications>>> = ({ signal }) => listFailedAccessNotifications(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listFailedAccessNotifications>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListFailedAccessNotificationsQueryResult = NonNullable<Awaited<ReturnType<typeof listFailedAccessNotifications>>>
+export type ListFailedAccessNotificationsQueryError = ErrorType<AccessFailureResponse>
+
+
+export function useListFailedAccessNotifications<TData = Awaited<ReturnType<typeof listFailedAccessNotifications>>, TError = ErrorType<AccessFailureResponse>>(
+ params: undefined |  ListFailedAccessNotificationsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listFailedAccessNotifications>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listFailedAccessNotifications>>,
+          TError,
+          Awaited<ReturnType<typeof listFailedAccessNotifications>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListFailedAccessNotifications<TData = Awaited<ReturnType<typeof listFailedAccessNotifications>>, TError = ErrorType<AccessFailureResponse>>(
+ params?: ListFailedAccessNotificationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listFailedAccessNotifications>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listFailedAccessNotifications>>,
+          TError,
+          Awaited<ReturnType<typeof listFailedAccessNotifications>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListFailedAccessNotifications<TData = Awaited<ReturnType<typeof listFailedAccessNotifications>>, TError = ErrorType<AccessFailureResponse>>(
+ params?: ListFailedAccessNotificationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listFailedAccessNotifications>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+
+export function useListFailedAccessNotifications<TData = Awaited<ReturnType<typeof listFailedAccessNotifications>>, TError = ErrorType<AccessFailureResponse>>(
+ params?: ListFailedAccessNotificationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listFailedAccessNotifications>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListFailedAccessNotificationsQueryOptions(params,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

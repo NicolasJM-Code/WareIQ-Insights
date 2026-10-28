@@ -319,6 +319,7 @@ describe("membership-based routes mounted ahead of legacy guards", () => {
     expect(summary.body).toMatchObject({ status: "signed_out", platformAdmin: false, reportIds: [], sites: [] });
     expect(provider.getUser).not.toHaveBeenCalled();
     expect((await request(app).get("/api/access/admin")).status).toBe(401);
+    expect((await request(app).get("/api/access/notifications/failed")).status).toBe(401);
     expect((await request(app).get("/api/access/own-reports")).status).toBe(401);
   });
 
@@ -328,6 +329,7 @@ describe("membership-based routes mounted ahead of legacy guards", () => {
     expect(summary.status).toBe(200);
     expect(summary.body).toMatchObject({ status: "unassigned", platformAdmin: false, reportIds: [] });
     expect((await request(app).get("/api/access/admin")).status).toBe(403);
+    expect((await request(app).get("/api/access/notifications/failed")).status).toBe(403);
     expect((await mutation("post", "/api/access/notifications/3ed2c922-b996-44e4-8d9f-929d522026b2/retry")
       .send({})).status).toBe(403);
     expect((await request(app).get("/api/access/own-reports")).status).toBe(403);

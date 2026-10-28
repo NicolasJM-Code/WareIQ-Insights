@@ -180,7 +180,6 @@ export const GetAccessSessionResponse = zod.object({
 })
 
 
-
 export const getAccessAdminResponseNotificationSummaryQueuedMin = 0;
 
 export const getAccessAdminResponseNotificationSummaryQueuedOverThresholdMin = 0;
@@ -250,14 +249,6 @@ export const GetAccessAdminResponse = zod.object({
   "section": zod.string(),
   "sectionName": zod.string()
 })),
-  "failedNotifications": zod.array(zod.object({
-  "id": zod.string().uuid(),
-  "recipient": zod.string().email(),
-  "roleName": zod.string(),
-  "kind": zod.enum(['reporting', 'platform']),
-  "createdAt": zod.coerce.date(),
-  "attempts": zod.number().int().min(1)
-})),
   "notificationSummary": zod.object({
   "status": zod.enum(['available', 'unavailable']),
   "queued": zod.number().int().min(getAccessAdminResponseNotificationSummaryQueuedMin),
@@ -268,6 +259,32 @@ export const GetAccessAdminResponse = zod.object({
   "accepted": zod.number().int().min(getAccessAdminResponseNotificationSummaryAcceptedMin),
   "failed": zod.number().int().min(getAccessAdminResponseNotificationSummaryFailedMin)
 })
+})
+
+
+export const listFailedAccessNotificationsQueryCursorMax = 512;
+
+
+
+export const ListFailedAccessNotificationsQueryParams = zod.object({
+  "cursor": zod.coerce.string().max(listFailedAccessNotificationsQueryCursorMax).optional()
+})
+
+
+export const listFailedAccessNotificationsResponseNextCursorMax = 512;
+
+
+
+export const ListFailedAccessNotificationsResponse = zod.object({
+  "failedNotifications": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "recipient": zod.string().email(),
+  "roleName": zod.string(),
+  "kind": zod.enum(['reporting', 'platform']),
+  "createdAt": zod.coerce.date(),
+  "attempts": zod.number().int().min(1)
+})),
+  "nextCursor": zod.string().max(listFailedAccessNotificationsResponseNextCursorMax).nullable()
 })
 
 

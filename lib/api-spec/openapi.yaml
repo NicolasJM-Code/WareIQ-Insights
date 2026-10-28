@@ -167,6 +167,21 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AccessDirectory" }
+  /access/notifications/failed:
+    get:
+      operationId: listFailedAccessNotifications
+      parameters:
+        - in: query
+          name: cursor
+          required: false
+          schema: { type: string, maxLength: 512 }
+      responses:
+        default: { $ref: "#/components/responses/AccessFailure" }
+        "200":
+          description: A page of provider-confirmed failed access notices
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessFailedNotificationPage" }
   /access/notifications/{notificationId}/retry:
     post:
       operationId: retryAccessNotification
@@ -723,14 +738,13 @@ components:
         sectionName: { type: string }
     AccessDirectory:
       type: object
-      required: [clients, sites, roles, users, reports, notificationSummary, failedNotifications]
+      required: [clients, sites, roles, users, reports, notificationSummary]
       properties:
         clients: { type: array, items: { $ref: "#/components/schemas/AccessClient" } }
         sites: { type: array, items: { $ref: "#/components/schemas/AccessSite" } }
         roles: { type: array, items: { $ref: "#/components/schemas/AccessRole" } }
         users: { type: array, items: { $ref: "#/components/schemas/AccessUser" } }
         reports: { type: array, items: { $ref: "#/components/schemas/AccessReport" } }
-        failedNotifications: { type: array, items: { $ref: "#/components/schemas/AccessFailedNotification" } }
         notificationSummary:
           type: object
           required: [status, queued, queuedOverThreshold, oldestQueuedAgeSeconds, queueWarningAfterSeconds, retrying, accepted, failed]
@@ -753,6 +767,12 @@ components:
         kind: { type: string, enum: [reporting, platform] }
         createdAt: { type: string, format: date-time }
         attempts: { type: integer, minimum: 1 }
+    AccessFailedNotificationPage:
+      type: object
+      required: [failedNotifications, nextCursor]
+      properties:
+        failedNotifications: { type: array, items: { $ref: "#/components/schemas/AccessFailedNotification" } }
+        nextCursor: { type: ["string", "null"], maxLength: 512 }
     AccessNotificationRetryResult:
       type: object
       required: [status]

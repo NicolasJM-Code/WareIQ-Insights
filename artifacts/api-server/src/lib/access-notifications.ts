@@ -22,6 +22,9 @@ export type AccessNotificationSummary = {
   accepted: number;
   failed: number;
 };
+const FAILED_NOTIFICATION_PAGE_SIZE = 100;
+
+export class InvalidAccessNotificationCursorError extends Error {}
 
 export const ACCESS_NOTIFICATION_QUEUE_WARNING_AFTER_SECONDS = 5 * 60;
 
@@ -149,15 +152,49 @@ export function retryAllowed(firstAttemptAt: Date | null, now: Date): boolean {
   return !firstAttemptAt || now.getTime() - firstAttemptAt.getTime() < 23 * 60 * 60 * 1000;
 }
 
-export async function listConfirmedFailedAccessNotifications() {
+function decodeFailedNotificationCursor(cursor: string): { createdAt: string; id: string } {
+  try {
+    const json = Buffer.from(cursor, "base64url").toString("utf8");
+    if (Buffer.from(json, "utf8").toString("base64url") !== cursor) throw new Error("Invalid cursor");
+    const value: unknown = JSON.parse(json);
+    if (typeof value !== "object" || value === null) throw new Error("Invalid cursor");
+    const { createdAt, id } = value as Record<string, unknown>;
+    if (typeof createdAt !== "string" ||
+        !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(createdAt) ||
+        Number.isNaN(Date.parse(createdAt)) ||
+        typeof id !== "string" || id.length === 0 || id.length > 128) {
+      throw new Error("Invalid cursor");
+    }
+    return { createdAt, id };
+  } catch {
+    throw new InvalidAccessNotificationCursorError("Invalid failed-notice cursor");
+  }
+}
+
+function encodeFailedNotificationCursor(createdAt: string, id: string): string {
+  return Buffer.from(JSON.stringify({ createdAt, id }), "utf8").toString("base64url");
+}
+
+export async function listConfirmedFailedAccessNotifications(cursor?: string) {
+  const position = cursor ? decodeFailedNotificationCursor(cursor) : undefined;
   const { rows } = await pool.query<{
     id: string; recipient: string; role_name: string; kind: "reporting" | "platform";
-    created_at: Date; attempts: number;
-  }>(`SELECT id, recipient, role_name, kind, created_at, attempts
+    created_at: Date; attempts: number; cursor_created_at: string;
+  }>(`SELECT id, recipient, role_name, kind, created_at, attempts,
+        to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_created_at
       FROM wareiq_access_notifications
       WHERE state = 'confirmed_failed'
-      ORDER BY created_at DESC LIMIT 100`);
-  return rows;
+        AND ($1::timestamptz IS NULL OR (created_at, id) < ($1::timestamptz, $2::text))
+      ORDER BY created_at DESC, id DESC LIMIT $3`, [
+        position?.createdAt ?? null, position?.id ?? null, FAILED_NOTIFICATION_PAGE_SIZE + 1,
+      ]);
+  const hasMore = rows.length > FAILED_NOTIFICATION_PAGE_SIZE;
+  const page = rows.slice(0, FAILED_NOTIFICATION_PAGE_SIZE);
+  const last = page.at(-1);
+  return {
+    rows: page.map(({ cursor_created_at: _cursorCreatedAt, ...notice }) => notice),
+    nextCursor: hasMore && last ? encodeFailedNotificationCursor(last.cursor_created_at, last.id) : null,
+  };
 }
 
 export async function retryConfirmedFailedAccessNotification(id: string): Promise<boolean> {

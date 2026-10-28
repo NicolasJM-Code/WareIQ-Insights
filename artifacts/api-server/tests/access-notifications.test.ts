@@ -221,12 +221,13 @@ describe("durable delivery and duplicate protection", () => {
 
     expect(response.status).toBe(200);
     expect(response.body.notificationSummary).toEqual({
-      status: "available", queued: 2, queuedOverThreshold: 1, oldestQueuedAgeSeconds: 420,
-      queueWarningAfterSeconds: 300, retrying: 1, accepted: 4, failed: 3,
+      status: "available", queued: 2, queuedOverThreshold: 1,
+      oldestQueuedAgeSeconds: 420, queueWarningAfterSeconds: 300,
+      retrying: 1, accepted: 4, failed: 3,
     });
     expect(Object.keys(response.body.notificationSummary).sort()).toEqual([
-      "accepted", "failed", "oldestQueuedAgeSeconds", "queueWarningAfterSeconds", "queued",
-      "queuedOverThreshold", "retrying", "status",
+      "accepted", "failed", "oldestQueuedAgeSeconds", "queueWarningAfterSeconds",
+      "queued", "queuedOverThreshold", "retrying", "status",
     ]);
     expect(JSON.stringify(response.body.notificationSummary)).not.toMatch(
       /recipient|role.?name|notification.?id|provider|admin@example\.test/i,
@@ -335,17 +336,35 @@ describe("durable delivery and duplicate protection", () => {
       .toEqual([`wareiq-access/${job.id}`, `wareiq-access/${job.id}`]);
   });
   it("lists only confirmed provider rejections and retries atomically without changing notice identity", async () => {
-    const failedNotice = {
-      id: "event-one", recipient: member.email, role_name: "Supervisor",
-      kind: "reporting", created_at: new Date(), attempts: 2,
-    };
-    mocks.poolQuery.mockResolvedValueOnce({ rows: [failedNotice] });
-    await expect(listConfirmedFailedAccessNotifications()).resolves.toEqual([failedNotice]);
+    const failedRows = Array.from({ length: 101 }, (_, index) => ({
+      id: `event-${index}`, recipient: member.email, role_name: "Supervisor",
+      kind: "reporting" as const, created_at: new Date("2026-10-27T12:00:00Z"), attempts: 2,
+      cursor_created_at: "2026-10-27T12:00:00.000000Z",
+    }));
+    mocks.poolQuery.mockResolvedValueOnce({ rows: failedRows });
+    const firstPage = await listConfirmedFailedAccessNotifications();
+    expect(firstPage.rows).toHaveLength(100);
+    expect(firstPage.nextCursor).toBe(Buffer.from(JSON.stringify({
+      createdAt: "2026-10-27T12:00:00.000000Z", id: "event-99",
+    }), "utf8").toString("base64url"));
     expect(mocks.poolQuery.mock.calls[0]![0]).toContain("state = 'confirmed_failed'");
+    expect(mocks.poolQuery.mock.calls[0]![0]).toContain("ORDER BY created_at DESC, id DESC");
+    expect(mocks.poolQuery.mock.calls[0]![1]).toEqual([null, null, 101]);
+
+    // A new failure above the cursor cannot shift the next page: the boundary
+    // is exclusive and uses both timestamp precision and ID as its tie-breaker.
+    mocks.poolQuery.mockResolvedValueOnce({ rows: [] });
+    await expect(listConfirmedFailedAccessNotifications(firstPage.nextCursor!)).resolves.toEqual({
+      rows: [], nextCursor: null,
+    });
+    expect(mocks.poolQuery.mock.calls[1]![0]).toContain("(created_at, id) < ($1::timestamptz, $2::text)");
+    expect(mocks.poolQuery.mock.calls[1]![1]).toEqual([
+      "2026-10-27T12:00:00.000000Z", "event-99", 101,
+    ]);
 
     mocks.poolQuery.mockResolvedValueOnce({ rows: [{ id: "event-one" }] });
     await expect(retryConfirmedFailedAccessNotification("event-one")).resolves.toBe(true);
-    const [sql, params] = mocks.poolQuery.mock.calls[1]!;
+    const [sql, params] = mocks.poolQuery.mock.calls.at(-1)!;
     expect(sql).toContain("state = 'confirmed_failed'");
     expect(sql).toContain("first_attempt_at = NULL");
     expect(sql).toContain("RETURNING id");

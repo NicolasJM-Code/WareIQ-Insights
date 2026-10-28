@@ -1,10 +1,12 @@
 import { useState, type ReactNode } from 'react';
 import { notificationDescription } from '@/lib/access-notification';
 import { Link } from 'wouter';
-import { useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import {
   getGetAccessAdminQueryKey,
   getGetAccessSessionQueryKey,
+  getListFailedAccessNotificationsQueryKey,
+  listFailedAccessNotifications,
   useDeleteAccessEntry,
   useGetAccessAdmin,
   useGetAccessSession,
@@ -53,6 +55,16 @@ function Page({ children }: { children: ReactNode }) {
 function Directory({ dir }: { dir: AccessDirectory }) {
   const qc = useQueryClient();
   const { toast } = useToast();
+  const failedNotices = useInfiniteQuery({
+    queryKey: getListFailedAccessNotificationsQueryKey(),
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) => listFailedAccessNotifications(
+      pageParam ? { cursor: pageParam } : undefined,
+    ),
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    refetchInterval: 30_000,
+  });
+  const notices = failedNotices.data?.pages.flatMap((page) => page.failedNotifications) ?? [];
   const saveClient = useSaveAccessClient();
   const requestClientLogoUpload = useRequestAccessClientLogoUpload();
   const saveClientLogo = useSaveAccessClientLogo();
@@ -74,6 +86,7 @@ function Directory({ dir }: { dir: AccessDirectory }) {
     await Promise.all([
       qc.invalidateQueries({ queryKey: getGetAccessAdminQueryKey() }),
       qc.invalidateQueries({ queryKey: getGetAccessSessionQueryKey() }),
+      qc.invalidateQueries({ queryKey: getListFailedAccessNotificationsQueryKey() }),
     ]);
   };
   const clientName = (id: string) => dir.clients.find((c) => c.id === id)?.name ?? 'Unknown client';
@@ -218,11 +231,18 @@ function Directory({ dir }: { dir: AccessDirectory }) {
         <p className="mt-1 text-sm text-muted-foreground">
           Retrying sends the original notice again without repeating the access change. Notices with an unclear delivery outcome are not eligible.
         </p>
-        {dir.failedNotifications.length === 0 ? (
+        {failedNotices.isLoading ? (
+          <p className="mt-3 text-sm text-muted-foreground" role="status">Loading failed emails…</p>
+        ) : failedNotices.isError && notices.length === 0 ? (
+          <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
+            <p role="status" className="text-muted-foreground">Failed email history is unavailable. Access settings are not affected.</p>
+            <Button type="button" size="sm" variant="outline" onClick={() => void failedNotices.refetch()}>Try again</Button>
+          </div>
+        ) : notices.length === 0 ? (
           <p className="mt-3 text-sm text-muted-foreground" data-testid="text-no-failed-notifications">No confirmed failed emails.</p>
         ) : (
           <ul className="mt-3 divide-y" data-testid="list-failed-notifications">
-            {dir.failedNotifications.map((notice) => (
+            {notices.map((notice) => (
               <li key={notice.id} data-testid={`row-failed-notification-${notice.id}`} className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0 text-sm">
                   <p className="font-medium">{notice.recipient}</p>
@@ -243,6 +263,22 @@ function Directory({ dir }: { dir: AccessDirectory }) {
               </li>
             ))}
           </ul>
+        )}
+        {failedNotices.isError && notices.length > 0 && (
+          <p role="status" className="mt-3 text-sm text-muted-foreground">More failed email history could not be loaded. Try again later.</p>
+        )}
+        {failedNotices.hasNextPage && (
+          <div className="mt-3">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={failedNotices.isFetchingNextPage}
+              onClick={() => void failedNotices.fetchNextPage()}
+              data-testid="button-load-older-failed-notifications"
+            >
+              {failedNotices.isFetchingNextPage ? 'Loading older emails…' : 'Load older failed emails'}
+            </Button>
+          </div>
         )}
       </section>
 

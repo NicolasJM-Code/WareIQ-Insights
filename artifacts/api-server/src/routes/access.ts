@@ -13,6 +13,7 @@ import {
   RequestAccessClientLogoUploadBody, RequestAccessClientLogoUploadResponse,
   SaveAccessClientLogoBody, SaveAccessClientLogoResponse,
   RetryAccessNotificationParams, RetryAccessNotificationResponse,
+  ListFailedAccessNotificationsQueryParams, ListFailedAccessNotificationsResponse,
 } from "@workspace/api-zod";
 import { getAuth } from "@clerk/express";
 import { AccessError, accessFor, requireAccessAdmin, requireMemberAccess } from "../lib/reporting-access";
@@ -26,7 +27,7 @@ import { GetAuthSessionResponse, GetSettingsAccessResponse } from "@workspace/ap
 import { requireIdentity, requireAdministrator } from "../middlewares/access";
 import {
   ACCESS_NOTIFICATION_QUEUE_WARNING_AFTER_SECONDS, getAccessNotificationSummary,
-  listConfirmedFailedAccessNotifications, queueAccessNotifications,
+  listConfirmedFailedAccessNotifications, InvalidAccessNotificationCursorError, queueAccessNotifications,
   retryConfirmedFailedAccessNotification,
 } from "../lib/access-notifications";
 import { reportingChangeNotices } from "../lib/reporting-notification-change";
@@ -76,17 +77,12 @@ router.get("/access/me", handler(async (req, res) => {
 }));
 router.get("/access/admin", handler(async (req, res) => {
   await requireAccessAdmin(req);
-  const [clients, sites, roles, users, notifications] = await Promise.all([
+  const [clients, sites, roles, users] = await Promise.all([
     db.select().from(clientsTable).orderBy(clientsTable.name),
     db.select().from(sitesTable).orderBy(sitesTable.name),
     db.select().from(rolesTable).orderBy(rolesTable.name),
     db.select().from(membersTable).orderBy(membersTable.name),
-    listConfirmedFailedAccessNotifications(),
   ]);
-  const failedNotifications = notifications.map((notice) => ({
-    id: notice.id, recipient: notice.recipient, roleName: notice.role_name,
-    kind: notice.kind, createdAt: notice.created_at, attempts: notice.attempts,
-  }));
   let notificationSummary: {
     status: "available" | "unavailable";
     queued: number;
@@ -118,7 +114,27 @@ router.get("/access/admin", handler(async (req, res) => {
       const ownReportSections = ownReportSectionsForRole(role);
       return { ...role, ownReportSections, canCreateOwnReports: ownReportSections.length > 0 };
     }),
-    users, reports: accessReports, notificationSummary, failedNotifications,
+    users, reports: accessReports, notificationSummary,
+  }));
+}));
+router.get("/access/notifications/failed", handler(async (req, res) => {
+  await requireAccessAdmin(req);
+  const params = parsed(ListFailedAccessNotificationsQueryParams, req.query);
+  let page: Awaited<ReturnType<typeof listConfirmedFailedAccessNotifications>>;
+  try {
+    page = await listConfirmedFailedAccessNotifications(params.cursor);
+  } catch (error) {
+    if (error instanceof InvalidAccessNotificationCursorError) {
+      throw new AccessError(400, "The failed-notice page is no longer valid. Reload the list.");
+    }
+    throw error;
+  }
+  res.json(ListFailedAccessNotificationsResponse.parse({
+    failedNotifications: page.rows.map((notice) => ({
+      id: notice.id, recipient: notice.recipient, roleName: notice.role_name,
+      kind: notice.kind, createdAt: notice.created_at, attempts: notice.attempts,
+    })),
+    nextCursor: page.nextCursor,
   }));
 }));
 router.post("/access/notifications/:notificationId/retry", handler(async (req, res) => {
