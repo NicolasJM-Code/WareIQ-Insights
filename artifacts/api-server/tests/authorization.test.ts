@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
+import type { AccessSession } from "../../../lib/api-client-react/src/generated/api.schemas";
+import { GetAccessSessionResponse } from "@workspace/api-zod";
+
+const membership = vi.hoisted(() => ({
+  rows: new Map<unknown, unknown[]>(),
+}));
 
 // Identity is assigned by the test, NEVER derived from request headers.
 const provider = vi.hoisted(() => ({
@@ -25,15 +31,15 @@ vi.mock("pino-http", () => ({
 }));
 vi.mock("../src/lib/logger", () => ({ logger: {} }));
 // Verified identities may look up membership, but no live pool is constructed.
-// Empty membership reads are allowed; all other database operations throw.
+// Only explicitly configured membership reads are allowed; no live pool exists.
 vi.mock("@workspace/db", async () => {
   const schema = await import("@workspace/db/schema");
   return {
     ...schema,
     db: { select: vi.fn(() => ({
       from: (table: unknown) => {
-        if (table !== schema.membersTable) throw new Error("Unexpected database access in isolated authorization test");
-        return { where: async () => [] }; // No reporting memberships in this isolated role-guard test.
+        if (!membership.rows.has(table)) throw new Error("Unexpected database access in isolated authorization test");
+        return { where: async () => membership.rows.get(table)! };
       },
     })) },
   };
@@ -42,6 +48,7 @@ vi.mock("@workspace/db", async () => {
 import app from "../src/app";
 import router from "../src/routes";
 import { appRole, requireAdministrator, requireReporter } from "../src/middlewares/access";
+import { clientsTable, membersTable, rolesTable, sitesTable } from "@workspace/db";
 
 it("keeps only the signed provider POST independent of cookie and origin guards", async () => {
   // Unconfigured capture is explicit, not an anonymous mutation or a CSRF
@@ -83,6 +90,8 @@ function mutation(method: "post" | "put" | "patch" | "delete", path = "/api/sett
 
 beforeEach(() => {
   vi.clearAllMocks();
+  membership.rows.clear();
+  membership.rows.set(membersTable, []);
   provider.userId = null;
   provider.claims = {};
   provider.getUser.mockReset();
@@ -313,6 +322,61 @@ describe("application same-origin mutation enforcement", () => {
 });
 
 describe("membership-based routes mounted ahead of legacy guards", () => {
+  it.each([
+    {
+      name: "branded",
+      details: {
+        companyNumber: "ACME-123", addressLine1: "42 Test Street", addressLine2: "Unit 7",
+        city: "Example City", region: "Example Region", postalCode: "AB12 3CD", country: "GB",
+        logoPath: "/objects/client-logos/client_contract/logo.png",
+      },
+    },
+    {
+      name: "without branding",
+      details: {
+        companyNumber: null, addressLine1: null, addressLine2: null,
+        city: null, region: null, postalCode: null, country: null, logoPath: null,
+      },
+    },
+  ])("returns the complete AccessSession contract for an authorized client $name", async ({ details }) => {
+    signIn("supervisor");
+    const clientId = "client_contract";
+    const site = {
+      id: "site_contract", clientId, sourceId: "warehouse_contract", name: "Test warehouse",
+      addressLine1: "1 Warehouse Road", addressLine2: "", city: "Warehouse City",
+      region: "", postalCode: "12345", country: "GB", contactPhone: "", active: true,
+    };
+    membership.rows.set(membersTable, [{
+      id: "member_contract", clientId, roleId: "role_contract",
+      email: "isolated@example.test", active: true, siteIds: [site.id],
+    }]);
+    membership.rows.set(clientsTable, [{
+      id: clientId, name: "Contract Client", active: true, ...details,
+    }]);
+    membership.rows.set(rolesTable, [{
+      id: "role_contract", clientId, reportIds: [], canCreateOwnReports: false,
+    }]);
+    membership.rows.set(sitesTable, [site]);
+
+    // Required nullable properties must survive JSON serialization, not merely
+    // exist on an internal object. Keep this full expectation typed against the
+    // generated React contract from lib/api-spec/openapi.yaml.
+    const expected = {
+      status: "active", platformAdmin: false, canCreateOwnReports: false, ownReportSections: [],
+      clientId, clientName: "Contract Client",
+      clientCompanyNumber: details.companyNumber,
+      clientAddressLine1: details.addressLine1, clientAddressLine2: details.addressLine2,
+      clientCity: details.city, clientRegion: details.region, clientPostalCode: details.postalCode,
+      clientCountry: details.country,
+      clientLogoUrl: details.logoPath ? `/api/access/clients/${clientId}/logo` : null,
+      reportIds: [], sites: [site],
+    } satisfies AccessSession;
+    const response = await request(app).get("/api/access/me");
+    expect(response.status).toBe(200);
+    expect(GetAccessSessionResponse.safeParse(response.body).success).toBe(true);
+    expect(response.body).toEqual(expected);
+  });
+
   it("only exposes a signed-out summary from the intentionally public membership endpoint", async () => {
     const summary = await request(app).get("/api/access/me");
     expect(summary.status).toBe(200);
