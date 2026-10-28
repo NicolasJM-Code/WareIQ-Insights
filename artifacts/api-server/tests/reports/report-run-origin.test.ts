@@ -304,6 +304,26 @@ describe("full-app authorization for report runs", () => {
     expect(poolConstructor).not.toHaveBeenCalled();
   });
 
+  it("denies a standard report absent from the role grants before opening a WMS connection", async () => {
+    vi.stubEnv("WMS_MYSQL_REPORT_MAPPINGS", JSON.stringify({
+      "inbound-2": {
+        view: "v_receipts", clientColumn: "client_code", siteColumn: "warehouse_code",
+        columns: { id: "receipt_id" },
+      },
+    }));
+
+    const response = await runRequest({
+      reportId: "inbound-2",
+      origin: "https://wareiq.test",
+      fetchSite: "same-origin",
+    });
+
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({ error: "Your role does not grant access to this report." });
+    expect(executeMysqlReport).not.toHaveBeenCalled();
+    expect(poolConstructor).not.toHaveBeenCalled();
+  });
+
   it("uses owner/client-bound personal report definitions for MySQL field selection", async () => {
     vi.stubEnv("WMS_MYSQL_REPORT_MAPPINGS", JSON.stringify({
       "own:inbound:receipts": {
