@@ -68,6 +68,7 @@ type BrowserClerk = {
   session: { id: string; getToken: () => Promise<string | null> } | null;
   client: { signIn: { create: (p: { strategy: "ticket"; ticket: string }) => Promise<{ createdSessionId: string | null }> } };
   setActive: (p: { session: string }) => Promise<void>;
+  signOut: (callback: () => void, options: { sessionId: string }) => Promise<void>;
 };
 declare global { interface Window { Clerk: BrowserClerk } }
 declare global { interface Window { Clerk: BrowserClerk } }
@@ -510,10 +511,111 @@ async function revokedRenewal(userId: string) {
   }
 }
 
+async function lateAccessAfterSignOut(userId: string) {
+  phase = "late access browser-authenticated positive control";
+  const { context, page, sessionId } = await signIn(userId);
+  try {
+    await cookieControl(page);
+    let navigations = 0;
+    page.on("framenavigated", frame => { if (frame === page.mainFrame()) navigations++; });
+    const delivery = await page.evaluateHandle(() => {
+      const originalFetch = window.fetch;
+      let release!: () => void;
+      const pending = new Promise<void>(done => { release = done; });
+      let received = 0;
+      let returned = 0;
+      let signedOutResponses = 0;
+      let observing = false;
+      let unlocked = false;
+      const check = () => {
+        if (!observing) return;
+        const permissions = document.querySelector('[data-testid="permissions"]');
+        unlocked ||= permissions?.textContent?.trim() !== "locked"
+          || permissions?.getAttribute("data-can-administer") !== "false"
+          || permissions?.getAttribute("data-can-report") !== "false"
+          || !!document.querySelector('[data-testid="report-gate"], [data-testid="admin-gate"]');
+      };
+      const observer = new MutationObserver(check);
+      observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true });
+      window.fetch = async (...args: Parameters<typeof fetch>) => {
+        // Forward the original browser request, preserving its SDK cookies and
+        // AbortSignal. Hold only delivery, never invent or replay a summary.
+        const response = await originalFetch.apply(window, args);
+        if (new URL(response.url).pathname === "/api/access/me" && response.status === 200) {
+          const access = await response.clone().json();
+          if (access.status === "active" && access.platformAdmin === true && access.reportIds.length > 0) {
+            received++;
+            await pending;
+            returned++;
+          } else if (access.status === "signed_out" && access.platformAdmin === false && access.reportIds.length === 0) {
+            signedOutResponses++;
+          }
+        }
+        return response;
+      };
+      return {
+        state: () => { check(); return { received, returned, signedOutResponses, unlocked }; },
+        observeLock: () => { observing = true; check(); return !unlocked; },
+        release,
+        dispose: () => { observer.disconnect(); window.fetch = originalFetch; release(); },
+      };
+    });
+    try {
+      phase = "authentic successful access poll held before hook delivery";
+      // Only the production hook polls here: no manually triggered access
+      // request can stand in for an in-flight authorization query.
+      await expect.poll(() => delivery.evaluate(state => state.state().received), { timeout: 35_000 }).toBeGreaterThan(0);
+      expect(await delivery.evaluate(state => state.state().returned)).toBe(0);
+      expect(await page.evaluate(() => window.Clerk.session?.id)).toBe(sessionId);
+
+      phase = "SDK sign-out while original authorization is pending";
+      // A real SDK sign-out, with its supported completion callback to avoid
+      // unloading the document that owns the pending query. No cache/hook edits.
+      await page.evaluate(id => window.Clerk.signOut(() => {}, { sessionId: id }), sessionId);
+      await page.waitForFunction(() => window.Clerk.session === null
+        && document.querySelector('[data-testid="permissions"]')?.textContent === "locked");
+      expect(await delivery.evaluate(state => state.observeLock())).toBe(true);
+      expect(await delivery.evaluate(state => state.state().returned)).toBe(0);
+      expect(await page.getByTestId("report-gate").count()).toBe(0);
+      expect(await page.getByTestId("admin-gate").count()).toBe(0);
+      expect((await clerkClient.sessions.getSession(sessionId)).status).toBe("ended");
+
+      phase = "original successful access response delivered after sign-out";
+      const signedOutBefore = await delivery.evaluate(state => state.state().signedOutResponses);
+      await delivery.evaluate(state => state.release());
+      await expect.poll(() => delivery.evaluate(state => {
+        const result = state.state();
+        return result.received > 0 && result.returned === result.received;
+      })).toBe(true);
+      // Continue observing through another genuine signed-out access response,
+      // then two paint opportunities. A final immediate snapshot is not enough.
+      await expect.poll(() => delivery.evaluate(state => state.state().signedOutResponses),
+        { timeout: 35_000 }).toBeGreaterThan(signedOutBefore);
+      await page.evaluate(() => new Promise<void>(done => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
+      expect(await delivery.evaluate(state => state.state().unlocked)).toBe(false);
+      expect(await page.evaluate(() => window.Clerk.session === null)).toBe(true);
+      expect(await page.getByTestId("permissions").textContent()).toBe("locked");
+      expect(await page.getByTestId("report-gate").count()).toBe(0);
+      expect(await page.getByTestId("admin-gate").count()).toBe(0);
+      expect(navigations).toBe(0);
+      expect(databasePoolConstructor).not.toHaveBeenCalled();
+      console.info("Original successful authorization delivered after SDK sign-out could not restore reporting or administrator permissions.");
+    } finally {
+      try { await delivery.evaluate(state => state.dispose()); }
+      finally { await delivery.dispose(); }
+    }
+  } finally {
+    await context.close();
+  }
+}
+
+const lateSignOutRun = process.env.CLERK_BROWSER_SCENARIO === "late-access-signout";
 const repeatRun = process.env.CLERK_BROWSER_SCENARIO === "renewal-repeat";
 const renewalRun = process.env.CLERK_BROWSER_SCENARIO === "renewal";
 const multiTabRun = process.env.CLERK_BROWSER_SCENARIO === "renewal-multitab";
-it(multiTabRun
+it(lateSignOutRun
+  ? "keeps signed-out reporting locked when an earlier successful authorization response arrives late"
+  : multiTabRun
   ? "requires independent fresh server authorization in two open tabs after an SDK outage"
   : repeatRun
   ? "recovers reporting through two SDK networking outages in the same document and session"
@@ -551,6 +653,7 @@ it(multiTabRun
     origin = `http://127.0.0.1:${address.port}`;
     phase = "disposable fixture creation";
     const userId = await createFixture();
+    if (lateSignOutRun) { await lateAccessAfterSignOut(userId); return; }
     if (multiTabRun) { await multiTabRenewal(userId); return; }
     if (repeatRun) { await renewal(userId, 2); return; }
     if (renewalRun) {

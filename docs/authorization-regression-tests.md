@@ -284,6 +284,47 @@ fail closed with a sanitized 503. Health checks remain public. Approvals are not
 cached: this adds a Clerk API read per authenticated request and deliberately
 trades provider availability/latency for prompt revocation.
 
+## Opt-in late authorization response after sign-out
+
+```sh
+CLERK_BROWSER_TESTS=isolated-development-only \
+CLERK_BROWSER_EXECUTABLE="$(command -v chromium)" \
+pnpm test:auth:browser:late-access-signout
+```
+
+This separate live command selects `vitest.browser-late-access-signout.config.ts`
+(`CLERK_BROWSER_SCENARIO=late-access-signout`). It is not included in the offline
+suite, other browser commands, authorization workflow, or builds. It requires
+the same matching Development keys, operator-verified key-pair attestation,
+Chromium and provider networking described above. Never enable it globally.
+
+The disposable account first proves reporting and administrator permissions
+through the real SDK cookie handshake and a reload. The runner then wraps the
+browser's original `fetch`, waits for the production access hook's next
+successful `/api/access/me` poll, and holds that original response before the
+hook receives it. It neither substitutes a request through Playwright nor
+manufactures an access summary, cookie or bearer token.
+
+While delivery is pending, the real Clerk SDK signs out that exact session.
+Its supported completion callback keeps the same document open instead of
+redirecting, so a reload cannot discard the race. The runner requires a null
+SDK session, the provider's ended-session state, locked permission flags and
+absent reporting/administrator markers before releasing the response.
+
+The original successful response is then returned to its original caller.
+A continuous DOM observer checks that neither permission flag nor protected
+marker returns through delivery, another genuine signed-out access response
+and subsequent rendering. No cache reset, query-policy override, manual token
+refresh or replacement hook is used by the scenario. Production `AuthProvider`,
+cache clearing, access hooks and permission components stay in control.
+
+Only harmless markers and the isolated catalog are served, never report data
+or real application/WMS databases. The existing PostgreSQL constructor trap,
+database-environment isolation, sanitized failures and ownership-checked fixture
+cleanup remain in place. If interrupted, retain the private cleanup journal and
+use the existing browser cleanup recovery command against the same Development
+instance before retrying.
+
 ## Opt-in browser session renewal check
 
 ```sh

@@ -321,6 +321,24 @@ it("selects the longer two-tab outage only through its dedicated live command", 
   expect(offline).not.toContain("multitab");
 });
 
+it("selects the late sign-out response race only through its dedicated live command", () => {
+  const { scripts } = JSON.parse(readFileSync("package.json", "utf8"));
+  expect(scripts["test:auth:browser:late-access-signout"])
+    .toBe("vitest run --config vitest.browser-late-access-signout.config.ts");
+  for (const command of ["test:auth", "test:auth:typecheck", "test:auth:browser",
+    "test:auth:browser:renewal", "test:auth:browser:renewal:repeat",
+    "test:auth:browser:renewal:multitab", "test:auth:hosted", "build"]) {
+    expect(scripts[command]).not.toContain("late-access-signout");
+  }
+  const config = readFileSync("vitest.browser-late-access-signout.config.ts", "utf8");
+  expect(config).toContain('import browser from "./vitest.browser.config"');
+  expect(config).toContain("...browser.test");
+  expect(config).toContain('env: { CLERK_BROWSER_SCENARIO: "late-access-signout" }');
+  const offline = readFileSync("vitest.config.ts", "utf8");
+  expect(offline).not.toContain("browser-tests");
+  expect(offline).not.toContain("late-access-signout");
+});
+
 it.each([
   ["ticket", "artifacts/api-server/browser-tests/clerk.test.ts"],
   ["hosted", "artifacts/api-server/browser-tests/hosted.test.ts"],
