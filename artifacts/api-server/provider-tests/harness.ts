@@ -248,6 +248,22 @@ async function persistManifest(path: string, manifest: Manifest, journal: typeof
   }
 }
 
+async function assertRecoveryJournalUnchanged(
+  path: string,
+  expectedContents: string,
+  journal: typeof journalIO,
+) {
+  let currentContents: string;
+  try {
+    currentContents = await journal.readFile(path, "utf8");
+  } catch {
+    throw new Error("Recovery refused: journal could not be re-read after exact-email lookup. No account was changed; retain the journal and investigate.");
+  }
+  if (currentContents !== expectedContents) {
+    throw new Error("Recovery refused: journal changed during exact-email lookup. Retain the current journal; no account was changed.");
+  }
+}
+
 // Shared by the opt-in live command and the offline fault-injection suite.
 // A single finally covers journal persistence, app setup and assertion failures.
 export async function runProviderCheck(
@@ -340,7 +356,11 @@ export async function runProviderCheck(
         throw new Error(`Could not acquire the recovery lock at ${recoveryLockPath}; no provider calls made and the journal at ${path} was retained.`);
       }
       let record: RecoveryRecord;
-      try { record = parseRecoveryRecord(await journal.readFile(path, "utf8")); }
+      let recordContents: string;
+      try {
+        recordContents = await journal.readFile(path, "utf8");
+        record = parseRecoveryRecord(recordContents);
+      }
       catch {
         throw new Error("Recovery journal is unreadable or invalid; no provider calls made. Retain the journal and verify the original generated fixture in the same Development instance; do not retarget it.");
       }
@@ -356,6 +376,7 @@ export async function runProviderCheck(
         if (!result || !Array.isArray(result.data) || !Number.isInteger(result.totalCount)) {
           throw new Error("Recovery refused: provider returned an invalid exact-email result. Retain the intent journal; no account was changed.");
         }
+        await assertRecoveryJournalUnchanged(path, recordContents, journal);
         if (result.totalCount === 0 && result.data.length === 0) {
           try { await journal.unlink(path); }
           catch {

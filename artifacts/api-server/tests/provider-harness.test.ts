@@ -774,6 +774,43 @@ describe("offline provider harness safety", () => {
     expect(await readdir(directory)).toEqual([path.split("/").at(-1)]);
   });
 
+  it.each(["matching account", "no matching account"])(
+    "retains changed intent evidence after the exact-email lookup finds %s",
+    async (lookupOutcome) => {
+      const path = join(directory, "changed-intent-during-lookup.json");
+      const originalIntent = { state: "intent", runId: saved.runId, email: saved.email };
+      const changedIntent = {
+        state: "intent",
+        runId: "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb",
+        email: "wareiq-provider-bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb@example.com",
+      };
+      const changedContents = JSON.stringify(changedIntent);
+      await writeFile(path, JSON.stringify(originalIntent), { mode: 0o600 });
+      users.getUserList.mockImplementationOnce(async () => {
+        await writeFile(path, changedContents, { mode: 0o600 });
+        return lookupOutcome === "matching account"
+          ? { data: [user], totalCount: 1 }
+          : { data: [], totalCount: 0 };
+      });
+
+      const message = await failure(runProviderCheck(
+        { ...safeEnv, CLERK_PROVIDER_CLEANUP_MANIFEST: path }, dependencies(), check,
+      ));
+
+      expect(message).toContain("journal changed during exact-email lookup");
+      expect(message).not.toContain("Recovery complete");
+      expect(await readFile(path, "utf8")).toBe(changedContents);
+      expect(users.getUserList).toHaveBeenCalledExactlyOnceWith({
+        emailAddress: [originalIntent.email],
+        limit: 2,
+      });
+      expect(users.createUser).not.toHaveBeenCalled();
+      expect(users.getUser).not.toHaveBeenCalled();
+      expect(users.deleteUser).not.toHaveBeenCalled();
+      expect(check).not.toHaveBeenCalled();
+    },
+  );
+
   it("prints distinct, safe recovery results through the default command output", async () => {
     const output = vi.spyOn(console, "info").mockImplementation(() => {});
     const defaultDependencies = { users, journalDirectory: directory };
