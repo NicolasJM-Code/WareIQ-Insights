@@ -96,6 +96,7 @@ const site = {
 };
 
 let memberFixture = member;
+let clientFixture = client;
 const privateReports = [
   {
     id: "another-owner-report",
@@ -137,6 +138,7 @@ beforeEach(() => {
   provider.userId = "reporter-a";
   provider.sessionId = "session-a";
   memberFixture = member;
+  clientFixture = client;
   siteFixtures = [site];
   provider.getUser.mockImplementation(async () => ({
     banned: false,
@@ -155,9 +157,9 @@ beforeEach(() => {
       where: async (condition: Parameters<PgDialect["sqlToQuery"]>[0]) => {
         if (table === membersTable) {
           const email = emailByUserId[provider.userId] ?? member.email;
-          return [member, otherMember].filter((candidate) => candidate.email === email);
+          return [memberFixture, otherMember].filter((candidate) => candidate.email === email);
         }
-        if (table === clientsTable) return [client];
+        if (table === clientsTable) return [clientFixture];
         if (table === rolesTable) return [role];
         if (table === sitesTable) return siteFixtures.filter((site) => site.active);
         if (table === ownReportsTable) {
@@ -209,6 +211,44 @@ describe("full-app authorization for report runs", () => {
     expect(provider.getSession).toHaveBeenCalledOnce();
     expect(provider.getUser).toHaveBeenCalledOnce();
     expect(database.select).toHaveBeenCalledTimes(4);
+    expect(poolConstructor).not.toHaveBeenCalled();
+  });
+
+  it("denies an inactive member before opening a WMS connection", async () => {
+    memberFixture = { ...member, active: false };
+
+    const response = await runRequest({
+      origin: "https://wareiq.test",
+      fetchSite: "same-origin",
+    });
+
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({
+      error: "Your administrator must approve an active client and role before you can use reports.",
+    });
+    expect(provider.getSession).toHaveBeenCalledOnce();
+    expect(provider.getUser).toHaveBeenCalledOnce();
+    expect(database.select).toHaveBeenCalled();
+    expect(executeMysqlReport).not.toHaveBeenCalled();
+    expect(poolConstructor).not.toHaveBeenCalled();
+  });
+
+  it("denies a member of an inactive client before opening a WMS connection", async () => {
+    clientFixture = { ...client, active: false };
+
+    const response = await runRequest({
+      origin: "https://wareiq.test",
+      fetchSite: "same-origin",
+    });
+
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({
+      error: "Your administrator must approve an active client and role before you can use reports.",
+    });
+    expect(provider.getSession).toHaveBeenCalledOnce();
+    expect(provider.getUser).toHaveBeenCalledOnce();
+    expect(database.select).toHaveBeenCalled();
+    expect(executeMysqlReport).not.toHaveBeenCalled();
     expect(poolConstructor).not.toHaveBeenCalled();
   });
 
