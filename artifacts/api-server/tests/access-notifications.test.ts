@@ -366,6 +366,19 @@ describe("durable delivery and duplicate protection", () => {
     expect(mocks.select).not.toHaveBeenCalled();
     expect(mocks.summaryQuery).not.toHaveBeenCalled();
   });
+  it("prevents browsers and intermediaries from caching failed-notice history", async () => {
+    mocks.authUserId = "admin-user";
+    mocks.getUser.mockResolvedValue({
+      publicMetadata: { role: "admin" }, banned: false, locked: false,
+      primaryEmailAddressId: "primary",
+      emailAddresses: [{ id: "primary", emailAddress: "admin@example.test", verification: { status: "verified" } }],
+    });
+
+    const response = await request(accessApp).get("/api/access/notifications/failed");
+
+    expect(response.status).toBe(200);
+    expect(response.headers["cache-control"]).toBe("no-store");
+  });
   it("returns only aggregate delivery fields to a verified administrator", async () => {
     mocks.authUserId = "admin-user";
     mocks.getUser.mockResolvedValue({
