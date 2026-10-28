@@ -211,6 +211,42 @@ describe("active reporting membership guard", () => {
   });
 });
 
+describe("direct report links", () => {
+  const grantedSection = SECTIONS[0];
+  const grantedReport = grantedSection.defaults[0];
+
+  it("allows a direct link to an explicitly granted report", async () => {
+    clerk.path = `${grantedSection.base}/reports/${grantedReport.id}`;
+    clerk.getSession.mockResolvedValue(access(false));
+    mount();
+    expectLocked();
+    expect(await screen.findByText("Protected reporting content (supervisor)")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Report access not granted" })).not.toBeInTheDocument();
+  });
+
+  it("denies a direct link to an ungranted report even with another grant in its section", async () => {
+    const ungrantedReport = grantedSection.defaults[1];
+    clerk.path = `${grantedSection.base}/reports/${ungrantedReport.id}`;
+    clerk.getSession.mockResolvedValue(access(false));
+    mount();
+    expectLocked();
+    expect(await screen.findByRole("heading", { name: "Report access not granted" })).toBeInTheDocument();
+    expect(screen.getByText("Your role does not include this report.")).toBeInTheDocument();
+    expectLocked();
+  });
+
+  it("denies a direct link into a section with no grants", async () => {
+    const ungrantedSection = SECTIONS[1];
+    clerk.path = `${ungrantedSection.base}/reports/${ungrantedSection.defaults[0].id}`;
+    clerk.getSession.mockResolvedValue({ ...access(false), ownReportSections: [] });
+    mount();
+    expectLocked();
+    expect(await screen.findByRole("heading", { name: "Report access not granted" })).toBeInTheDocument();
+    expect(screen.getByText("Your role does not include reports in this section.")).toBeInTheDocument();
+    expectLocked();
+  });
+});
+
 describe("administrator settings", () => {
   const settings = <AdministratorAccess><p>Protected settings content</p></AdministratorAccess>;
   it("denies approved reporting users without requesting administrator data", async () => {
