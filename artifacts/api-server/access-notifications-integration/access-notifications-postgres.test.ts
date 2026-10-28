@@ -647,6 +647,34 @@ describe("access notification transaction ordering in private PostgreSQL", () =>
     ]);
   });
 
+  it("keeps sent and cancelled notices inside the 90-day retention window", async () => {
+    expect(pool.options.host).toBe(socketDirectory);
+    await pool.query(`
+      INSERT INTO wareiq_access_notifications
+        (id, recipient, role_name, kind, state, created_at)
+      VALUES
+        ('sent-inside-retention', 'member@example.test', 'Supervisor', 'reporting', 'sent',
+         now() - interval '90 days' + interval '1 minute'),
+        ('cancelled-inside-retention', 'member@example.test', 'Supervisor', 'reporting', 'cancelled',
+         now() - interval '90 days' + interval '1 minute'),
+        ('sent-outside-retention', 'member@example.test', 'Supervisor', 'reporting', 'sent',
+         now() - interval '90 days' - interval '1 minute'),
+        ('cancelled-outside-retention', 'member@example.test', 'Supervisor', 'reporting', 'cancelled',
+         now() - interval '90 days' - interval '1 minute')
+    `);
+
+    expect(await cleanupCompletedAccessNotifications()).toBe(2);
+
+    const { rows } = await pool.query<{ id: string; state: string }>(`
+      SELECT id, state FROM wareiq_access_notifications ORDER BY id
+    `);
+    expect(rows).toEqual([
+      { id: "cancelled-inside-retention", state: "cancelled" },
+      { id: oldNotice.id, state: "pending" },
+      { id: "sent-inside-retention", state: "sent" },
+    ]);
+  });
+
   it("keeps failed-notice pages stable when a newer confirmed failure arrives", async () => {
     expect(pool.options.host).toBe(socketDirectory);
     await pool.query(`
