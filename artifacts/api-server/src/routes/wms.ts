@@ -1,16 +1,24 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Response } from "express";
 import { clerkClient, getAuth } from "@clerk/express";
 import { TestWmsConnectionBody, TestWmsConnectionResponse, GetWmsNetworkConfigResponse } from "@workspace/api-zod";
 import { testConnection, testWmsVpn } from "../lib/wms-connection";
 import { warehouseVpnHealth } from "../lib/wms-vpn-monitor";
 import { getWmsNetworkConfig, mysqlConnectionPath } from "../lib/wms-openvpn";
 import { AccessError, accessFor, requireMemberAccess } from "../lib/reporting-access";
+import { WmsConnectionTestLimiter } from "../lib/wms-connection-test-limiter";
 import { z } from "zod";
 
 const router: IRouter = Router();
-let busy = false;
-let nextTestAt = 0;
-let nextVpnAt = 0;
+const connectionTestLimiter = new WmsConnectionTestLimiter();
+
+function connectionTestSiteKey(scope: { siteId: string; clientId: string } | undefined): string {
+  return scope ? JSON.stringify([scope.clientId, scope.siteId]) : "direct-connection";
+}
+
+function rejectLimitedTest(res: Response): void {
+  res.setHeader("Retry-After", "10");
+  res.status(429).json({ error: "Wait a few seconds before running another connection test." });
+}
 
 router.use("/wms/connection", async (req, res, next): Promise<void> => {
   res.setHeader("Cache-Control", "no-store");
@@ -31,7 +39,7 @@ router.use("/wms/connection", async (req, res, next): Promise<void> => {
 router.use("/wms/connection", async (req, res, next): Promise<void> => {
   try {
     const vpn = mysqlConnectionPath() === "openvpn";
-    if (vpn && (req.method === "GET" || req.path === "/vpn-test" || req.body?.engine === "mysql")) {
+    if (vpn && (req.method === "GET" || req.path.endsWith("/vpn-test") || req.body?.engine === "mysql")) {
       const site = z.string().uuid().safeParse(req.method === "GET" ? req.query.siteId : req.body?.siteId);
       if (!site.success) { res.status(400).json({ error: "Select an assigned warehouse." }); return; }
       // Fresh membership, active client, role and assigned active sites for every request.
@@ -58,9 +66,13 @@ router.get("/wms/connection/network", async (_req, res) => {
 router.post("/wms/connection/vpn-test", async (req, res): Promise<void> => {
   const parsed = TestWmsConnectionBody.strict().safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Check the approved connection fields." }); return; }
-  if (Date.now() < nextVpnAt) { res.status(429).json({ error: "Wait a few seconds before checking the VPN again." }); return; }
-  nextVpnAt = Date.now() + 10000;
-  res.json(await testWmsVpn(parsed.data, res.locals.wmsSiteScope));
+  const release = connectionTestLimiter.acquire(connectionTestSiteKey(res.locals.wmsSiteScope), "vpn");
+  if (!release) { rejectLimitedTest(res); return; }
+  try {
+    res.json(await testWmsVpn(parsed.data, res.locals.wmsSiteScope));
+  } finally {
+    release();
+  }
 });
 
 router.post("/wms/connection/test", async (req, res): Promise<void> => {
@@ -68,17 +80,13 @@ router.post("/wms/connection/test", async (req, res): Promise<void> => {
   if (!parsed.success) {
     res.status(400).json({ error: "Check the connection fields. Only verified TLS is supported; never send a password in this request." }); return;
   }
-  if (busy || Date.now() < nextTestAt) {
-    res.setHeader("Retry-After", "10");
-    res.status(429).json({ error: "Wait a few seconds before running another connection test." }); return;
-  }
-  busy = true;
-  nextTestAt = Date.now() + 10000;
+  const release = connectionTestLimiter.acquire(connectionTestSiteKey(res.locals.wmsSiteScope), "connection");
+  if (!release) { rejectLimitedTest(res); return; }
   try {
     const result = TestWmsConnectionResponse.parse(await testConnection(parsed.data, { siteScope: res.locals.wmsSiteScope }));
     req.log.info({ event: "wms_connection_test", status: result.status, code: result.code, userId: getAuth(req).userId }, "WMS connection test finished");
     res.json(result);
-  } finally { busy = false; }
+  } finally { release(); }
 });
 
 export default router;

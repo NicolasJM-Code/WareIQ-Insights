@@ -112,3 +112,84 @@ test("VPN endpoint rejects browser passwords and rate limits valid checks separa
   expect((await request(app).post("/wms/connection/vpn-test").send(input)).status).toBe(429);
   expect(fake.vpn).toHaveBeenCalledOnce();
 });
+
+test("VPN checks require and use an authorized site even without an engine field", async () => {
+  vi.stubEnv("WMS_MYSQL_CONNECTION_PATH", "openvpn");
+  const input = { siteId: vpnScope.siteId, host: "mysql.internal.example.test", port: 3306,
+    database: "reporting", schema: "reporting", username: "reporter",
+    sslMode: "verify-full", queryTimeoutSec: 15 };
+  fake.access.mockResolvedValue({
+    actor: { platformAdmin: true }, member: { active: true },
+    client: { id: vpnScope.clientId, active: true }, role: {}, session: { sites: [] },
+  });
+  expect((await request(app).post("/wms/connection/vpn-test").send(input)).status).toBe(403);
+  expect(fake.vpn).not.toHaveBeenCalled();
+
+  fake.access.mockResolvedValue({
+    actor: { platformAdmin: true }, member: { active: true },
+    client: { id: vpnScope.clientId, active: true }, role: {},
+    session: { sites: [{ id: vpnScope.siteId }] },
+  });
+  fake.vpn.mockResolvedValue({ status: "ready", code: "VPN_READY", message: "Verified",
+    testedAt: new Date().toISOString() });
+  expect((await request(app).post("/wms/connection/vpn-test").send(input)).status).toBe(200);
+  expect(fake.vpn).toHaveBeenCalledWith({ ...input, engine: "postgresql" }, vpnScope);
+});
+
+test("a slow warehouse check does not block another approved warehouse", async () => {
+  vi.stubEnv("WMS_MYSQL_CONNECTION_PATH", "openvpn");
+  const firstSite = "33333333-3333-4333-8333-333333333333";
+  const secondSite = "44444444-4444-4444-8444-444444444444";
+  fake.access.mockResolvedValue({
+    actor: { platformAdmin: true }, member: { active: true },
+    client: { id: vpnScope.clientId, active: true }, role: {},
+    session: { sites: [{ id: firstSite }, { id: secondSite }] },
+  });
+  const response = { status: "error", code: "VPN_NOT_READY", message: "Unavailable",
+    testedAt: new Date().toISOString() };
+  let finishFirst!: (result: typeof response) => void;
+  const firstResult = new Promise<typeof response>((resolve) => { finishFirst = resolve; });
+  fake.sql.mockImplementation((input: { siteId: string }) =>
+    input.siteId === firstSite ? firstResult : Promise.resolve(response));
+  const input = { engine: "mysql", host: "mysql.internal.example.test", port: 3306, database: "reporting",
+    schema: "reporting", username: "reporter", sslMode: "verify-full", queryTimeoutSec: 15 };
+
+  const slowRequest = request(app).post("/wms/connection/test")
+    .send({ ...input, siteId: firstSite }).then((result) => result);
+  await vi.waitFor(() => expect(fake.sql).toHaveBeenCalledOnce());
+
+  const duplicate = await request(app).post("/wms/connection/test")
+    .send({ ...input, siteId: firstSite });
+  expect(duplicate.status).toBe(429);
+  const otherWarehouse = await request(app).post("/wms/connection/test")
+    .send({ ...input, siteId: secondSite });
+  expect(otherWarehouse.status).toBe(200);
+  expect(fake.sql).toHaveBeenCalledTimes(2);
+
+  finishFirst(response);
+  expect((await slowRequest).status).toBe(200);
+  expect((await request(app).post("/wms/connection/test")
+    .send({ ...input, siteId: firstSite })).status).toBe(429);
+});
+
+test("repeated unauthorized site requests do not consume limiter entries", async () => {
+  vi.stubEnv("WMS_MYSQL_CONNECTION_PATH", "openvpn");
+  const validSite = "55555555-5555-4555-8555-555555555555";
+  fake.access.mockImplementation(async (req: { body?: { siteId?: string } }) => ({
+    actor: { platformAdmin: true }, member: { active: true },
+    client: { id: vpnScope.clientId, active: true }, role: {},
+    session: { sites: req.body?.siteId === validSite ? [{ id: validSite }] : [] },
+  }));
+  const input = { engine: "mysql", host: "mysql.internal.example.test", port: 3306, database: "reporting",
+    schema: "reporting", username: "reporter", sslMode: "verify-full", queryTimeoutSec: 15 };
+  for (let i = 1; i <= 140; i += 1) {
+    const siteId = `${String(i).padStart(8, "0")}-3333-4333-8333-333333333333`;
+    expect((await request(app).post("/wms/connection/test")
+      .send({ ...input, siteId })).status).toBe(403);
+  }
+  fake.sql.mockResolvedValue({ status: "error", code: "VPN_NOT_READY", message: "Unavailable",
+    testedAt: new Date().toISOString() });
+  const response = await request(app).post("/wms/connection/test").send({ ...input, siteId: validSite });
+  expect(response.status).toBe(200);
+  expect(fake.sql).toHaveBeenCalledOnce();
+});
