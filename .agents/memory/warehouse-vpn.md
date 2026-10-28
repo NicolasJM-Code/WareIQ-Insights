@@ -35,3 +35,11 @@ authenticate as another warehouse's database.
 **How to apply:** Preserve this boundary in configuration migrations and
 certificate-renewal work; never automatically copy a shared CA bundle into each
 warehouse's approval.
+
+Pause proactive follow-up suggestions for WareIQ until the database connection
+has been confirmed.
+
+**Why:** The user asked to pause suggestions until WareIQ's database is connected.
+
+**How to apply:** Do not propose new follow-up tasks until a real SQL connection
+test succeeds. VPN readiness alone or configured connection details do not count.
