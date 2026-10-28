@@ -10,6 +10,7 @@
     "test:reports": "vitest run --config vitest.reports.config.ts",
     "test:auth": "vitest run --config vitest.config.ts",
     "test:auth:provider": "vitest run --config vitest.provider.config.ts",
+    "auth:provider:fingerprint": "pnpm --filter @workspace/scripts exec tsx ../artifacts/api-server/provider-tests/key-pair-fingerprint.ts",
     "test:auth:browser": "vitest run --config vitest.browser.config.ts",
     "test:auth:browser:renewal": "vitest run --config vitest.browser-renewal.config.ts",
     "test:auth:hosted": "vitest run --config vitest.hosted.config.ts",

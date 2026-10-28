@@ -128,7 +128,7 @@ failure; those conditions are never reported as a skipped/pass result.
    generate a fingerprint of the exact pair without printing either key:
 
    ```sh
-   node -e 'const { createHash } = require("node:crypto"); const secret = process.env.CLERK_SECRET_KEY; const publishable = process.env.CLERK_PUBLISHABLE_KEY; if (!secret || !publishable) process.exit(1); process.stdout.write(createHash("sha256").update("wareiq-clerk-provider-key-pair-v1\0").update(secret).update("\0").update(publishable).digest("hex") + "\n")'
+   pnpm --silent auth:provider:fingerprint
    ```
 
    Save the resulting fingerprint as the workspace secret
