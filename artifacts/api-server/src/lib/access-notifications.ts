@@ -112,6 +112,33 @@ export async function cleanupCompletedAccessNotifications(): Promise<number> {
   }
 }
 
+const COMPLETED_NOTIFICATION_CLEANUP_HEALTH_ID = "completed_access_notification_cleanup";
+
+async function recordCompletedNotificationCleanupFailure(): Promise<number> {
+  const { rows } = await pool.query<{ consecutive_failures: number | string }>(`
+    /* access_notification_cleanup_failure */
+    INSERT INTO wareiq_access_notification_cleanup_health (id, consecutive_failures)
+    VALUES ($1, 1)
+    ON CONFLICT (id) DO UPDATE
+      SET consecutive_failures = wareiq_access_notification_cleanup_health.consecutive_failures + 1
+    RETURNING consecutive_failures
+  `, [COMPLETED_NOTIFICATION_CLEANUP_HEALTH_ID]);
+  const result = rows[0];
+  if (!result) throw new Error("Cleanup failure state unavailable");
+  return Number(result.consecutive_failures);
+}
+
+async function resetCompletedNotificationCleanupFailures(): Promise<void> {
+  const { rows } = await pool.query(`
+    /* access_notification_cleanup_recovered */
+    INSERT INTO wareiq_access_notification_cleanup_health (id, consecutive_failures)
+    VALUES ($1, 0)
+    ON CONFLICT (id) DO UPDATE SET consecutive_failures = 0
+    RETURNING consecutive_failures
+  `, [COMPLETED_NOTIFICATION_CLEANUP_HEALTH_ID]);
+  if (!rows[0]) throw new Error("Cleanup recovery state unavailable");
+}
+
 export async function checkAccessNotificationProgress(): Promise<void> {
   let outstandingCount: number;
   let oldestOutstandingAgeSeconds: number | null;
@@ -432,7 +459,6 @@ export function startAccessNotifications() {
   let running = false;
   let cleanupRunning = false;
   let progressCheckRunning = false;
-  let consecutiveCleanupFailures = 0;
   const checkProgress = async () => {
     if (progressCheckRunning) return;
     progressCheckRunning = true;
@@ -450,17 +476,33 @@ export function startAccessNotifications() {
     if (cleanupRunning) return;
     cleanupRunning = true;
     try {
-      await cleanupCompletedAccessNotifications();
-      consecutiveCleanupFailures = 0;
-    }
-    catch {
-      consecutiveCleanupFailures += 1;
-      logger.warn({ event: "access_notification_cleanup_failed" }, "Completed access email cleanup unavailable");
-      if (consecutiveCleanupFailures === COMPLETED_NOTIFICATION_CLEANUP_FAILURE_ALERT_THRESHOLD) {
-        logger.error({
-          event: "access_notification_cleanup_stalled",
-          consecutive_failures: consecutiveCleanupFailures,
-        }, "Completed access email cleanup has failed repeatedly; check database availability and retention backlog");
+      try {
+        await cleanupCompletedAccessNotifications();
+      } catch {
+        logger.warn({ event: "access_notification_cleanup_failed" }, "Completed access email cleanup unavailable");
+        try {
+          const consecutiveFailures = await recordCompletedNotificationCleanupFailure();
+          if (consecutiveFailures === COMPLETED_NOTIFICATION_CLEANUP_FAILURE_ALERT_THRESHOLD) {
+            logger.error({
+              event: "access_notification_cleanup_stalled",
+              consecutive_failures: consecutiveFailures,
+            }, "Completed access email cleanup has failed repeatedly; check database availability and retention backlog");
+          }
+        } catch {
+          logger.warn(
+            { event: "access_notification_cleanup_health_state_unavailable" },
+            "Completed access email cleanup failure state could not be recorded",
+          );
+        }
+        return;
+      }
+      try {
+        await resetCompletedNotificationCleanupFailures();
+      } catch {
+        logger.warn(
+          { event: "access_notification_cleanup_health_state_unavailable" },
+          "Completed access email cleanup recovery state could not be recorded",
+        );
       }
     } finally {
       cleanupRunning = false;

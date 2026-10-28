@@ -8,7 +8,7 @@ import {
   stopDatabase,
 } from "./database";
 
-const mocks = vi.hoisted(() => ({ send: vi.fn() }));
+const mocks = vi.hoisted(() => ({ send: vi.fn(), error: vi.fn() }));
 
 vi.mock("@workspace/db", async () => ({
   ...await import("@workspace/db/schema"),
@@ -24,7 +24,7 @@ vi.mock("@replit/connectors-sdk", () => ({
   ReplitConnectors: class { createProxyFetch() { return mocks.send; } },
 }));
 vi.mock("@clerk/express", () => ({ clerkClient: { users: { getUser: vi.fn() } } }));
-vi.mock("../src/lib/logger", () => ({ logger: { warn: vi.fn() } }));
+vi.mock("../src/lib/logger", () => ({ logger: { warn: vi.fn(), error: mocks.error } }));
 
 import { clerkClient } from "@clerk/express";
 import {
@@ -36,6 +36,7 @@ import {
   listUncertainAccessNotifications,
   preparePlatformNotification,
   queueAccessNotifications,
+  startAccessNotifications,
 } from "../src/lib/access-notifications";
 import { withRoleLock } from "../src/lib/role-lock";
 import { changeRole } from "../src/lib/role-management";
@@ -186,9 +187,12 @@ describe("access notification transaction ordering in private PostgreSQL", () =>
     await pool.query("DROP FUNCTION IF EXISTS notification_claim_barrier()");
     await pool.query("DROP TRIGGER IF EXISTS notification_cleanup_barrier ON wareiq_access_notifications");
     await pool.query("DROP FUNCTION IF EXISTS notification_cleanup_barrier()");
+    await pool.query("DROP TRIGGER IF EXISTS notification_cleanup_failure ON wareiq_access_notifications");
+    await pool.query("DROP FUNCTION IF EXISTS notification_cleanup_failure()");
     await pool.query("DROP TRIGGER IF EXISTS notification_status_barrier ON wareiq_access_notifications");
     await pool.query("DROP FUNCTION IF EXISTS notification_status_barrier()");
-    await pool.query("TRUNCATE wareiq_access_notifications");
+    await pool.query("TRUNCATE wareiq_access_notifications, wareiq_access_notification_cleanup_health");
+    mocks.error.mockClear();
     await pool.query(`
       INSERT INTO wareiq_access_notifications
         (id, recipient, role_name, kind, state, target_id, attempts, next_attempt_at)
@@ -572,6 +576,60 @@ describe("access notification transaction ordering in private PostgreSQL", () =>
       await blocker.query("SELECT pg_advisory_unlock(1618033, 1414213)").catch(() => undefined);
       blocker.release();
       await transition.catch(() => undefined);
+    }
+  });
+
+  it("preserves cleanup failure streaks across scheduler restarts and clears them on recovery", async () => {
+    vi.stubGlobal("setInterval", () => ({ unref: vi.fn() }));
+    try {
+      await pool.query(`
+        INSERT INTO wareiq_access_notifications
+          (id, recipient, role_name, kind, state, created_at)
+        VALUES ('cleanup-health-fixture', 'member@example.test', 'Supervisor',
+                'reporting', 'sent', now() - interval '91 days');
+        CREATE FUNCTION notification_cleanup_failure() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          RAISE EXCEPTION 'forced cleanup failure';
+        END
+        $$;
+        CREATE TRIGGER notification_cleanup_failure
+        BEFORE DELETE ON wareiq_access_notifications
+        FOR EACH ROW EXECUTE FUNCTION notification_cleanup_failure()
+      `);
+
+      for (const expectedFailures of [1, 2, 3]) {
+        startAccessNotifications();
+        await expect.poll(async () => {
+          const { rows } = await pool.query<{ consecutive_failures: number }>(`
+            SELECT consecutive_failures
+            FROM wareiq_access_notification_cleanup_health
+            WHERE id = 'completed_access_notification_cleanup'
+          `);
+          return rows[0]?.consecutive_failures ?? 0;
+        }).toBe(expectedFailures);
+      }
+      expect(mocks.error).toHaveBeenCalledWith({
+        event: "access_notification_cleanup_stalled",
+        consecutive_failures: 3,
+      }, expect.any(String));
+
+      await pool.query("DROP TRIGGER notification_cleanup_failure ON wareiq_access_notifications");
+      await pool.query("DROP FUNCTION notification_cleanup_failure()");
+      startAccessNotifications();
+      await expect.poll(async () => {
+        const { rows } = await pool.query<{ consecutive_failures: number }>(`
+          SELECT consecutive_failures
+          FROM wareiq_access_notification_cleanup_health
+          WHERE id = 'completed_access_notification_cleanup'
+        `);
+        return rows[0]?.consecutive_failures ?? -1;
+      }).toBe(0);
+      const remaining = await pool.query(
+        "SELECT id FROM wareiq_access_notifications WHERE id = 'cleanup-health-fixture'",
+      );
+      expect(remaining.rows).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
     }
   });
 

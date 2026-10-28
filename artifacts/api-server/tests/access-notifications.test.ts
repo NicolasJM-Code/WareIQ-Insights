@@ -8,7 +8,8 @@ import { changeRole } from "../src/lib/role-management";
 const mocks = vi.hoisted(() => ({
   query: vi.fn(), poolQuery: vi.fn(), release: vi.fn(), send: vi.fn(), getUser: vi.fn(),
   insert: vi.fn(), update: vi.fn(), select: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn(),
-  summaryQuery: vi.fn(), healthQuery: vi.fn(),
+  summaryQuery: vi.fn(), healthQuery: vi.fn(), cleanupHealthQuery: vi.fn(),
+  cleanupFailureCount: 0,
   authUserId: null as string | null,
 }));
 vi.mock("@workspace/db", async () => ({
@@ -18,6 +19,8 @@ vi.mock("@workspace/db", async () => ({
     query: (sql: string, ...params: unknown[]) =>
       sql.includes("access_notification_operational_health")
         ? mocks.healthQuery(sql, ...params)
+        : sql.includes("access_notification_cleanup_")
+          ? mocks.cleanupHealthQuery(sql, ...params)
         : sql.includes("count(*) FILTER") ? mocks.summaryQuery(sql, ...params) : mocks.poolQuery(sql, ...params),
   },
   db: { insert: mocks.insert, update: mocks.update, select: mocks.select },
@@ -142,8 +145,14 @@ describe("durable delivery and duplicate protection", () => {
   };
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.cleanupFailureCount = 0;
     mocks.poolQuery.mockResolvedValue({ rows: [] });
     mocks.healthQuery.mockResolvedValue({ rows: [{ outstanding_count: 0, oldest_outstanding_age_seconds: null }] });
+    mocks.cleanupHealthQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("access_notification_cleanup_failure")) mocks.cleanupFailureCount += 1;
+      else mocks.cleanupFailureCount = 0;
+      return { rows: [{ consecutive_failures: mocks.cleanupFailureCount }] };
+    });
     mocks.summaryQuery.mockResolvedValue({ rows: [] });
     mocks.query.mockImplementation(async (sql: string) => ({ rows: sql.startsWith("SELECT *") ? [{ ...job }] : [] }));
     mocks.send.mockResolvedValue({ ok: true, json: async () => ({ id: "provider-email-id" }) });
@@ -344,6 +353,27 @@ describe("durable delivery and duplicate protection", () => {
     expect(mocks.error).toHaveBeenCalledTimes(2);
     expect(JSON.stringify([...mocks.warn.mock.calls, ...mocks.error.mock.calls]))
       .not.toMatch(/recipient@example\.test|provider response secret/);
+  });
+  it("continues the persisted cleanup failure streak when a new scheduler starts", async () => {
+    vi.stubGlobal("setInterval", () => ({ unref: vi.fn() }));
+    mocks.poolQuery.mockRejectedValue(new Error("sensitive database details"));
+
+    startAccessNotifications();
+    await vi.waitFor(() => expect(mocks.warn).toHaveBeenCalledTimes(1));
+    startAccessNotifications();
+    await vi.waitFor(() => expect(mocks.warn).toHaveBeenCalledTimes(2));
+    startAccessNotifications();
+    await vi.waitFor(() => expect(mocks.error).toHaveBeenCalledOnce());
+    vi.unstubAllGlobals();
+
+    expect(mocks.cleanupFailureCount).toBe(3);
+    expect(mocks.cleanupHealthQuery).toHaveBeenCalledTimes(3);
+    expect(mocks.error).toHaveBeenCalledWith({
+      event: "access_notification_cleanup_stalled",
+      consecutive_failures: 3,
+    }, expect.any(String));
+    expect(JSON.stringify([...mocks.warn.mock.calls, ...mocks.error.mock.calls]))
+      .not.toContain("sensitive database details");
   });
   it("denies delivery-summary access to signed-out and non-admin users", async () => {
     expect((await request(accessApp).get("/api/access/admin")).status).toBe(401);

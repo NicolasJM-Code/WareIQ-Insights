@@ -7,7 +7,10 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { PgDialect, getTableConfig } from "drizzle-orm/pg-core";
 import { SQL } from "drizzle-orm";
 import * as schema from "@workspace/db/schema";
-import { accessNotificationsTable } from "@workspace/db/schema";
+import {
+  accessNotificationCleanupHealthTable,
+  accessNotificationsTable,
+} from "@workspace/db/schema";
 
 // This fixture only connects to its own Unix-socket-only PostgreSQL cluster.
 // It never reads DATABASE_URL, WMS_DATABASE_URL, or any caller-selected host.
@@ -44,8 +47,8 @@ function renderDefault(value: unknown): string {
   throw new Error("Unsupported default in access notification test schema");
 }
 
-function tableSql() {
-  const config = getTableConfig(accessNotificationsTable);
+function tableSql(table: typeof accessNotificationsTable | typeof accessNotificationCleanupHealthTable) {
+  const config = getTableConfig(table);
   const definitions = config.columns.map((column) => {
     const parts = [`"${column.name}"`, column.getSQLType()];
     if (column.notNull) parts.push("NOT NULL");
@@ -82,7 +85,9 @@ export async function startDatabase() {
       `-F -k ${directory} -c listen_addresses=''`, "-w", "start",
     ]);
     started = true;
-    await pool.query(tableSql());
+    await pool.query(
+      `${tableSql(accessNotificationsTable)};\n${tableSql(accessNotificationCleanupHealthTable)}`,
+    );
   } catch (error) {
     await stopDatabase();
     throw error;
