@@ -237,7 +237,7 @@ async function expectProviderDatabaseIsolation() {
   }
 }
 
-it.each(["vitest.browser.config.ts", "vitest.browser-renewal-multitab.config.ts"])(
+it.each(["vitest.browser.config.ts", "vitest.browser-renewal-multitab.config.ts", "vitest.hosted.config.ts"])(
   "keeps browser execution isolated from application and WMS databases with %s", async config => {
   await expectBrowserDatabaseIsolation(config);
 }, 60_000);

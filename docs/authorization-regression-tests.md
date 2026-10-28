@@ -468,6 +468,13 @@ selected by `pnpm test:auth`, `test:auth:browser`, the authorization workflow, o
 a build. Missing opt-in, live/missing keys, Production mode, unsupported login
 configuration, screen failures and cleanup failures all fail, never skip.
 
+Before hosted test modules load, the runner removes the application and WMS
+PostgreSQL settings. The database pool constructor is blocked, and an offline
+subprocess check verifies the hosted configuration under synthetic database
+settings while blocking outbound networking. This isolation applies to database
+access only: a successful hosted sign-in still requires live network access to
+Clerk's Development service.
+
 The isolated page renders the production `SignInPage` and `AuthProvider`.
 The journey fills Clerk's hosted email/password component through its visible
 form; it does not use a sign-in ticket, SDK sign-in helper, injected cookie,

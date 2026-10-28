@@ -160,10 +160,13 @@ it("keeps hosted checks separate from offline and ticket browser discovery", () 
   expect(ticket).not.toContain("hosted.test.ts");
   const hosted = readFileSync("vitest.hosted.config.ts", "utf8");
   expect(hosted).toContain("browser-tests/hosted.test.ts");
+  expect(hosted).toContain("browser-tests/isolate-database-env.ts");
   const ticketEntry = readFileSync("artifacts/api-server/browser-tests/clerk.test.ts", "utf8");
   expect(ticketEntry.indexOf("preflight();")).toBeLessThan(ticketEntry.indexOf('await import("../src/app")'));
   const entry = readFileSync("artifacts/api-server/browser-tests/hosted.test.ts", "utf8");
   expect(entry.indexOf('preflight("CLERK_HOSTED_TESTS")')).toBeLessThan(entry.indexOf('await import("../src/app")'));
+  expect(entry).toContain("databasePoolConstructor");
+  expect(entry).toContain("keeps browser execution isolated from application and WMS databases");
   expect(entry).not.toContain("signInTokens.");
   expect(entry).not.toContain("setActive(");
 });
