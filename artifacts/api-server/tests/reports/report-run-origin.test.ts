@@ -85,7 +85,8 @@ const site = {
   name: "Synthetic site",
   active: true,
 };
-const body = { siteId: "site-a" };
+
+let memberFixture = member;
 const privateReports = [
   {
     id: "another-owner-report",
@@ -110,20 +111,23 @@ const emailByUserId: Record<string, string> = {
   "reporter-a": member.email,
   "reporter-b": otherMember.email,
 };
+let siteFixtures = [site];
 
-function runRequest(options: { origin?: string; fetchSite?: string; reportId?: string } = {}) {
+function runRequest(options: { origin?: string; fetchSite?: string; reportId?: string; siteId?: string } = {}) {
   let req = request(app).post(`/api/access/reports/${options.reportId ?? "inbound-1"}/run`)
     .set("Host", "wareiq.test")
     .set("X-Forwarded-Proto", "https");
   if (options.origin !== undefined) req = req.set("Origin", options.origin);
   if (options.fetchSite !== undefined) req = req.set("Sec-Fetch-Site", options.fetchSite);
-  return req.send(body);
+  return req.send({ siteId: options.siteId ?? "site-a" });
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   provider.userId = "reporter-a";
   provider.sessionId = "session-a";
+  memberFixture = member;
+  siteFixtures = [site];
   provider.getUser.mockImplementation(async () => ({
     banned: false,
     locked: false,
@@ -145,7 +149,7 @@ beforeEach(() => {
         }
         if (table === clientsTable) return [client];
         if (table === rolesTable) return [role];
-        if (table === sitesTable) return [site];
+        if (table === sitesTable) return siteFixtures.filter((site) => site.active);
         if (table === ownReportsTable) {
           const query = new PgDialect().sqlToQuery(condition);
           const constraints = new Map<string, unknown>();
@@ -166,7 +170,7 @@ beforeEach(() => {
   }));
 });
 
-describe("full-app origin protection for report runs", () => {
+describe("full-app authorization for report runs", () => {
   it.each([
     ["missing Origin", {}],
     ["foreign Origin", { origin: "https://foreign.test" }],
@@ -234,6 +238,41 @@ describe("full-app origin protection for report runs", () => {
     expect(provider.getSession).toHaveBeenCalledOnce();
     expect(provider.getUser).toHaveBeenCalledOnce();
     expect(database.select).toHaveBeenCalledTimes(5);
+    expect(poolConstructor).not.toHaveBeenCalled();
+  });
+
+  it("rejects an inactive site before opening a WMS connection", async () => {
+    siteFixtures = [{ ...site, active: false }];
+
+    const response = await runRequest({
+      origin: "https://wareiq.test",
+      fetchSite: "same-origin",
+    });
+
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({ error: "This site is not assigned to you." });
+    expect(provider.getSession).toHaveBeenCalledOnce();
+    expect(provider.getUser).toHaveBeenCalledOnce();
+    expect(poolConstructor).not.toHaveBeenCalled();
+  });
+
+  it("rejects a site no longer assigned to the member before opening a WMS connection", async () => {
+    siteFixtures = [site, {
+      ...site,
+      id: "site-b",
+      name: "Unassigned synthetic site",
+    }];
+
+    const response = await runRequest({
+      origin: "https://wareiq.test",
+      fetchSite: "same-origin",
+      siteId: "site-b",
+    });
+
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({ error: "This site is not assigned to you." });
+    expect(provider.getSession).toHaveBeenCalledOnce();
+    expect(provider.getUser).toHaveBeenCalledOnce();
     expect(poolConstructor).not.toHaveBeenCalled();
   });
 });
