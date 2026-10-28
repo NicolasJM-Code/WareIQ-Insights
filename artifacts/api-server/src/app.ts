@@ -46,6 +46,11 @@ app.use((req, res, next) => {
     const origin = req.get("origin");
     const forwardedHost = req.get("x-forwarded-host");
     const forwardedProtocol = req.get("x-forwarded-proto");
+    const hasDuplicateForwardedHeader = ["x-forwarded-host", "x-forwarded-proto"].some(
+      (header) => req.rawHeaders.filter((value, index) =>
+        index % 2 === 0 && value.toLowerCase() === header,
+      ).length > 1,
+    );
     const host = getClerkProxyHost(req);
     // The edge supplies the public host and protocol. Compare the complete
     // serialized origin: matching a hostname alone also permits HTTP/FTP origins.
@@ -68,7 +73,7 @@ app.use((req, res, next) => {
           return !parsedHost.username && !parsedHost.password
             && parsedHost.pathname === "/" && !parsedHost.search && !parsedHost.hash;
         });
-      sameOrigin = Boolean(forwardedHostChainIsValid && target
+      sameOrigin = Boolean(!hasDuplicateForwardedHeader && forwardedHostChainIsValid && target
         && !target.username && !target.password
         && target.pathname === "/" && !target.search && !target.hash
         && (protocol === "http" || protocol === "https")

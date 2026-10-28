@@ -1,3 +1,5 @@
+import { createServer, request as httpRequest } from "node:http";
+import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import {
@@ -44,6 +46,12 @@ vi.mock("../../src/lib/logger", () => ({ logger: {} }));
 
 import app from "../../src/app";
 
+const httpServer = createServer(app);
+let receivedRawHeaders: string[] = [];
+httpServer.on("request", (req) => {
+  receivedRawHeaders = req.rawHeaders;
+});
+
 const path = "/api/access/own-reports";
 const importPath = `${path}/import`;
 const definition = {
@@ -77,6 +85,56 @@ const clientSnapshot = async () =>
 const siteSnapshot = async () =>
   (await pool.query("SELECT * FROM wareiq_sites ORDER BY id")).rows;
 
+async function requestWithDuplicateForwardedHeader(
+  method: "POST" | "DELETE",
+  url: string,
+  headerName: "X-Forwarded-Host" | "X-Forwarded-Proto",
+  duplicateValues: readonly [string, string],
+  body?: unknown,
+) {
+  const address = httpServer.address() as AddressInfo;
+  const bodyText = body === undefined ? undefined : JSON.stringify(body);
+  const headers: string[] = [
+    "Host", "wareiq.test",
+    "Origin", "https://wareiq.test",
+    "Sec-Fetch-Site", "same-origin",
+    "X-Forwarded-Host", headerName === "X-Forwarded-Host" ? duplicateValues[0] : "wareiq.test",
+    ...(headerName === "X-Forwarded-Host" ? ["X-Forwarded-Host", duplicateValues[1]] : []),
+    "X-Forwarded-Proto", headerName === "X-Forwarded-Proto" ? duplicateValues[0] : "https",
+    ...(headerName === "X-Forwarded-Proto" ? ["X-Forwarded-Proto", duplicateValues[1]] : []),
+  ];
+  if (bodyText !== undefined) {
+    headers.push("Content-Type", "application/json", "Content-Length", String(Buffer.byteLength(bodyText)));
+  }
+
+  const response = await new Promise<{ status: number; body: unknown }>((resolve, reject) => {
+    const req = httpRequest({
+      host: "127.0.0.1",
+      port: address.port,
+      method,
+      path: url,
+      headers,
+    }, (res) => {
+      let responseText = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk: string) => { responseText += chunk; });
+      res.on("end", () => {
+        resolve({
+          status: res.statusCode ?? 0,
+          body: responseText ? JSON.parse(responseText) : undefined,
+        });
+      });
+    });
+    req.on("error", reject);
+    req.end(bodyText);
+  });
+
+  expect(receivedRawHeaders.filter((value, index) =>
+    index % 2 === 0 && value.toLowerCase() === headerName.toLowerCase(),
+  )).toHaveLength(2);
+  return response;
+}
+
 function mutation(
   method: "post" | "delete",
   url: string,
@@ -100,8 +158,18 @@ configureReportFixtureSuite("own-reports-origin");
 beforeAll(async () => {
   await startDatabase();
   await waitForPeerFixture();
+  httpServer.listen(0, "127.0.0.1");
+  await new Promise<void>((resolve, reject) => {
+    httpServer.once("listening", resolve);
+    httpServer.once("error", reject);
+  });
 });
-afterAll(stopDatabase);
+afterAll(async () => {
+  await new Promise<void>((resolve, reject) => {
+    httpServer.close((error) => error ? reject(error) : resolve());
+  });
+  await stopDatabase();
+});
 beforeEach(async () => {
   await pool.query(`
     DROP TRIGGER IF EXISTS concurrent_insert_barrier ON wareiq_own_reports;
@@ -182,6 +250,32 @@ describe("full-app origin protection for saved reports", () => {
     expect(response.status).toBe(403);
     expect(response.body).toEqual({ error: "A same-origin request is required." });
     expect(await snapshot()).toEqual(before);
+  });
+
+  it.each([
+    ["duplicated forwarded host headers", "X-Forwarded-Host", ["wareiq.test", "attacker.test"]],
+    ["duplicated forwarded protocol headers", "X-Forwarded-Proto", ["https", "http"]],
+  ] as const)("rejects %s over HTTP without changing reports", async (_label, headerName, values) => {
+    const blockedMutations = [
+      ["POST", path, definition],
+      ["POST", importPath, importBody],
+      ["DELETE", `${path}/original`, undefined],
+    ] as const;
+
+    for (const [method, url, body] of blockedMutations) {
+      const before = await snapshot();
+      const response = await requestWithDuplicateForwardedHeader(
+        method,
+        url,
+        headerName,
+        values,
+        body,
+      );
+
+      expect(response.status).toBe(403);
+      expect(response.body).toEqual({ error: "A same-origin request is required." });
+      expect(await snapshot()).toEqual(before);
+    }
   });
 
   it("allows a same-origin POST to create a report through the full application", async () => {
