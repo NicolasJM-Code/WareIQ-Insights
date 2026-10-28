@@ -8,6 +8,6 @@ export default defineConfig({
     ...browser.test,
     include: ["artifacts/api-server/browser-tests/clerk.test.ts"],
     env: { CLERK_BROWSER_SCENARIO: "renewal" },
-    testTimeout: 360_000,
+    testTimeout: 540_000,
   },
 });

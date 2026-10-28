@@ -282,8 +282,9 @@ pnpm test:auth:browser:renewal
 This is a separate live run, not part of `test:auth:browser`, the ordinary
 offline suite, the authorization workflow, or a build. It uses the same
 Development-only preflight and private cleanup journal described above and
-creates a **new** disposable account for this run. Allow about five minutes
-for two genuine short-lived cookie lifetimes, outage polling and SDK recovery.
+creates a **new** disposable account for this run. Allow about seven minutes
+for genuine short-lived cookie lifetimes, outage polling, valid-session SDK
+recovery and the revoked-session recovery scenario (nine-minute test limit).
 
 After ticket sign-in and a cookie-authenticated reload control, it keeps the
 same reporting document open with Clerk networking enabled. It passively
@@ -322,6 +323,30 @@ reporting before the hook receives fresh server authorization. After delivery,
 both markers and permissions must recover and same-origin cookie-only summary
 and harmless protected-handler requests must succeed. Failure to renew or
 recover within the bounded waits fails the run; it is never skipped.
+
+The same separately enabled command then creates a **fresh browser session**
+for that disposable account, proves cookie-authenticated reporting and
+administrator access, and blocks SDK networking again. It revokes this exact
+session through the real Development backend while the block is in place.
+The hook must lock reporting, administrator markers and compatibility
+permissions while the original cookie is still unexpired; this cannot pass
+merely because a token expired.
+
+The runner removes only the SDK-network block in the same open document,
+without signing in again, reloading, injecting cookies or requesting a manual
+token. It requires an actual external Clerk client response after restoration,
+then waits beyond the pre-outage cookie's expiry plus skew allowance and checks
+two further real access polls. Throughout that recovery window, a DOM observer
+must never see either protected marker or unlocked compatibility permissions,
+and observed real access responses must never grant active status,
+administrator access or report IDs. Cookie-only reporting, settings and
+own-report requests must return 401 without any further execution of the
+harmless protected report handler. The SDK may sign out, but must not select
+a replacement session; a final backend lookup must still report the exact
+session as revoked. Failure to observe restored SDK connectivity or any
+authorization resurrection fails the run with sensitive details suppressed.
+This scenario runs only in `test:auth:browser:renewal`, not the offline suite
+or the shorter `test:auth:browser` run.
 
 The database boundary, harmless catalog and sensitive-output suppression are
 unchanged. No report data is loaded. The generated account is ownership-checked

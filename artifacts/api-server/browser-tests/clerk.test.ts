@@ -2,7 +2,7 @@
 import { afterAll, expect, it, vi } from "vitest";
 import type { Server } from "node:http";
 import { resolve } from "node:path";
-import { chromium, type Browser, type BrowserContext, type Page, type Route } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Page, type Response, type Route } from "playwright";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import { clerkClient } from "@clerk/express";
@@ -307,9 +307,90 @@ async function renewal(userId: string) {
   }
 }
 
+async function revokedRenewal(userId: string) {
+  phase = "revoked recovery browser-authenticated positive control";
+  const { context, page, sessionId } = await signIn(userId);
+  try {
+    const outage = await freezeRefresh(context);
+    phase = "revoked recovery post-block cookie control";
+    await cookieControl(page);
+    const last = await sessionCookie(context);
+    expect(last.sid).toBe(sessionId);
+    expect(last.exp * 1000 - Date.now()).toBeGreaterThan(10_000);
+    const before = reached;
+    const recheck = watchRevalidation(page);
+    phase = "revoke disposable session during SDK outage";
+    const revoked = await clerkClient.sessions.revokeSession(sessionId);
+    expect(revoked.status).toBe("revoked");
+    await locked(page, recheck, "revoked during SDK outage");
+    // Prove revocation, rather than another natural-expiry denial.
+    expect(last.exp * 1000 - Date.now()).toBeGreaterThan(5_000);
+
+    const observation = await page.evaluateHandle(() => {
+      let unlocked = false;
+      let activeSummary = false;
+      const originalFetch = window.fetch;
+      window.fetch = async (...args: Parameters<typeof fetch>) => {
+        const response = await originalFetch.apply(window, args);
+        if (new URL(response.url).pathname === "/api/access/me" && response.status === 200) {
+          const summary = await response.clone().json();
+          activeSummary ||= summary.status === "active" || summary.platformAdmin === true
+            || (Array.isArray(summary.reportIds) && summary.reportIds.length > 0);
+        }
+        return response;
+      };
+      const check = () => {
+        const permissions = document.querySelector('[data-testid="permissions"]');
+        unlocked ||= permissions?.textContent?.trim() !== "locked"
+          || permissions?.getAttribute("data-can-administer") !== "false"
+          || permissions?.getAttribute("data-can-report") !== "false"
+          || !!document.querySelector('[data-testid="report-gate"], [data-testid="admin-gate"]');
+      };
+      check();
+      const observer = new MutationObserver(check);
+      observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true });
+      return {
+        result: () => { check(); return { unlocked, activeSummary }; },
+        dispose: () => { observer.disconnect(); window.fetch = originalFetch; },
+      };
+    });
+    let sdkResponses = 0;
+    const observeSdk = (response: Response) => {
+      const url = new URL(response.url());
+      if (url.origin !== origin && /\/client(?:\/|$)/.test(url.pathname)) sdkResponses++;
+    };
+    context.on("response", observeSdk);
+    try {
+      phase = "restore SDK networking for revoked session";
+      await outage.restore();
+      // A final locked snapshot alone could pass if networking never recovered.
+      // Require a real Clerk client response, without logging its URL or body.
+      await expect.poll(() => sdkResponses, { timeout: 90_000 }).toBeGreaterThan(0);
+      phase = "revoked recovery beyond pre-outage cookie expiry";
+      if (last.exp * 1000 + 6_000 > Date.now()) await pastExpiry(last.exp);
+      await locked(page, watchRevalidation(page), "revoked after SDK recovery");
+      await locked(page, watchRevalidation(page), "continued revoked recovery");
+      phase = "revoked recovery continuous lock evidence";
+      expect(await observation.evaluate(state => state.result())).toEqual({ unlocked: false, activeSummary: false });
+      // SDK sign-out is allowed, but it must not silently select a new session.
+      expect(await page.evaluate(id => window.Clerk.session === null || window.Clerk.session.id === id, sessionId)).toBe(true);
+      expect((await clerkClient.sessions.getSession(sessionId)).status).toBe("revoked");
+      expect(reached).toBe(before);
+      expect(databasePoolConstructor).not.toHaveBeenCalled();
+      console.info("Revoked session stayed locked after real SDK connectivity returned; protected APIs denied access.");
+    } finally {
+      context.off("response", observeSdk);
+      await observation.evaluate(state => state.dispose());
+      await observation.dispose();
+    }
+  } finally {
+    await context.close();
+  }
+}
+
 const renewalRun = process.env.CLERK_BROWSER_SCENARIO === "renewal";
 it(renewalRun
-  ? "renews real browser cookies, locks on failed renewal, then safely recovers after connectivity returns"
+  ? "recovers valid browser sessions after renewal outages but keeps revoked sessions locked"
   : "authenticates real browser cookies then locks reporting on expiry and immediate revocation", async () => {
   // Fail without network or account creation unless explicitly enabled.
   preflight();
@@ -342,7 +423,11 @@ it(renewalRun
     origin = `http://127.0.0.1:${address.port}`;
     phase = "disposable fixture creation";
     const userId = await createFixture();
-    if (renewalRun) { await renewal(userId); return; }
+    if (renewalRun) {
+      await renewal(userId);
+      await revokedRenewal(userId);
+      return;
+    }
     phase = "expiry browser-authenticated positive control";
     const expired = await signIn(userId);
     await freezeRefresh(expired.context);

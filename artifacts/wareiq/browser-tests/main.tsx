@@ -8,7 +8,9 @@ import { AdministratorAccess, useAccess } from '../src/lib/access';
 
 function PermissionIndicator() {
   const { canAdminister, canReport } = useAccess();
-  return <output data-testid="permissions">{canAdminister && canReport ? 'allowed' : 'locked'}</output>;
+  return <output data-testid="permissions" data-can-administer={canAdminister} data-can-report={canReport}>
+    {canAdminister && canReport ? 'allowed' : 'locked'}
+  </output>;
 }
 
 function HarnessScreen() {
