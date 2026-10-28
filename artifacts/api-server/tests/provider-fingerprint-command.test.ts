@@ -5,8 +5,13 @@ import {
 
 const secretKey = "sk_test_fingerprint_command_secret";
 const publishableKey = "pk_test_fingerprint_command_public";
+const expectedFingerprintV1 = "3bb7582950684cbf789f55b440848b47d62cf88abf26dde138c4c5b317509fa2";
 
 describe("provider key-pair fingerprint command", () => {
+  it("pins the v1 fingerprint algorithm to a fixed known-answer vector", () => {
+    expect(createKeyPairAttestation(secretKey, publishableKey)).toBe(expectedFingerprintV1);
+  });
+
   it("prints only the fingerprint for configured development keys", () => {
     let output = "";
     let error = "";
@@ -18,7 +23,7 @@ describe("provider key-pair fingerprint command", () => {
 
     expect(result).toBe(0);
     expect(error).toBe("");
-    expect(output).toBe(`${createKeyPairAttestation(secretKey, publishableKey)}\n`);
+    expect(output).toBe(`${expectedFingerprintV1}\n`);
     expect(output).not.toContain(secretKey);
     expect(output).not.toContain(publishableKey);
   });
