@@ -13,7 +13,9 @@ vi.mock("node:net", async (original) => ({
   ...await original<typeof import("node:net")>(), createConnection: fake.socket,
 }));
 import { testConnection } from "../src/lib/wms-connection";
-import { mysqlGrantsAreReadOnly } from "../src/lib/wms-mysql-connection";
+import {
+  getMysqlReportMapping, mysqlGrantsAreReadOnly, runMysqlReport,
+} from "../src/lib/wms-mysql-connection";
 
 const input = {
   engine: "mysql" as const, host: "wms.example.test", port: 3306,
@@ -41,11 +43,68 @@ beforeEach(() => {
   fake.query.mockImplementation(async ({ sql }: { sql: string }) => {
     const rows = sql.includes("CURRENT_ROLE") ? [{ active_roles: "NONE" }]
       : sql === "SHOW GRANTS" ? [{ grant: "GRANT SELECT, SHOW VIEW ON `reporting`.* TO `reporter`@`%`" }]
+      : sql.includes("MAX_EXECUTION_TIME") ? [{ sku: "SKU-1", quantity: 7 }]
       : sql.includes("information_schema") ? [{ name: "reporting_view" }] : [];
     return [rows, []];
   });
 });
 afterEach(() => vi.unstubAllEnvs());
+
+test("report mappings select only approved fields and bind mandatory client/site filters", async () => {
+  const mapping = getMysqlReportMapping("own:inventory:stock", JSON.stringify({
+    "own:inventory:stock": {
+      view: "v_stock_on_hand", clientColumn: "client_code", siteColumn: "site_code",
+      columns: { sku: "item_sku", quantity: "on_hand" },
+    },
+  }));
+  expect(mapping).toBeDefined();
+  const result = await runMysqlReport(input, "fixture", "8.8.8.8", mapping!, {
+    clientKey: "CLIENT-42", siteKey: "WH-9",
+  }, ["sku"]);
+  expect(result).toEqual({ columns: ["sku"], rows: [{ sku: "SKU-1" }], truncated: false });
+  const reportQuery = fake.query.mock.calls.map(([query]) => query)
+    .find((query) => query.sql.includes("MAX_EXECUTION_TIME"));
+  expect(reportQuery.sql).toContain("`reporting`.`v_stock_on_hand`");
+  expect(reportQuery.sql).toContain("`client_code` = ? AND `site_code` = ?");
+  expect(reportQuery.sql).toContain("`item_sku` AS `sku`");
+  expect(reportQuery.sql).toContain("LIMIT 501");
+  expect(reportQuery.values).toEqual(["CLIENT-42", "WH-9"]);
+  expect(reportQuery.timeout).toBe(15000);
+  expect(fake.query.mock.calls.at(-1)?.[0]?.sql).toBe("ROLLBACK");
+  expect(fake.destroy).toHaveBeenCalledOnce();
+});
+
+test("MySQL report execution caps rows and marks the result truncated", async () => {
+  const mapping = {
+    view: "v_stock", clientColumn: "client_id", siteColumn: "site_id", columns: { sku: "sku" },
+  };
+  fake.query.mockImplementation(async ({ sql }: { sql: string }) => {
+    if (sql.includes("CURRENT_ROLE")) return [[{ active_roles: "NONE" }], []];
+    if (sql === "SHOW GRANTS") return [[{ grant: "GRANT SELECT, SHOW VIEW ON `reporting`.* TO `reporter`@`%`" }], []];
+    if (sql.includes("MAX_EXECUTION_TIME"))
+      return [Array.from({ length: 501 }, (_, index) => ({ sku: `SKU-${index}` })), []];
+    return [[], []];
+  });
+  const result = await runMysqlReport(input, "fixture", "8.8.8.8", mapping, {
+    clientKey: "client", siteKey: "site",
+  });
+  expect(result.rows).toHaveLength(500);
+  expect(result.truncated).toBe(true);
+  expect(result.rows[0]).toEqual({ sku: "SKU-0" });
+});
+
+test("MySQL mappings reject unsafe identifiers, extra SQL and unapproved report fields", async () => {
+  for (const mapping of [
+    '{"inventory-1":{"view":"v_stock; DROP TABLE x","clientColumn":"client_id","siteColumn":"site_id","columns":{"sku":"sku"}}}',
+    '{"inventory-1":{"view":"v_stock","clientColumn":"client_id","siteColumn":"site_id","columns":{"sku":"sku"},"where":"1=1"}}',
+  ]) expect(() => getMysqlReportMapping("inventory-1", mapping)).toThrow();
+  const mapping = getMysqlReportMapping("inventory-1", JSON.stringify({
+    "inventory-1": { view: "v_stock", clientColumn: "client_id", siteColumn: "site_id", columns: { sku: "sku" } },
+  }))!;
+  await expect(runMysqlReport(input, "fixture", "8.8.8.8", mapping,
+    { clientKey: "client", siteKey: "site" }, ["unapproved"])).rejects.toThrow();
+  expect(fake.create).not.toHaveBeenCalled();
+});
 
 test("MySQL probe uses pinned TCP, verified TLS, bounded metadata queries and cleanup", async () => {
   expect((await testConnection(input)).status).toBe("connected");

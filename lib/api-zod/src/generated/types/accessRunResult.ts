@@ -5,9 +5,13 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { AccessRunResultRowsItem } from './accessRunResultRowsItem';
 import type { AccessRunResultStatus } from './accessRunResultStatus';
 
 export interface AccessRunResult {
   status: AccessRunResultStatus;
   message: string;
+  columns: string[];
+  rows: AccessRunResultRowsItem[];
+  truncated: boolean;
 }

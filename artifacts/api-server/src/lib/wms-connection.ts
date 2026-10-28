@@ -5,7 +5,7 @@ import pg from "pg";
 import ipaddr from "ipaddr.js";
 import type { WmsConnectionInput, WmsConnectionResult } from "@workspace/api-zod";
 import { ConnectionFailure } from "./wms-connection-error";
-import { testMysqlConnection } from "./wms-mysql-connection";
+import { runMysqlReport, testMysqlConnection, type MysqlReportMapping, type MysqlReportScope } from "./wms-mysql-connection";
 export { ConnectionFailure } from "./wms-connection-error";
 
 /** Never include the driver message, query, config, or cause in a response/log. */
@@ -77,6 +77,43 @@ function reportingPassword(input: WmsConnectionInput): string {
     throw new ConnectionFailure("SECRET_MISMATCH",
       "These fields do not match the server-approved WMS destination. Credentials were not sent. Ask an owner to approve any destination change securely.");
   return password;
+}
+
+/** Build report credentials only from the server's MySQL secret/approval settings. */
+function configuredMysqlReportInput(): WmsConnectionInput | undefined {
+  const keys = ["WMS_MYSQL_DATABASE_URL", "WMS_MYSQL_PASSWORD", "WMS_MYSQL_APPROVED_HOST",
+    "WMS_MYSQL_APPROVED_PORT", "WMS_MYSQL_APPROVED_DATABASE", "WMS_MYSQL_APPROVED_USERNAME"];
+  if (keys.every((key) => process.env[key] === undefined)) return undefined;
+  let destination: { host: string; port: number; database: string; username: string } | undefined;
+  try {
+    const url = new URL(process.env.WMS_MYSQL_DATABASE_URL ?? "");
+    if (url.protocol !== "mysql:") throw new Error();
+    destination = {
+      host: url.hostname, port: Number(url.port || 3306),
+      database: decodeURIComponent(url.pathname.slice(1)),
+      username: decodeURIComponent(url.username),
+    };
+  } catch { /* Standalone passwords require all four explicit approval values below. */ }
+  const approved = {
+    host: process.env.WMS_MYSQL_APPROVED_HOST,
+    port: process.env.WMS_MYSQL_APPROVED_PORT,
+    database: process.env.WMS_MYSQL_APPROVED_DATABASE,
+    username: process.env.WMS_MYSQL_APPROVED_USERNAME,
+  };
+  const hasExplicitApproval = Object.values(approved).some((value) => value !== undefined);
+  if (hasExplicitApproval) {
+    const port = Number(approved.port);
+    if (!approved.host || !approved.database || !approved.username || !approved.port ||
+        !Number.isInteger(port) || port < 1 || port > 65535)
+      throw new ConnectionFailure("DESTINATION_NOT_CONFIGURED", "The approved MySQL destination is incomplete.");
+    destination = { host: approved.host, port, database: approved.database, username: approved.username };
+  }
+  if (!destination)
+    throw new ConnectionFailure("DESTINATION_NOT_CONFIGURED", "Configure a valid server-approved MySQL URL or a password and complete destination approval.");
+  return {
+    engine: "mysql", ...destination, schema: destination.database,
+    sslMode: "verify-full", queryTimeoutSec: 15,
+  };
 }
 
 export type WmsAddressResolver = (host: string) => Promise<Array<{ address: string; family: number }>>;
@@ -159,6 +196,23 @@ async function approvedAddress(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Server-only report execution; browser-supplied connection values are never used. */
+export async function executeApprovedMysqlReport(
+  mapping: MysqlReportMapping,
+  scope: MysqlReportScope,
+  fields?: string[],
+  dependencies: { resolveHost?: WmsAddressResolver } = {},
+) {
+  const input = configuredMysqlReportInput();
+  if (!input) return undefined;
+  if (isIP(input.host))
+    throw new ConnectionFailure("TLS_HOSTNAME_REQUIRED", "Use an approved MySQL DNS hostname matching its TLS certificate.");
+  const password = reportingPassword(input);
+  const address = await approvedAddress(input.host, process.env,
+    dependencies.resolveHost ?? ((host) => lookup(host, { all: true })));
+  return runMysqlReport(input, password, address, mapping, scope, fields);
 }
 
 export async function testConnection(

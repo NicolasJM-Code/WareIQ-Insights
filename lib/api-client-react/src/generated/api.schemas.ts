@@ -666,11 +666,17 @@ export type AccessRunResultStatus = typeof AccessRunResultStatus[keyof typeof Ac
 
 export const AccessRunResultStatus = {
   not_connected: 'not_connected',
+  completed: 'completed',
 } as const;
+
+export type AccessRunResultRowsItem = {[key: string]: string | number | boolean | null};
 
 export interface AccessRunResult {
   status: AccessRunResultStatus;
   message: string;
+  columns: string[];
+  rows: AccessRunResultRowsItem[];
+  truncated: boolean;
 }
 
 /**

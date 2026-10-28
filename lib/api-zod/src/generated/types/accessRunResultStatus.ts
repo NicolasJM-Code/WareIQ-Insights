@@ -11,4 +11,5 @@ export type AccessRunResultStatus = typeof AccessRunResultStatus[keyof typeof Ac
 
 export const AccessRunResultStatus = {
   not_connected: 'not_connected',
+  completed: 'completed',
 } as const;

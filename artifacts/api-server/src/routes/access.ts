@@ -32,6 +32,8 @@ import {
   retryConfirmedFailedAccessNotification,
 } from "../lib/access-notifications";
 import { reportingChangeNotices } from "../lib/reporting-notification-change";
+import { executeApprovedMysqlReport } from "../lib/wms-connection";
+import { getMysqlReportMapping } from "../lib/wms-mysql-connection";
 
 const router: IRouter = Router();
 router.get("/auth/session", requireIdentity, (_req, res) => {
@@ -451,16 +453,57 @@ router.post("/access/reports/:id/run", handler(async (req, res) => {
   requireMemberAccess(access);
   const { id } = parsed(RunAccessReportParams, req.params);
   const { siteId } = parsed(RunAccessReportBody.strict(), req.body);
-  if (!access.session.sites.some((site) => site.id === siteId))
+  const site = access.session.sites.find((candidate) => candidate.id === siteId);
+  if (!site)
     throw new AccessError(403, "This site is not assigned to you.");
+  let mappingKey = id;
+  let fields: string[] | undefined;
   if (!access.session.reportIds.includes(id)) {
     const [own] = await db.select().from(ownReportsTable).where(and(eq(ownReportsTable.id, id),
       eq(ownReportsTable.ownerId, access.actor.userId), eq(ownReportsTable.clientId, access.member!.clientId)));
     if (!own || !access.session.ownReportSections.includes(own.definition.section))
       throw new AccessError(403, "Your role does not grant access to this report.");
+    mappingKey = `own:${own.definition.section}:${own.definition.dataset}`;
+    fields = own.definition.fields;
   }
-  // No operational reads before the WMS source mapping has been approved.
-  res.json(RunAccessReportResponse.parse({ status: "not_connected", message: "Access is authorised, but this report cannot run until the WMS database and approved report source mapping are connected." }));
+  const mapping = getMysqlReportMapping(mappingKey);
+  if (!mapping) {
+    res.json(RunAccessReportResponse.parse({
+      status: "not_connected",
+      message: "Access is authorised, but this report has no server-approved MySQL reporting-view mapping.",
+      columns: [], rows: [], truncated: false,
+    }));
+    return;
+  }
+  if (!access.client?.companyNumber || !site.sourceId) {
+    res.json(RunAccessReportResponse.parse({
+      status: "not_connected",
+      message: "A client reporting key and WMS site mapping are required before this report can run safely.",
+      columns: [], rows: [], truncated: false,
+    }));
+    return;
+  }
+  const result = await executeApprovedMysqlReport(mapping, {
+    clientKey: access.client.companyNumber,
+    siteKey: site.sourceId,
+  }, fields);
+  if (!result) {
+    res.json(RunAccessReportResponse.parse({
+      status: "not_connected",
+      message: "Server-approved MySQL reporting credentials are not configured.",
+      columns: [], rows: [], truncated: false,
+    }));
+    return;
+  }
+  res.json(RunAccessReportResponse.parse({
+    status: "completed",
+    message: result.truncated
+      ? `Report completed. Showing ${result.rows.length} matching rows; the result was capped.`
+      : `Report completed with ${result.rows.length} matching rows.`,
+    columns: result.columns,
+    rows: result.rows,
+    truncated: result.truncated,
+  }));
 }));
 
 export default router;

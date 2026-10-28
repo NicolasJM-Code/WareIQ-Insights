@@ -153,7 +153,7 @@ export default function Settings() {
 
   return (
     <div>
-      <PageHeader eyebrow="12 · Administration" title="Settings" description="Test the WMS PostgreSQL connection through the reporting server. Reports still use labeled sample data until approved reporting views are mapped." />
+      <PageHeader eyebrow="12 · Administration" title="Settings" description="Test a WMS connection and review the server-approved MySQL setup required to run mapped reports. Connection settings and credentials are never saved here." />
       <div className="mb-4 flex items-center gap-3 text-sm">
         {isSignedIn ? <><UserButton /><span>Signed in. Database tests require an administrator account.</span></> : <Link href="/sign-in" className="text-primary underline">Sign in to test the database connection</Link>}
       </div>
@@ -203,7 +203,7 @@ export default function Settings() {
                           <SelectItem value="mysql">MySQL 8+</SelectItem>
                         </SelectContent>
                       </Select>
-                      <FormDescription>Connection testing only. Changing engines does not migrate data or enable live reports.</FormDescription>
+          <FormDescription>Changing engines never migrates data. MySQL reports run only when server-approved credentials and view mappings are configured.</FormDescription>
                     </FormItem>
                   )} />
                   <div className="grid sm:grid-cols-[1fr_140px] gap-4">
@@ -271,7 +271,7 @@ export default function Settings() {
                     <div role="status" className="rounded-md border border-[hsl(42_70%_70%)] bg-[hsl(42_90%_94%)] p-4 text-[13px] text-[hsl(30_70%_22%)]" data-testid="status-test-result">
                       <div className="font-semibold flex items-center gap-2"><Info className="h-4 w-4" />{testResult.status === 'connected' ? 'Connection test passed' : 'Connection test failed'} · {testResult.code}</div>
                       <p className="mt-1">{testResult.message}</p>
-                      <p className="mt-1 text-xs">Tested {new Date(testResult.testedAt).toLocaleString()}. This test does not save a connection or switch reports to live data.</p>
+                      <p className="mt-1 text-xs">Tested {new Date(testResult.testedAt).toLocaleString()}. Testing does not save a connection or enable reports by itself.</p>
                     </div>
                   )}
                   {testResult === 'invalid' && (
@@ -293,15 +293,15 @@ export default function Settings() {
             <div className="space-y-4">
               <Section icon={ShieldCheck} title="What live setup requires">
                 <ol className="space-y-3 text-[12.5px]">
-                  <li><span className="font-semibold">1. Server-side connection testing is available.</span> The test uses verified TLS and a bounded pool, checks role permissions and schema access, and closes the connection. It reads metadata only.</li>
-                  <li><span className="font-semibold">2. Secrets held server-side.</span> Store credentials in environment variables or a secrets manager, not in browser code or source control:
+                  <li><span className="font-semibold">1. Test the server connection.</span> Testing uses verified TLS, checks read-only grants and database access, and closes the connection. The test reads metadata only.</li>
+                  <li><span className="font-semibold">2. Keep credentials and report mappings on the server.</span> Never put these in browser code or source control:
                     <pre className="mt-1.5 rounded bg-muted p-2.5 font-mono text-[11px] leading-relaxed overflow-x-auto">{isMysql
                       ? 'WMS_MYSQL_DATABASE_URL (approved mysql:// URL)\nor WMS_MYSQL_PASSWORD with all of:\nWMS_MYSQL_APPROVED_HOST\nWMS_MYSQL_APPROVED_PORT\nWMS_MYSQL_APPROVED_DATABASE\nWMS_MYSQL_APPROVED_USERNAME\nWMS_MYSQL_CA_CERT (private CA only)'
                       : 'WMS_DATABASE_URL (approved PostgreSQL URL)\nor WMS_PGPASSWORD with all of:\nWMS_APPROVED_HOST\nWMS_APPROVED_PORT\nWMS_APPROVED_DATABASE\nWMS_APPROVED_USERNAME\nWMS_CA_CERT (private CA only)'}</pre>
                   </li>
-                  <li><span className="font-semibold">3. A least-privilege role.</span> SELECT only on approved reporting tables and views. MySQL 8+ also needs SHOW VIEW and must not have role grants or grant options.</li>
-                  <li><span className="font-semibold">4. Protect the live WMS.</span> Connection pooling, statement timeouts and suitable indexes; a read replica if reporting load grows.</li>
-                  <li><span className="font-semibold">5. Safe errors.</span> Users see actionable, sanitized messages. Passwords, connection strings and raw SQL errors are never logged.</li>
+                  <li><span className="font-semibold">3. Approve MySQL views explicitly.</span> Set <code>WMS_MYSQL_REPORT_MAPPINGS</code> to an allowlist of report or dataset IDs, view names, client/site filter columns and approved output columns. See <code>docs/wms-mysql.md</code> for the format. No browser-supplied SQL or mapping is accepted.</li>
+                  <li><span className="font-semibold">4. Keep each query scoped and bounded.</span> Reports filter by the WareIQ client's company number and the assigned site's WMS source ID. MySQL runs in a read-only transaction with a 15-second timeout and a 500-row maximum.</li>
+                  <li><span className="font-semibold">5. Use a least-privilege account.</span> Grant SELECT and SHOW VIEW only on approved reporting views; MySQL 8+ accounts must not use roles or grant options.</li>
                 </ol>
               </Section>
               <Section icon={Server} title="Deployment network access">

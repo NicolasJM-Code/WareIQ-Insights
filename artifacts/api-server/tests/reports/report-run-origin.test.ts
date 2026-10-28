@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import { PgDialect } from "drizzle-orm/pg-core";
 
@@ -10,6 +10,7 @@ const provider = vi.hoisted(() => ({
 }));
 const poolConstructor = vi.hoisted(() => vi.fn());
 const database = vi.hoisted(() => ({ select: vi.fn() }));
+const executeMysqlReport = vi.hoisted(() => vi.fn());
 
 vi.mock("@clerk/express", () => ({
   clerkMiddleware: () => (_req: unknown, _res: unknown, next: () => void) => next(),
@@ -31,6 +32,10 @@ vi.mock("pg", async (importOriginal) => {
     default: { ...actual.default, Pool: poolConstructor },
   };
 });
+vi.mock("../../src/lib/wms-connection", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../src/lib/wms-connection")>(),
+  executeApprovedMysqlReport: executeMysqlReport,
+}));
 vi.mock("pino-http", () => ({
   default: () => (req: { log: unknown }, _res: unknown, next: () => void) => {
     req.log = { error: () => undefined, warn: () => undefined, info: () => undefined };
@@ -59,7 +64,7 @@ const otherMember = {
 const client = {
   id: "client-a",
   name: "Synthetic client",
-  companyNumber: null,
+  companyNumber: "COMPANY-01",
   addressLine1: null,
   addressLine2: null,
   city: null,
@@ -81,6 +86,7 @@ const role = {
 const site = {
   id: "site-a",
   clientId: "client-a",
+  sourceId: "WAREHOUSE-01",
   type: "test",
   name: "Synthetic site",
   active: true,
@@ -124,6 +130,7 @@ function runRequest(options: { origin?: string; fetchSite?: string; reportId?: s
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubEnv("WMS_MYSQL_REPORT_MAPPINGS", undefined);
   provider.userId = "reporter-a";
   provider.sessionId = "session-a";
   memberFixture = member;
@@ -168,7 +175,9 @@ beforeEach(() => {
       },
     }),
   }));
+  executeMysqlReport.mockResolvedValue({ columns: ["id"], rows: [{ id: "GRN-1" }], truncated: false });
 });
+afterEach(() => vi.unstubAllEnvs());
 
 describe("full-app authorization for report runs", () => {
   it.each([
@@ -200,8 +209,54 @@ describe("full-app authorization for report runs", () => {
     expect(poolConstructor).not.toHaveBeenCalled();
   });
 
+  it("runs a mapped standard report with the authorized client and site source keys", async () => {
+    vi.stubEnv("WMS_MYSQL_REPORT_MAPPINGS", JSON.stringify({
+      "inbound-1": {
+        view: "v_receipts", clientColumn: "client_code", siteColumn: "warehouse_code",
+        columns: { id: "receipt_id" },
+      },
+    }));
+    const response = await runRequest({ origin: "https://wareiq.test", fetchSite: "same-origin" });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ status: "completed", columns: ["id"], rows: [{ id: "GRN-1" }] });
+    expect(executeMysqlReport).toHaveBeenCalledOnce();
+    expect(executeMysqlReport).toHaveBeenCalledWith(
+      expect.objectContaining({ view: "v_receipts" }),
+      { clientKey: "COMPANY-01", siteKey: "WAREHOUSE-01" },
+      undefined,
+    );
+    expect(poolConstructor).not.toHaveBeenCalled();
+  });
+
+  it("uses owner/client-bound personal report definitions for MySQL field selection", async () => {
+    vi.stubEnv("WMS_MYSQL_REPORT_MAPPINGS", JSON.stringify({
+      "own:inbound:receipts": {
+        view: "v_receipts", clientColumn: "client_code", siteColumn: "warehouse_code",
+        columns: { id: "receipt_id" },
+      },
+    }));
+    const response = await runRequest({
+      reportId: "reporter-a-report", origin: "https://wareiq.test", fetchSite: "same-origin",
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.status).toBe("completed");
+    expect(executeMysqlReport).toHaveBeenCalledWith(
+      expect.objectContaining({ view: "v_receipts" }),
+      { clientKey: "COMPANY-01", siteKey: "WAREHOUSE-01" },
+      ["id"],
+    );
+  });
+
   it("denies another user from running the report owner's personal report", async () => {
     provider.userId = "reporter-b";
+    vi.stubEnv("WMS_MYSQL_REPORT_MAPPINGS", JSON.stringify({
+      "own:inbound:receipts": {
+        view: "v_receipts", clientColumn: "client_code", siteColumn: "warehouse_code",
+        columns: { id: "receipt_id" },
+      },
+    }));
 
     const response = await runRequest({
       reportId: "another-owner-report",
@@ -211,10 +266,17 @@ describe("full-app authorization for report runs", () => {
 
     expect(response.status).toBe(403);
     expect(response.body).toEqual({ error: "Your role does not grant access to this report." });
+    expect(executeMysqlReport).not.toHaveBeenCalled();
     expect(poolConstructor).not.toHaveBeenCalled();
   });
 
   it("denies an owner from running their personal report under another client", async () => {
+    vi.stubEnv("WMS_MYSQL_REPORT_MAPPINGS", JSON.stringify({
+      "own:inbound:receipts": {
+        view: "v_receipts", clientColumn: "client_code", siteColumn: "warehouse_code",
+        columns: { id: "receipt_id" },
+      },
+    }));
     const response = await runRequest({
       reportId: "another-client-report",
       origin: "https://wareiq.test",
@@ -223,6 +285,7 @@ describe("full-app authorization for report runs", () => {
 
     expect(response.status).toBe(403);
     expect(response.body).toEqual({ error: "Your role does not grant access to this report." });
+    expect(executeMysqlReport).not.toHaveBeenCalled();
     expect(poolConstructor).not.toHaveBeenCalled();
   });
 
@@ -257,6 +320,12 @@ describe("full-app authorization for report runs", () => {
   });
 
   it("rejects a site no longer assigned to the member before opening a WMS connection", async () => {
+    vi.stubEnv("WMS_MYSQL_REPORT_MAPPINGS", JSON.stringify({
+      "inbound-1": {
+        view: "v_receipts", clientColumn: "client_code", siteColumn: "warehouse_code",
+        columns: { id: "receipt_id" },
+      },
+    }));
     siteFixtures = [site, {
       ...site,
       id: "site-b",
@@ -273,6 +342,7 @@ describe("full-app authorization for report runs", () => {
     expect(response.body).toEqual({ error: "This site is not assigned to you." });
     expect(provider.getSession).toHaveBeenCalledOnce();
     expect(provider.getUser).toHaveBeenCalledOnce();
+    expect(executeMysqlReport).not.toHaveBeenCalled();
     expect(poolConstructor).not.toHaveBeenCalled();
   });
 });

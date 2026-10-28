@@ -41,6 +41,7 @@ export * from './accessRoleInput';
 export * from './accessRoleNotification';
 export * from './accessRunInput';
 export * from './accessRunResult';
+export * from './accessRunResultRowsItem';
 export * from './accessRunResultStatus';
 export * from './accessSession';
 export * from './accessSessionStatus';

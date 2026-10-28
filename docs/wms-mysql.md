@@ -1,9 +1,9 @@
-# MySQL connection testing
+# MySQL reporting setup
 
 Settings → Database connection now offers PostgreSQL (the unchanged default)
-and MySQL 8+. This adds a metadata-only connectivity probe, not a database
-migration or live reporting adapter. Existing reports still use sample data.
-The application's own PostgreSQL database is not changed.
+and MySQL 8+. MySQL can execute approved report mappings against server-approved
+views. Connection testing remains metadata-only. The application's own
+PostgreSQL database is unchanged and is not used for warehouse report data.
 
 ## Configure a MySQL destination
 
@@ -28,7 +28,58 @@ Select **MySQL 8+** in Settings, enter the approved hostname, port (normally
 3306), database and reporting username, then select **Test connection**. The
 schema follows the database name automatically. Connection values are not saved
 in the browser; only existing report preferences are saved by Save preferences.
-Copy configuration includes the engine and excludes username/password.
+Copy configuration includes the engine and excludes username/password. A
+successful probe does not enable reports unless the server mapping below is
+also configured.
+
+## Approve reporting views
+
+Set `WMS_MYSQL_REPORT_MAPPINGS` as a server-side JSON secret/config value. The
+object keys are report IDs from the server's report catalog, or
+`own:<section>:<dataset>` for personal reports. Values name a view, its
+client/site filter columns, and the explicit output-field-to-view-column
+allowlist:
+
+```json
+{
+  "inventory-1": {
+    "view": "v_stock_on_hand",
+    "clientColumn": "client_code",
+    "siteColumn": "site_code",
+    "columns": {
+      "sku": "sku",
+      "name": "product_name",
+      "onHand": "on_hand",
+      "available": "available"
+    }
+  },
+  "own:inventory:stock": {
+    "view": "v_stock_on_hand",
+    "clientColumn": "client_code",
+    "siteColumn": "site_code",
+    "columns": {
+      "sku": "sku",
+      "name": "product_name",
+      "wh": "site_code",
+      "onHand": "on_hand",
+      "available": "available"
+    }
+  }
+}
+```
+
+This example is illustrative: replace names with the real reporting view
+columns and only include reports that are approved. The `clientColumn` values
+must match the WareIQ client's company number; `siteColumn` values must match
+the selected WareIQ site's source ID in the WMS. Both filters are mandatory on
+every query, and a missing client number or site source mapping prevents a run.
+Mapping keys and SQL identifiers are validated; request bodies cannot supply
+SQL, view names, columns, or mappings. For personal reports, the selected
+fields must be included in the mapping for that section and dataset.
+
+Only mapped reports can run. Results are returned to the signed-in user in the
+report run panel, with at most 500 rows. Existing sample report tables remain
+separate and are still labeled as sample data.
 
 ## Requirements and boundaries
 
@@ -46,9 +97,13 @@ Copy configuration includes the engine and excludes username/password.
   privileges, grant options and unrecognized grant formats. It does not expand
   roles. This intentionally excludes accounts whose effective permissions
   cannot be established by these conservative checks.
-- The probe begins a read-only transaction, checks CURRENT_ROLE/SHOW GRANTS and
-  information_schema metadata, and rolls back. No warehouse records or
-  user-supplied SQL are read or executed.
+- The connection probe begins a read-only transaction, checks
+  CURRENT_ROLE/SHOW GRANTS and `information_schema` metadata, and rolls back.
+  It does not read warehouse rows.
+- Each report run repeats the read-only role/grant checks, then selects only
+  configured columns from one configured view. Client company number and site
+  source ID are bound as values in every query. A fixed 15-second execution
+  timeout and 500-row cap apply. No arbitrary user SQL is accepted.
 - The approved hostname resolves to pinned policy-approved addresses before credentials
   are sent. Connection timeout is 8 seconds; each metadata query has a maximum
   15-second timeout. The socket is destroyed on success and failure.
@@ -66,6 +121,6 @@ pnpm exec vitest run --config vitest.config.ts artifacts/api-server/tests/wms-my
 pnpm --filter @workspace/scripts exec tsx --test ../artifacts/api-server/src/lib/wms-connection.test.ts
 ```
 
-A live MySQL connection has not been verified. That requires an approved
-reachable server, reporting views, a read-only account and securely configured
-MySQL credentials.
+A live MySQL report run has not been verified. It requires an approved
+reachable server, views containing the approved client/site keys, a read-only
+account, secure credentials, and mappings tested against the real view schema.

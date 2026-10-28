@@ -651,8 +651,11 @@ export const RunAccessReportBody = zod.object({
 })
 
 export const RunAccessReportResponse = zod.object({
-  "status": zod.enum(['not_connected']),
-  "message": zod.string()
+  "status": zod.enum(['not_connected', 'completed']),
+  "message": zod.string(),
+  "columns": zod.array(zod.string()),
+  "rows": zod.array(zod.record(zod.string(), zod.union([zod.string(),zod.number(),zod.boolean(),zod.null()]))),
+  "truncated": zod.boolean()
 })
 
 
