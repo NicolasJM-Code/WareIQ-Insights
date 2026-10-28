@@ -152,6 +152,134 @@ it("refuses deletion and retains the journal on an ownership mismatch", async ()
   expect(fake.unlink).not.toHaveBeenCalled();
 });
 
+it("recovers an intent only when one exact-email result has the private run marker", async () => {
+  const runId = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
+  const email = `wareiq-browser-${runId}+clerk_test@example.com`;
+  const account = {
+    id: "user_generated",
+    privateMetadata: { wareiqBrowserTest: runId },
+    emailAddresses: [{ emailAddress: email }],
+  };
+  fake.readFile.mockResolvedValue(JSON.stringify({
+    kind: "wareiq-browser", state: "intent", runId, email,
+  }));
+  fake.getUserList.mockResolvedValue({ totalCount: 1, data: [account] });
+  fake.getUser.mockResolvedValue(account);
+  const { recoverFixture } = await import("../browser-tests/fixture");
+
+  await recoverFixture(`.cache/clerk-browser/${runId}.json`);
+
+  expect(fake.getUserList).toHaveBeenCalledExactlyOnceWith({ emailAddress: [email], limit: 2 });
+  expect(fake.getUser).toHaveBeenCalledExactlyOnceWith("user_generated");
+  expect(fake.deleteUser).toHaveBeenCalledExactlyOnceWith("user_generated");
+  expect(fake.unlink).toHaveBeenCalledExactlyOnceWith(
+    expect.stringMatching(new RegExp(`${runId.replaceAll("-", "\\-")}\\.json$`)),
+  );
+});
+
+it.each([
+  ["zero matches", { totalCount: 0, data: [] }, false],
+  ["multiple matches", { totalCount: 2, data: [{ id: "user_one" }, { id: "user_two" }] }, true],
+  ["mismatched count", { totalCount: 1, data: [] }, true],
+  ["wrong private marker", {
+    totalCount: 1,
+    data: [{
+      id: "user_unrelated",
+      privateMetadata: { wareiqBrowserTest: "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb" },
+      emailAddresses: [{ emailAddress: "wareiq-browser-other@example.com" }],
+    }],
+  }, true],
+  ["wrong email", {
+    totalCount: 1,
+    data: [{
+      id: "user_unrelated",
+      privateMetadata: { wareiqBrowserTest: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa" },
+      emailAddresses: [{ emailAddress: "different@example.com" }],
+    }],
+  }, true],
+])("does not delete an unrelated account after %s during intent recovery", async (_label, result, refuses) => {
+  const runId = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
+  const email = `wareiq-browser-${runId}@example.com`;
+  fake.readFile.mockResolvedValue(JSON.stringify({
+    kind: "wareiq-browser", state: "intent", runId, email,
+  }));
+  fake.getUserList.mockResolvedValue(result);
+  fake.getUser.mockResolvedValue({
+    id: "user_unrelated",
+    privateMetadata: { wareiqBrowserTest: "not-this-run" },
+    emailAddresses: [{ emailAddress: "unrelated@example.com" }],
+  });
+  const { recoverFixture } = await import("../browser-tests/fixture");
+
+  const recovery = recoverFixture(`.cache/clerk-browser/${runId}.json`);
+  if (refuses) await expect(recovery).rejects.toThrow();
+  else await recovery;
+
+  expect(fake.deleteUser).not.toHaveBeenCalled();
+  if (refuses) expect(fake.unlink).not.toHaveBeenCalled();
+  else expect(fake.unlink).toHaveBeenCalledOnce();
+});
+
+it("retains the intent journal when the exact-email provider lookup is unavailable", async () => {
+  const runId = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
+  const email = `wareiq-browser-${runId}@example.com`;
+  fake.readFile.mockResolvedValue(JSON.stringify({
+    kind: "wareiq-browser", state: "intent", runId, email,
+  }));
+  fake.getUserList.mockRejectedValue(new Error("sensitive provider detail"));
+  const { recoverFixture } = await import("../browser-tests/fixture");
+
+  await expect(recoverFixture(`.cache/clerk-browser/${runId}.json`))
+    .rejects.toThrow("sensitive details suppressed");
+
+  expect(fake.deleteUser).not.toHaveBeenCalled();
+  expect(fake.unlink).not.toHaveBeenCalled();
+});
+
+it("retains the ID journal when provider deletion fails during recovery", async () => {
+  const runId = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
+  const email = `wareiq-browser-${runId}@example.com`;
+  const account = {
+    id: "user_generated",
+    privateMetadata: { wareiqBrowserTest: runId },
+    emailAddresses: [{ emailAddress: email }],
+  };
+  fake.readFile.mockResolvedValue(JSON.stringify({
+    kind: "wareiq-browser", runId, email, userId: account.id,
+  }));
+  fake.getUser.mockResolvedValue(account);
+  fake.deleteUser.mockRejectedValue(new Error("sensitive provider detail"));
+  const { recoverFixture } = await import("../browser-tests/fixture");
+
+  await expect(recoverFixture(`.cache/clerk-browser/${runId}.json`))
+    .rejects.toThrow("sensitive details suppressed");
+
+  expect(fake.deleteUser).toHaveBeenCalledExactlyOnceWith(account.id);
+  expect(fake.unlink).not.toHaveBeenCalled();
+});
+
+it("retains the ID journal when removal fails after provider deletion", async () => {
+  const runId = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
+  const email = `wareiq-browser-${runId}@example.com`;
+  const account = {
+    id: "user_generated",
+    privateMetadata: { wareiqBrowserTest: runId },
+    emailAddresses: [{ emailAddress: email }],
+  };
+  fake.readFile.mockResolvedValue(JSON.stringify({
+    kind: "wareiq-browser", runId, email, userId: account.id,
+  }));
+  fake.getUser.mockResolvedValue(account);
+  fake.unlink.mockRejectedValue(new Error("journal removal failed"));
+  const { recoverFixture } = await import("../browser-tests/fixture");
+
+  await expect(recoverFixture(`.cache/clerk-browser/${runId}.json`))
+    .rejects.toThrow("journal removal failed");
+
+  expect(fake.deleteUser).toHaveBeenCalledExactlyOnceWith(account.id);
+  expect(fake.unlink).toHaveBeenCalledOnce();
+});
+
 it("keeps hosted checks separate from offline and ticket browser discovery", () => {
   const offline = readFileSync("vitest.config.ts", "utf8");
   expect(offline).not.toContain("browser-tests");
