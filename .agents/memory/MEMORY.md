@@ -9,3 +9,4 @@
 - [PostgreSQL interruption evidence](postgres-interruption-evidence.md) — a checked-out client can fail between queries; durability tests must not hide process-level errors.
 - [Access notification lock ordering](access-notification-lock-order.md) — platform email delivery must check and send under the shared role lock before taking its outbox row lock.
 - [Notification page cursors](notification-page-cursors.md) — PostgreSQL timestamp cursors must preserve full database precision and use a deterministic tie-breaker.
+- [Authorization database isolation](auth-database-isolation.md) — database-free auth subprocesses must allow ephemeral loopback HTTP for Supertest while blocking external connections and observing PG constructors.

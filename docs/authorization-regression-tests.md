@@ -57,6 +57,14 @@ central guards, so guard removal or reordering exposes a successful handler
 instead of accidentally passing because a route does not exist. Supertest uses
 an isolated, ephemeral local HTTP listener, not the running application.
 
+The provider-boundary regression also starts the full API authorization project
+in a subprocess with synthetic `DATABASE_URL`, `WMS_DATABASE_URL`, and
+`WMS_PGPASSWORD` values. A probe test confirms the Vitest worker sees blank
+values; a temporary setup observes PostgreSQL `Pool` and `Client` construction
+across the suite, and the subprocess blocks outbound network connections.
+Passing requires the worker settings to be cleared, no database client to be
+constructed, and no network attempt to occur.
+
 ## Covered risks
 
 - Public health checks versus anonymous 401s on protected and unknown routes.

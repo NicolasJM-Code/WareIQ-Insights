@@ -37,14 +37,155 @@ describe("opt-in provider test boundary", () => {
     expect(getIncludePatterns(providerConfig))
       .toEqual(["artifacts/api-server/provider-tests/**/*.test.ts"]);
 
+    await expectOfflineAuthorizationDatabaseIsolation();
     await expectProviderDatabaseIsolation();
     await expectLiveEntrypointToRespectPreflightAndRecovery();
-  });
+  }, 120_000);
 });
 
 function getIncludePatterns(configSource: string) {
   return [...configSource.matchAll(/\binclude:\s*(\[[^\]]*\])/g)]
     .flatMap(([, raw]) => JSON.parse(raw) as string[]);
+}
+
+async function expectOfflineAuthorizationDatabaseIsolation() {
+  const tempRoot = join(workspaceRoot, "tmp");
+  await mkdir(tempRoot, { recursive: true });
+  const directory = await mkdtemp(join(tempRoot, "wareiq-offline-auth-database-"));
+  const probeName = `offline-database-boundary-probe-${directory.split("/").at(-1)}.test.ts`;
+  const probePath = join(workspaceRoot, "artifacts/api-server/tests", probeName);
+  const wareiqProbeName = `offline-database-boundary-probe-${directory.split("/").at(-1)}.test.tsx`;
+  const wareiqProbePath = join(workspaceRoot, "artifacts/wareiq/tests", wareiqProbeName);
+  const configPath = join(directory, "vitest.config.mjs");
+  const setupPath = join(directory, "observe-database-clients.ts");
+  const networkBlockerPath = join(directory, "block-network.cjs");
+  const clientLogPath = join(directory, "database-clients.jsonl");
+
+  try {
+    await writeFile(
+      probePath,
+      `
+import { expect, it } from "vitest";
+
+it("clears synthetic application and WMS database settings in auth workers", () => {
+  expect(process.env.DATABASE_URL).toBe("");
+  expect(process.env.WMS_DATABASE_URL).toBe("");
+  expect(process.env.WMS_PGPASSWORD).toBe("");
+});
+`,
+    );
+    await writeFile(
+      wareiqProbePath,
+      `
+import { expect, it } from "vitest";
+
+it("clears synthetic application and WMS database settings in WareIQ workers", () => {
+  expect(process.env.DATABASE_URL).toBe("");
+  expect(process.env.WMS_DATABASE_URL).toBe("");
+  expect(process.env.WMS_PGPASSWORD).toBe("");
+});
+`,
+    );
+    await writeFile(
+      setupPath,
+      `
+import { appendFileSync } from "node:fs";
+import { vi } from "vitest";
+
+vi.mock("pg", async (importOriginal) => {
+  const actual = await importOriginal();
+  class ObservedPool extends actual.Pool {
+    constructor(...args) {
+      appendFileSync(process.env.WAREIQ_OFFLINE_DATABASE_CLIENT_LOG, "Pool\\\\n");
+      super(...args);
+    }
+  }
+  class ObservedClient extends actual.Client {
+    constructor(...args) {
+      appendFileSync(process.env.WAREIQ_OFFLINE_DATABASE_CLIENT_LOG, "Client\\\\n");
+      super(...args);
+    }
+  }
+  return {
+    ...actual,
+    Pool: ObservedPool,
+    Client: ObservedClient,
+    default: { ...actual.default, Pool: ObservedPool, Client: ObservedClient },
+  };
+});
+`,
+    );
+    await writeFile(networkBlockerPath, networkBlockerModule);
+    await writeFile(
+      configPath,
+      `
+import baseConfig from ${JSON.stringify(join(workspaceRoot, "vitest.config.ts"))};
+
+export default {
+  ...baseConfig,
+  test: {
+    ...baseConfig.test,
+    projects: baseConfig.test.projects.map((project) => {
+      return {
+        ...project,
+        test: {
+          ...project.test,
+          setupFiles: [${JSON.stringify(setupPath)}],
+          ...(project.test.name === "api-authorization"
+            ? {
+                exclude: [
+                  ...(project.test.exclude ?? []),
+                  "artifacts/api-server/tests/provider-boundary.test.ts",
+                ],
+              }
+            : {}),
+        },
+      };
+    }),
+  },
+};
+`,
+    );
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        join(workspaceRoot, "node_modules/vitest/vitest.mjs"),
+        "run",
+        "--config",
+        configPath,
+        "--root",
+        workspaceRoot,
+      ],
+      {
+        cwd: workspaceRoot,
+        env: {
+          PATH: process.env.PATH,
+          HOME: directory,
+          TMPDIR: directory,
+          NODE_OPTIONS: `--require=${networkBlockerPath}`,
+          NODE_ENV: "test",
+          DATABASE_URL: "postgresql://offline:offline@127.0.0.1:1/application",
+          WMS_DATABASE_URL: "postgresql://offline:offline@127.0.0.1:1/wms",
+          WMS_PGPASSWORD: "synthetic-offline-password",
+          WAREIQ_OFFLINE_DATABASE_CLIENT_LOG: clientLogPath,
+        },
+        encoding: "utf8",
+        timeout: 120_000,
+      },
+    );
+    const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+    expect(result.error).toBeUndefined();
+    expect(result.status, output).toBe(0);
+    expect(output).toContain(probeName);
+    expect(output).toContain(wareiqProbeName);
+    expect(output).not.toContain("FORBIDDEN_OFFLINE_NETWORK");
+    expect(existsSync(clientLogPath)).toBe(false);
+  } finally {
+    await rm(probePath, { force: true });
+    await rm(wareiqProbePath, { force: true });
+    await rm(directory, { recursive: true, force: true });
+  }
 }
 
 async function expectProviderDatabaseIsolation() {
@@ -256,12 +397,28 @@ const tls = require("node:tls");
 const http = require("node:http");
 const https = require("node:https");
 const forbidden = () => { throw new Error("FORBIDDEN_OFFLINE_NETWORK"); };
-net.connect = forbidden;
-net.createConnection = forbidden;
-net.Socket.prototype.connect = forbidden;
+const isAllowedLocalTestServer = (args) => {
+  const parameters = Array.isArray(args[0]) ? args[0] : args;
+  const options = parameters[0];
+  const host = typeof options === "object" && options !== null
+    ? options.host ?? options.hostname
+    : typeof parameters[1] === "string" ? parameters[1] : undefined;
+  const port = typeof options === "object" && options !== null
+    ? options.port
+    : typeof options === "number" ? options : undefined;
+  return ["localhost", "127.0.0.1", "::1"].includes(host) &&
+    Number(port) !== 1;
+};
+const blockUnlessLocalTestServer = (original) => function (...args) {
+  if (!isAllowedLocalTestServer(args)) return forbidden();
+  return Reflect.apply(original, this, args);
+};
+net.connect = blockUnlessLocalTestServer(net.connect);
+net.createConnection = blockUnlessLocalTestServer(net.createConnection);
+net.Socket.prototype.connect = blockUnlessLocalTestServer(net.Socket.prototype.connect);
 tls.connect = forbidden;
-http.request = forbidden;
-http.get = forbidden;
+http.request = blockUnlessLocalTestServer(http.request);
+http.get = blockUnlessLocalTestServer(http.get);
 https.request = forbidden;
 https.get = forbidden;
 globalThis.fetch = forbidden;
