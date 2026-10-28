@@ -45,11 +45,11 @@ export const ListAccessHistoryResponse = zod.object({
   "routing": zod.enum(['configured', 'not_configured']),
   "keyMode": zod.enum(['configured', 'not_configured']),
   "environment": zod.union([zod.literal('development'),zod.literal('production'),zod.literal(null)]).nullable(),
-  "delivery": zod.enum(['not_configured', 'unknown', 'verified_delivery', 'delivery_problem']),
+  "delivery": zod.enum(['not_configured', 'unknown', 'verified_delivery', 'delivery_problem', 'delivery_unknown', 'diagnostics_unavailable']),
   "lastVerifiedDeliveryAt": zod.string().nullable(),
   "lastDeliveryFailureAt": zod.string().nullable(),
-  "failureScope": zod.enum(['current_process'])
-}).describe('Administrator-only local setup and historical persisted signed-delivery evidence; never proof of an active provider subscription. Failures are authenticated storage failures observed in this process only.'),
+  "failureScope": zod.enum(['environment_instance'])
+}).describe('Administrator-only local setup, historical signed-delivery evidence and durable environment/instance-scoped delivery diagnostics shared across replicas; never proof of an active provider subscription.'),
   "entries": zod.array(zod.object({
   "id": zod.string().uuid(),
   "createdAt": zod.string(),

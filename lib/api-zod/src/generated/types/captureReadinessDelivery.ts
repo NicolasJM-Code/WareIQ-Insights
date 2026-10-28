@@ -14,4 +14,6 @@ export const CaptureReadinessDelivery = {
   unknown: 'unknown',
   verified_delivery: 'verified_delivery',
   delivery_problem: 'delivery_problem',
+  delivery_unknown: 'delivery_unknown',
+  diagnostics_unavailable: 'diagnostics_unavailable',
 } as const;

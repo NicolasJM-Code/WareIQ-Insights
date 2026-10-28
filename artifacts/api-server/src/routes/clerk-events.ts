@@ -1,7 +1,8 @@
 import { Router, raw, type ErrorRequestHandler, type IRouter } from "express";
 import { verifyWebhook } from "@clerk/express/webhooks";
 import { recordProviderRoleObservation } from "@workspace/db/access-audit";
-import { captureConfiguration, noteCaptureDelivery } from "../lib/capture-readiness";
+import { captureConfiguration } from "../lib/capture-readiness";
+import { beginCaptureDelivery, finishCaptureDelivery } from "@workspace/db/capture-diagnostics";
 
 const router: IRouter = Router();
 
@@ -59,17 +60,22 @@ router.post("/webhooks/clerk/:environment", raw({ type: "application/json", limi
     res.sendStatus(204);
     return;
   }
+  const scope = { environment: environment as "development" | "production", instanceId: instanceId! };
+  let attemptId: string | undefined;
   try {
+    attemptId = await beginCaptureDelivery(scope);
     await recordProviderRoleObservation({
       eventId: eventId!, instanceId: instanceId!,
       environment: environment as "development" | "production",
       occurredAt: new Date(event.timestamp), targetId: data.id,
       role: role == null ? "unassigned" : role,
     });
-    noteCaptureDelivery(configuration, true);
+    await finishCaptureDelivery(scope, attemptId, true);
     res.sendStatus(204);
   } catch {
-    noteCaptureDelivery(configuration, false);
+    // If the database is unavailable the committed pending marker survives.
+    // Do not let a failed diagnostics write acknowledge the provider delivery.
+    if (attemptId) await finishCaptureDelivery(scope, attemptId, false).catch(() => undefined);
     req.log.warn({ code: "provider_evidence_write_failed" }, "Provider role evidence could not be saved");
     // Do not acknowledge on storage failure: allow the provider to retry.
     res.status(503).json({ error: "Provider role evidence could not be saved." });

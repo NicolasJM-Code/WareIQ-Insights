@@ -10,5 +10,5 @@ export type CaptureReadinessFailureScope = typeof CaptureReadinessFailureScope[k
 
 
 export const CaptureReadinessFailureScope = {
-  current_process: 'current_process',
+  environment_instance: 'environment_instance',
 } as const;

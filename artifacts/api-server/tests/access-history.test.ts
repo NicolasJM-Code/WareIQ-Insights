@@ -67,7 +67,7 @@ beforeEach(() => {
   audit.page.mockResolvedValue({ entries: [], nextCursor: null, captureReadiness: {
     configuration: "configured", signing: "configured", routing: "configured", keyMode: "configured",
     environment: "development", delivery: "unknown", lastVerifiedDeliveryAt: null,
-    lastDeliveryFailureAt: null, failureScope: "current_process",
+    lastDeliveryFailureAt: null, failureScope: "environment_instance",
   } });
 });
 

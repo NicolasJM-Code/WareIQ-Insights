@@ -1,6 +1,8 @@
 import { db, accessHistoryTable } from "@workspace/db";
 import { desc, eq, lt, or, and } from "drizzle-orm";
 import { captureConfiguration, captureReadiness } from "./capture-readiness";
+import { readCaptureDiagnostic } from "@workspace/db/capture-diagnostics";
+import type { CaptureDiagnostic } from "./capture-readiness";
 export { accessAuditStore } from "@workspace/db/access-audit";
 
 // Stable keyset pagination: new changes cannot shift older pages.
@@ -21,8 +23,19 @@ export async function accessHistoryPage(cursor?: { beforeTime: string; beforeId:
       eq(accessHistoryTable.providerInstanceId, configuration.instanceId!),
       eq(accessHistoryTable.providerEnvironment, configuration.environment!),
     )).orderBy(desc(accessHistoryTable.createdAt)).limit(1) : [];
+  let diagnostic: CaptureDiagnostic = null;
+  if (configuration.routing) {
+    try {
+      diagnostic = await readCaptureDiagnostic({
+        environment: configuration.environment as "development" | "production",
+        instanceId: configuration.instanceId!,
+      });
+    } catch {
+      diagnostic = "unavailable";
+    }
+  }
   return {
-    captureReadiness: captureReadiness(configuration, verified[0]?.createdAt.toISOString() ?? null),
+    captureReadiness: captureReadiness(configuration, verified[0]?.createdAt.toISOString() ?? null, diagnostic),
     entries: entries.map((row) => ({
       ...row, createdAt: row.createdAt.toISOString(), finishedAt: row.finishedAt?.toISOString() ?? null,
       providerOccurredAt: row.providerOccurredAt?.toISOString() ?? null,

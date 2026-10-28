@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { Pool } from "pg";
 import { SQL } from "drizzle-orm";
 import { getTableConfig, PgDialect } from "drizzle-orm/pg-core";
-import { accessHistoryTable } from "@workspace/db/schema";
+import { accessHistoryTable, captureDiagnosticsTable } from "@workspace/db/schema";
 
 // No caller-provided URL, path, PG* variable or application/WMS credential is
 // accepted. Every connection, including children, uses this private Unix socket.
@@ -47,7 +47,8 @@ export class PrivateDatabase {
         "--auth-local=trust", "--auth-host=reject", "--no-locale"]);
       this.startPostgres();
       // Render the actual history schema, not a second handwritten table.
-      const config = getTableConfig(accessHistoryTable);
+      for (const table of [accessHistoryTable, captureDiagnosticsTable]) {
+      const config = getTableConfig(table);
       const dialect = new PgDialect();
       const quote = (s: string) => `"${s.replaceAll('"', '""')}"`;
       const columns = config.columns.map((column) => {
@@ -65,7 +66,20 @@ export class PrivateDatabase {
         }
         return definition;
       });
-      await this.pool.query(`CREATE TABLE ${quote(config.name)} (${columns.join(", ")})`);
+      const primaryKeys = config.primaryKeys.map((key) =>
+        `PRIMARY KEY (${key.columns.map((column) => quote(column.name)).join(", ")})`);
+      await this.pool.query(`CREATE TABLE ${quote(config.name)} (${[...columns, ...primaryKeys].join(", ")})`);
+      // The production provider writer uses ON CONFLICT on this key. Render
+      // unique indexes too, otherwise valid captures falsely look like failures.
+      for (const index of config.indexes.filter((entry) => entry.config.unique)) {
+        const names = index.config.columns.map((column) => {
+          if (!("name" in column) || typeof column.name !== "string") throw new Error("Unsupported unique index expression");
+          return quote(column.name);
+        });
+        await this.pool.query(`CREATE UNIQUE INDEX ${quote(index.config.name!)}
+          ON ${quote(config.name)} (${names.join(", ")})`);
+      }
+      }
     } catch (error) {
       await this.stop();
       throw error; // Missing binaries or startup failure must fail, never skip.

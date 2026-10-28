@@ -14,7 +14,7 @@ import type { CaptureReadinessRouting } from './captureReadinessRouting';
 import type { CaptureReadinessSigning } from './captureReadinessSigning';
 
 /**
- * Administrator-only local setup and historical persisted signed-delivery evidence; never proof of an active provider subscription. Failures are authenticated storage failures observed in this process only.
+ * Administrator-only local setup, historical signed-delivery evidence and durable environment/instance-scoped delivery diagnostics shared across replicas; never proof of an active provider subscription.
  */
 export interface CaptureReadiness {
   configuration: CaptureReadinessConfiguration;

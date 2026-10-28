@@ -15,18 +15,14 @@ export function captureConfiguration() {
 }
 
 type Configuration = ReturnType<typeof captureConfiguration>;
-let failure: { configuration: Configuration; at: string } | undefined;
+export type CaptureDiagnostic = {
+  status: "pending" | "failed" | "succeeded";
+  attemptedAt: Date;
+} | null | "unavailable";
 
-export function noteCaptureDelivery(configuration: Configuration, succeeded: boolean) {
-  if (succeeded) failure = undefined;
-  else failure = { configuration, at: new Date().toISOString() };
-}
-
-export function captureReadiness(configuration: Configuration, lastVerifiedDeliveryAt: string | null) {
-  const sameConfiguration = failure
-    && failure.configuration.environment === configuration.environment
-    && failure.configuration.instanceId === configuration.instanceId
-    && failure.configuration.signingSecret === configuration.signingSecret;
+export function captureReadiness(
+  configuration: Configuration, lastVerifiedDeliveryAt: string | null, diagnostic: CaptureDiagnostic = null,
+) {
   return {
     configuration: configuration.configured ? "configured" as const : "not_configured" as const,
     signing: configuration.signing ? "configured" as const : "not_configured" as const,
@@ -34,10 +30,13 @@ export function captureReadiness(configuration: Configuration, lastVerifiedDeliv
     keyMode: configuration.keyMode ? "configured" as const : "not_configured" as const,
     environment: configuration.routing ? configuration.environment as "development" | "production" : null,
     delivery: !configuration.configured ? "not_configured" as const
-      : sameConfiguration ? "delivery_problem" as const
+      : diagnostic === "unavailable" ? "diagnostics_unavailable" as const
+      : diagnostic?.status === "failed" ? "delivery_problem" as const
+      : diagnostic?.status === "pending" ? "delivery_unknown" as const
       : lastVerifiedDeliveryAt ? "verified_delivery" as const : "unknown" as const,
     lastVerifiedDeliveryAt,
-    lastDeliveryFailureAt: sameConfiguration ? failure!.at : null,
-    failureScope: "current_process" as const,
+    lastDeliveryFailureAt: diagnostic !== "unavailable" && diagnostic?.status === "failed"
+      ? diagnostic.attemptedAt.toISOString() : null,
+    failureScope: "environment_instance" as const,
   };
 }

@@ -22,7 +22,8 @@ application workers receive only `NODE_ENV=test` and the generated private
 `DATABASE_URL`. No Clerk SDK client is instantiated, provider keys are not
 inherited, and all account responses are synthetic fixtures.
 
-The history table is rendered from its production Drizzle column definitions.
+The history and capture diagnostic tables and their uniqueness constraints are
+rendered from their production Drizzle definitions.
 The fixture intentionally does not recreate unrelated application tables or
 performance indexes. Teardown kills remaining workers, shuts down the private
 cluster, and removes its temporary directory.
@@ -64,3 +65,19 @@ tests. They verify fresh-process read-back and PostgreSQL crash recovery after
 immediate server shutdown, not physical database-host failure or power-loss
 durability of the underlying storage. They do not infer a historical success
 from a matching current provider role.
+
+## Capture delivery diagnostics
+
+The capture checks use separate, simultaneously running API workers against the
+same private cluster. Their signing keys and events are synthetic; signatures
+are checked by the real webhook verifier. A PostgreSQL trigger rejects evidence
+writes to establish that a verified delivery failure remains visible to another
+replica and a fresh process after the writer is killed. A successful retry
+updates the live reader without restarting it.
+
+They also check environment/instance isolation, interrupted pending attempts,
+compare-and-set protection against out-of-order worker completion, and that
+forged, mismatched, malformed or ignored deliveries cannot create or clear
+diagnostics. Only a bounded scope, attempt token, status and server timestamp
+are retained. Missing delivery evidence remains unknown, not a subscription
+failure. These checks do not verify a live provider subscription.

@@ -214,14 +214,29 @@ never signing material, key values, instance IDs or provider payloads.
   assertion. It can predate a signing-key rotation or endpoint routing change.
   A duplicate acknowledged by the writer proves a successful storage round trip
   but does not update the original observation's receipt timestamp.
-- **Delivery problem:** this process received a signed, matching-instance,
-  valid role observation but its database write failed. This overrides historical
-  success until a later valid observation (including a retry) is successfully
-  saved by this process. Bad signatures, malformed or ignored events, and
-  wrong-instance traffic cannot create or clear this signal.
+- **Delivery problem:** a server received a signed, matching-instance, valid
+  role observation but saving its evidence or delivery diagnostic failed.
+  This overrides historical success until a newer valid delivery (including a
+  retry) completes successfully.
+- **Delivery outcome unknown:** a matching, authenticated delivery started but
+  completion was not recorded. This may indicate a process interruption or a
+  database outage; it is not proof the observation was lost.
+- **Delivery diagnostics unavailable:** the diagnostic read failed. Do not treat
+  missing diagnostics as recovery, even if historical observations are available.
 
-Failure timestamps are **current-process only** and reset on restart; they are
-not shared across replicas. Provider-side delivery failures, disabled or wrongly
+Diagnostics are **durable and shared across replicas** using the application
+database, scoped to the pinned environment and Clerk instance, not the signing
+key. Key rotation does not erase warnings. Each scope retains only the latest
+attempt token, server attempt timestamp and allowlisted pending/failed/succeeded
+status. No signing secrets, signatures, account details or payloads are stored.
+A pending marker commits before the evidence write. Completion uses a matching
+attempt token so a delayed older worker cannot overwrite a newer attempt.
+Bad signatures, malformed or ignored events, and wrong-environment/instance
+traffic cannot create or clear diagnostics. A newer pending delivery replaces
+an earlier failure with an uncertain-outcome warning, not a success assertion.
+If the database is already down before the marker can commit, no durable record
+can be created; the endpoint returns 503 for retry. While history cannot be read,
+the UI does not present stale success. Provider-side failures, disabled or wrongly
 subscribed endpoints, and requests that never reach the application remain
 unknown. This feature neither polls provider subscription state nor claims full
 external coverage. Owners should check provider delivery diagnostics and retry
@@ -230,7 +245,8 @@ If history cannot refresh, the UI hides stale readiness rather than presenting
 an old status as current. None of these states changes authorization or writes
 synthetic role history.
 
-The Drizzle application schema includes `access_change_history`. Apply the
+The Drizzle application schema includes `access_change_history` and
+`capture_delivery_diagnostics`. Apply the
 existing development schema push (`pnpm --filter @workspace/db run push`) after
 merging, as already configured in the post-merge setup. No startup DDL or WMS
 migration is needed.

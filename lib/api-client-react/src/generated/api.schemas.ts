@@ -146,17 +146,19 @@ export const CaptureReadinessDelivery = {
   unknown: 'unknown',
   verified_delivery: 'verified_delivery',
   delivery_problem: 'delivery_problem',
+  delivery_unknown: 'delivery_unknown',
+  diagnostics_unavailable: 'diagnostics_unavailable',
 } as const;
 
 export type CaptureReadinessFailureScope = typeof CaptureReadinessFailureScope[keyof typeof CaptureReadinessFailureScope];
 
 
 export const CaptureReadinessFailureScope = {
-  current_process: 'current_process',
+  environment_instance: 'environment_instance',
 } as const;
 
 /**
- * Administrator-only local setup and historical persisted signed-delivery evidence; never proof of an active provider subscription. Failures are authenticated storage failures observed in this process only.
+ * Administrator-only local setup, historical signed-delivery evidence and durable environment/instance-scoped delivery diagnostics shared across replicas; never proof of an active provider subscription.
  */
 export interface CaptureReadiness {
   configuration: CaptureReadinessConfiguration;

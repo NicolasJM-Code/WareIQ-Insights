@@ -7,7 +7,7 @@ import { CaptureReadinessNotice } from '../src/components/capture-readiness';
 const configured: CaptureReadiness = {
   configuration: 'configured', signing: 'configured', routing: 'configured', keyMode: 'configured',
   environment: 'development', delivery: 'unknown', lastVerifiedDeliveryAt: null,
-  lastDeliveryFailureAt: null, failureScope: 'current_process',
+  lastDeliveryFailureAt: null, failureScope: 'environment_instance',
 };
 afterEach(cleanup);
 it('warns about missing signing and routing without fabricating delivery health', () => {
@@ -30,10 +30,17 @@ it('labels even old signed evidence as historical rather than current subscripti
   expect(screen.getByText(/server receipt time/)).toBeInTheDocument();
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 });
-it('shows authenticated storage failures and their process-only scope', () => {
+it('shows authenticated storage failures and their durable scope', () => {
   render(<CaptureReadinessNotice readiness={{ ...configured, delivery: 'delivery_problem',
     lastDeliveryFailureAt: '2026-10-27T12:00:00.000Z' }} />);
   expect(screen.getByRole('alert')).toHaveTextContent('could not be saved');
-  expect(screen.getByText(/reset on restart/)).toBeInTheDocument();
+  expect(screen.getByText(/retained across restarts/)).toBeInTheDocument();
   expect(screen.getByText(/Last verified delivery storage failure/)).toBeInTheDocument();
+});
+
+it.each(['delivery_unknown', 'diagnostics_unavailable'] as const)('warns without inventing provider health for %s', (delivery) => {
+  render(<CaptureReadinessNotice readiness={{ ...configured, delivery,
+    lastVerifiedDeliveryAt: '2020-01-01T00:00:00.000Z' }} />);
+  expect(screen.getByRole('alert')).toHaveTextContent(/unknown/);
+  expect(screen.getByText(/Last persisted signed role observation/)).toBeInTheDocument();
 });

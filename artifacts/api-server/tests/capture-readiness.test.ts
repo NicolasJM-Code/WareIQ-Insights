@@ -1,12 +1,11 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { captureConfiguration, captureReadiness, noteCaptureDelivery } from "../src/lib/capture-readiness";
+import { captureConfiguration, captureReadiness } from "../src/lib/capture-readiness";
 
 beforeEach(() => {
   vi.stubEnv("CLERK_WEBHOOK_ENVIRONMENT", "development");
   vi.stubEnv("CLERK_WEBHOOK_INSTANCE_ID", "ins_isolated");
   vi.stubEnv("CLERK_WEBHOOK_SIGNING_SECRET", "whsec_isolated");
   vi.stubEnv("CLERK_SECRET_KEY", "sk_test_isolated");
-  noteCaptureDelivery(captureConfiguration(), true);
 });
 afterEach(() => vi.unstubAllEnvs());
 
@@ -36,14 +35,13 @@ it("accepts only a matching production setup", () => {
     configuration: "configured", environment: "production", delivery: "unknown",
   });
 });
-it("keeps authenticated write failure visible over old evidence until a successful delivery", () => {
+it("keeps durable failures, interrupted attempts and unavailable diagnostics distinct from historical success", () => {
   const configuration = captureConfiguration();
-  noteCaptureDelivery(configuration, false);
-  expect(captureReadiness(configuration, "2020-01-01T00:00:00.000Z")).toMatchObject({
-    delivery: "delivery_problem", lastDeliveryFailureAt: expect.any(String), failureScope: "current_process",
+  const attemptedAt = new Date("2026-10-27T12:00:00.000Z");
+  expect(captureReadiness(configuration, "2020-01-01T00:00:00.000Z", { status: "failed", attemptedAt })).toMatchObject({
+    delivery: "delivery_problem", lastDeliveryFailureAt: attemptedAt.toISOString(), failureScope: "environment_instance",
   });
-  vi.stubEnv("CLERK_WEBHOOK_SIGNING_SECRET", "whsec_rotated");
-  expect(captureReadiness(captureConfiguration(), null).delivery).toBe("unknown");
-  noteCaptureDelivery(configuration, true);
-  expect(captureReadiness(configuration, null).lastDeliveryFailureAt).toBeNull();
+  expect(captureReadiness(configuration, null, { status: "pending", attemptedAt }).delivery).toBe("delivery_unknown");
+  expect(captureReadiness(configuration, "2020-01-01T00:00:00.000Z", "unavailable").delivery).toBe("diagnostics_unavailable");
+  expect(captureReadiness(configuration, null, { status: "succeeded", attemptedAt }).lastDeliveryFailureAt).toBeNull();
 });

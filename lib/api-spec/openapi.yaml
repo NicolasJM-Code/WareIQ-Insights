@@ -510,7 +510,7 @@ components:
         reason: { type: string }
     CaptureReadiness:
       type: object
-      description: Administrator-only local setup and historical persisted signed-delivery evidence; never proof of an active provider subscription. Failures are authenticated storage failures observed in this process only.
+      description: Administrator-only local setup, historical signed-delivery evidence and durable environment/instance-scoped delivery diagnostics shared across replicas; never proof of an active provider subscription.
       required: [configuration, signing, routing, keyMode, environment, delivery, lastVerifiedDeliveryAt, lastDeliveryFailureAt, failureScope]
       properties:
         configuration: { type: string, enum: [configured, not_configured] }
@@ -518,10 +518,10 @@ components:
         routing: { type: string, enum: [configured, not_configured] }
         keyMode: { type: string, enum: [configured, not_configured] }
         environment: { type: [string, "null"], enum: [development, production, null] }
-        delivery: { type: string, enum: [not_configured, unknown, verified_delivery, delivery_problem] }
+        delivery: { type: string, enum: [not_configured, unknown, verified_delivery, delivery_problem, delivery_unknown, diagnostics_unavailable] }
         lastVerifiedDeliveryAt: { type: [string, "null"] }
         lastDeliveryFailureAt: { type: [string, "null"] }
-        failureScope: { type: string, enum: [current_process] }
+        failureScope: { type: string, enum: [environment_instance] }
     AccessHistoryPage:
       type: object
       required: [entries, nextCursor, captureReadiness]

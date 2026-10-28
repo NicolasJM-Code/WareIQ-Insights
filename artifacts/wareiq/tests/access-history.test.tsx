@@ -124,7 +124,7 @@ it('renders readiness from history and hides stale readiness when refresh fails'
     entries: [], nextCursor: null, captureReadiness: {
       configuration: 'configured', signing: 'configured', routing: 'configured', keyMode: 'configured',
       environment: 'development', delivery: 'unknown', lastVerifiedDeliveryAt: null,
-      lastDeliveryFailureAt: null, failureScope: 'current_process',
+      lastDeliveryFailureAt: null, failureScope: 'environment_instance',
     },
   });
   mount();

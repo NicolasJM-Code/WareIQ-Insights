@@ -3,11 +3,13 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
 
-const store = vi.hoisted(() => ({ record: vi.fn(), warn: vi.fn() }));
+const store = vi.hoisted(() => ({ record: vi.fn(), warn: vi.fn(), begin: vi.fn(), finish: vi.fn() }));
 vi.mock("@workspace/db/access-audit", () => ({ recordProviderRoleObservation: store.record }));
+vi.mock("@workspace/db/capture-diagnostics", () => ({
+  beginCaptureDelivery: store.begin, finishCaptureDelivery: store.finish,
+}));
 // The signature verifier is deliberately REAL, not mocked.
 import router from "../src/routes/clerk-events";
-import { captureConfiguration, captureReadiness, noteCaptureDelivery } from "../src/lib/capture-readiness";
 
 const app = express();
 app.use((req, _res, next) => { req.log = { warn: store.warn } as unknown as typeof req.log; next(); });
@@ -40,7 +42,8 @@ beforeEach(() => {
   vi.stubEnv("CLERK_WEBHOOK_INSTANCE_ID", "ins_test");
   vi.stubEnv("CLERK_WEBHOOK_SIGNING_SECRET", secret);
   vi.stubEnv("CLERK_SECRET_KEY", "sk_test_isolated");
-  noteCaptureDelivery(captureConfiguration(), true);
+  store.begin.mockResolvedValue("test-attempt");
+  store.finish.mockResolvedValue(undefined);
   store.record.mockResolvedValue(undefined);
 });
 afterEach(() => vi.unstubAllEnvs());
@@ -64,6 +67,8 @@ it("acknowledges duplicate signed delivery while retaining the stable deduplicat
 it("enforces the raw payload limit before any evidence is stored", async () => {
   expect((await send({ ...body(), ignored: "x".repeat(256 * 1024) })).status).toBe(413);
   expect(store.record).not.toHaveBeenCalled();
+  expect(store.begin).not.toHaveBeenCalled();
+  expect(store.finish).not.toHaveBeenCalled();
 });
 it("rejects forged, missing, tampered and stale signatures without touching storage", async () => {
   expect((await send(body(), { signature: "v1,forged" })).status).toBe(400);
@@ -121,16 +126,45 @@ it("returns a retryable failure on storage errors without logging provider detai
   expect(store.warn).toHaveBeenCalledExactlyOnceWith(
     { code: "provider_evidence_write_failed" }, "Provider role evidence could not be saved",
   );
-  expect(captureReadiness(captureConfiguration(), null).delivery).toBe("delivery_problem");
+  expect(store.finish).toHaveBeenCalledExactlyOnceWith(
+    { environment: "development", instanceId: "ins_test" }, "test-attempt", false,
+  );
+  store.begin.mockClear();
+  store.finish.mockClear();
   // Forged, wrong-instance, ignored or malformed deliveries cannot clear a
   // genuine failure, nor count as successful role capture.
   await send(body(), { signature: "v1,forged" });
   await send({ ...body(), instance_id: "ins_other" });
+  await send(body(), { path: "/api/webhooks/clerk/production" });
   await send({ ...body(), type: "user.created" });
   await send(body("unknown"));
   await send({ ...body(), data: {} });
-  expect(captureReadiness(captureConfiguration(), null).delivery).toBe("delivery_problem");
+  expect(store.begin).not.toHaveBeenCalled();
+  expect(store.finish).not.toHaveBeenCalled();
   store.record.mockResolvedValue(undefined);
   expect((await send(body())).status).toBe(204);
-  expect(captureReadiness(captureConfiguration(), null).delivery).toBe("unknown");
+  expect(store.finish).toHaveBeenCalledExactlyOnceWith(
+    { environment: "development", instanceId: "ins_test" }, "test-attempt", true,
+  );
+});
+
+it("never writes evidence without a committed diagnostic marker and retries diagnostic outages", async () => {
+  store.begin.mockRejectedValueOnce(new Error("unavailable"));
+  expect((await send(body())).status).toBe(503);
+  expect(store.record).not.toHaveBeenCalled();
+  expect(store.finish).not.toHaveBeenCalled();
+  store.finish.mockRejectedValue(new Error("unavailable"));
+  expect((await send(body())).status).toBe(503);
+  expect(store.finish.mock.calls.map((call) => call[2])).toEqual([true, false]);
+});
+
+it("does not create diagnostics for invalid, mismatched or ignored deliveries", async () => {
+  await send(body(), { signature: "v1,forged" });
+  await send({ ...body(), instance_id: "ins_other" });
+  await send(body(), { path: "/api/webhooks/clerk/production" });
+  await send({ ...body(), type: "user.created" });
+  await send(body("unknown"));
+  await send({ ...body(), data: {} });
+  expect(store.begin).not.toHaveBeenCalled();
+  expect(store.finish).not.toHaveBeenCalled();
 });
