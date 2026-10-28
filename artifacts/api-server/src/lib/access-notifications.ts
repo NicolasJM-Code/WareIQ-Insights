@@ -36,6 +36,10 @@ const COMPLETED_NOTIFICATION_RETENTION_DAYS = 90;
 const COMPLETED_NOTIFICATION_CLEANUP_BATCH_SIZE = 500;
 const COMPLETED_NOTIFICATION_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const COMPLETED_NOTIFICATION_CLEANUP_FAILURE_ALERT_THRESHOLD = 3;
+const ACCESS_NOTIFICATION_PROGRESS_CHECK_INTERVAL_MS = 60 * 1000;
+
+let accessNotificationProgressAlertActive = false;
+let accessNotificationHealthCheckAlertActive = false;
 
 export async function getAccessNotificationSummary(): Promise<AccessNotificationSummary> {
   const { rows } = await pool.query<{
@@ -97,6 +101,70 @@ export async function cleanupCompletedAccessNotifications(): Promise<number> {
   const result = rows[0];
   if (!result) throw new Error("Notification cleanup unavailable");
   return Number(result.deleted);
+}
+
+export async function checkAccessNotificationProgress(): Promise<void> {
+  let outstandingCount: number;
+  let oldestOutstandingAgeSeconds: number | null;
+  try {
+    const { rows } = await pool.query<{
+      outstanding_count: number | string;
+      oldest_outstanding_age_seconds: number | string | null;
+    }>(`/* access_notification_operational_health */
+      SELECT
+        count(*)::int AS outstanding_count,
+        floor(extract(epoch FROM (now() - min(created_at))))::int AS oldest_outstanding_age_seconds
+      FROM wareiq_access_notifications
+      WHERE state IN ('pending', 'confirming')`);
+    const summary = rows[0];
+    if (!summary) throw new Error("Notification health check unavailable");
+    outstandingCount = Number(summary.outstanding_count);
+    oldestOutstandingAgeSeconds = summary.oldest_outstanding_age_seconds === null
+      ? null
+      : Number(summary.oldest_outstanding_age_seconds);
+    if (!Number.isSafeInteger(outstandingCount) || outstandingCount < 0 ||
+        (oldestOutstandingAgeSeconds !== null &&
+          (!Number.isSafeInteger(oldestOutstandingAgeSeconds) || oldestOutstandingAgeSeconds < 0))) {
+      throw new Error("Invalid notification health check result");
+    }
+  } catch {
+    if (!accessNotificationHealthCheckAlertActive) {
+      logger.error(
+        { event: "access_notification_health_check_unavailable" },
+        "Unable to assess access email delivery progress",
+      );
+      accessNotificationHealthCheckAlertActive = true;
+    }
+    return;
+  }
+
+  if (accessNotificationHealthCheckAlertActive) {
+    logger.info(
+      { event: "access_notification_health_check_recovered" },
+      "Access email delivery health checks have resumed",
+    );
+    accessNotificationHealthCheckAlertActive = false;
+  }
+
+  const stalled = outstandingCount > 0 &&
+    oldestOutstandingAgeSeconds !== null &&
+    oldestOutstandingAgeSeconds >= ACCESS_NOTIFICATION_QUEUE_WARNING_AFTER_SECONDS;
+  if (stalled && !accessNotificationProgressAlertActive) {
+    logger.error({
+      event: "access_notification_delivery_stalled",
+      outstanding_count: outstandingCount,
+      oldest_outstanding_age_seconds: oldestOutstandingAgeSeconds,
+      alert_after_seconds: ACCESS_NOTIFICATION_QUEUE_WARNING_AFTER_SECONDS,
+    }, "Access email queue has not cleared within the operational threshold");
+    accessNotificationProgressAlertActive = true;
+  } else if (!stalled && accessNotificationProgressAlertActive) {
+    logger.info({
+      event: "access_notification_delivery_recovered",
+      outstanding_count: outstandingCount,
+      oldest_outstanding_age_seconds: oldestOutstandingAgeSeconds,
+    }, "Access email queue is progressing within the operational threshold");
+    accessNotificationProgressAlertActive = false;
+  }
 }
 
 // A savepoint isolates queue failures from the access change's transaction.
@@ -344,7 +412,14 @@ export async function deliverAccessNotifications(): Promise<void> {
 export function startAccessNotifications() {
   let running = false;
   let cleanupRunning = false;
+  let progressCheckRunning = false;
   let consecutiveCleanupFailures = 0;
+  const checkProgress = async () => {
+    if (progressCheckRunning) return;
+    progressCheckRunning = true;
+    try { await checkAccessNotificationProgress(); }
+    finally { progressCheckRunning = false; }
+  };
   const tick = async () => {
     if (running) return;
     running = true;
@@ -373,9 +448,12 @@ export function startAccessNotifications() {
     }
   };
   const timer = setInterval(() => void tick(), 5000);
+  const progressTimer = setInterval(() => void checkProgress(), ACCESS_NOTIFICATION_PROGRESS_CHECK_INTERVAL_MS);
   const cleanupTimer = setInterval(() => void cleanup(), COMPLETED_NOTIFICATION_CLEANUP_INTERVAL_MS);
   timer.unref();
+  progressTimer.unref();
   cleanupTimer.unref();
   void tick();
+  void checkProgress();
   void cleanup();
 }

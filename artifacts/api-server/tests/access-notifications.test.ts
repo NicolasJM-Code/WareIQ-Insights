@@ -7,7 +7,8 @@ import { changeRole } from "../src/lib/role-management";
 
 const mocks = vi.hoisted(() => ({
   query: vi.fn(), poolQuery: vi.fn(), release: vi.fn(), send: vi.fn(), getUser: vi.fn(),
-  insert: vi.fn(), update: vi.fn(), select: vi.fn(), warn: vi.fn(), error: vi.fn(), summaryQuery: vi.fn(),
+  insert: vi.fn(), update: vi.fn(), select: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn(),
+  summaryQuery: vi.fn(), healthQuery: vi.fn(),
   authUserId: null as string | null,
 }));
 vi.mock("@workspace/db", async () => ({
@@ -15,7 +16,9 @@ vi.mock("@workspace/db", async () => ({
   pool: {
     connect: async () => ({ query: mocks.query, release: mocks.release }),
     query: (sql: string, ...params: unknown[]) =>
-      sql.includes("count(*) FILTER") ? mocks.summaryQuery(sql, ...params) : mocks.poolQuery(sql, ...params),
+      sql.includes("access_notification_operational_health")
+        ? mocks.healthQuery(sql, ...params)
+        : sql.includes("count(*) FILTER") ? mocks.summaryQuery(sql, ...params) : mocks.poolQuery(sql, ...params),
   },
   db: { insert: mocks.insert, update: mocks.update, select: mocks.select },
 }));
@@ -27,10 +30,10 @@ vi.mock("@clerk/express", () => ({
   clerkClient: { users: { getUser: mocks.getUser } },
 }));
 vi.mock("../src/lib/role-lock", () => ({ withRoleLock: async (fn: () => Promise<unknown>) => fn() }));
-vi.mock("../src/lib/logger", () => ({ logger: { warn: mocks.warn, error: mocks.error } }));
+vi.mock("../src/lib/logger", () => ({ logger: { warn: mocks.warn, error: mocks.error, info: mocks.info } }));
 
 import {
-  cleanupCompletedAccessNotifications, deliverAccessNotifications, getAccessNotificationSummary, listConfirmedFailedAccessNotifications,
+  checkAccessNotificationProgress, cleanupCompletedAccessNotifications, deliverAccessNotifications, getAccessNotificationSummary, listConfirmedFailedAccessNotifications,
   listUncertainAccessNotifications,
   queueAccessNotifications, retryAllowed, retryConfirmedFailedAccessNotification,
   preparePlatformNotification, confirmPlatformNotification, startAccessNotifications,
@@ -140,6 +143,7 @@ describe("durable delivery and duplicate protection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.poolQuery.mockResolvedValue({ rows: [] });
+    mocks.healthQuery.mockResolvedValue({ rows: [{ outstanding_count: 0, oldest_outstanding_age_seconds: null }] });
     mocks.summaryQuery.mockResolvedValue({ rows: [] });
     mocks.query.mockImplementation(async (sql: string) => ({ rows: sql.startsWith("SELECT *") ? [{ ...job }] : [] }));
     mocks.send.mockResolvedValue({ ok: true, json: async () => ({ id: "provider-email-id" }) });
@@ -211,6 +215,64 @@ describe("durable delivery and duplicate protection", () => {
     await expect(getAccessNotificationSummary()).resolves.toMatchObject({
       queued: 0, queuedOverThreshold: 0, oldestQueuedAgeSeconds: null,
     });
+  });
+  it("alerts once for a sustained queue backlog and resolves the alert on recovery", async () => {
+    mocks.healthQuery.mockResolvedValue({
+      rows: [{ outstanding_count: "4", oldest_outstanding_age_seconds: "360" }],
+    });
+
+    await checkAccessNotificationProgress();
+    await checkAccessNotificationProgress();
+
+    expect(mocks.error).toHaveBeenCalledOnce();
+    expect(mocks.error).toHaveBeenCalledWith({
+      event: "access_notification_delivery_stalled",
+      outstanding_count: 4,
+      oldest_outstanding_age_seconds: 360,
+      alert_after_seconds: 300,
+    }, expect.any(String));
+    expect(JSON.stringify(mocks.error.mock.calls)).not.toMatch(/recipient|role_name|notification.?id|message.?content|example\.test/i);
+    const [healthSql] = mocks.healthQuery.mock.calls[0]!;
+    expect(healthSql).toContain("state IN ('pending', 'confirming')");
+    expect(healthSql).not.toMatch(/recipient|role_name|target_id/i);
+
+    mocks.healthQuery.mockResolvedValue({
+      rows: [{ outstanding_count: "2", oldest_outstanding_age_seconds: "90" }],
+    });
+    await checkAccessNotificationProgress();
+
+    expect(mocks.info).toHaveBeenCalledWith({
+      event: "access_notification_delivery_recovered",
+      outstanding_count: 2,
+      oldest_outstanding_age_seconds: 90,
+    }, expect.any(String));
+
+    mocks.healthQuery.mockResolvedValue({
+      rows: [{ outstanding_count: 1, oldest_outstanding_age_seconds: 420 }],
+    });
+    await checkAccessNotificationProgress();
+    mocks.healthQuery.mockRejectedValueOnce(new Error("sensitive database details"));
+    await checkAccessNotificationProgress();
+    expect(mocks.error).toHaveBeenCalledWith(
+      { event: "access_notification_health_check_unavailable" },
+      expect.any(String),
+    );
+    mocks.healthQuery.mockResolvedValue({
+      rows: [{ outstanding_count: 1, oldest_outstanding_age_seconds: 90 }],
+    });
+    await checkAccessNotificationProgress();
+
+    expect(mocks.info).toHaveBeenCalledWith(
+      { event: "access_notification_health_check_recovered" },
+      expect.any(String),
+    );
+    expect(mocks.info).toHaveBeenCalledWith({
+      event: "access_notification_delivery_recovered",
+      outstanding_count: 1,
+      oldest_outstanding_age_seconds: 90,
+    }, expect.any(String));
+    expect(JSON.stringify([...mocks.error.mock.calls, ...mocks.info.mock.calls]))
+      .not.toMatch(/sensitive database details|example\.test/);
   });
   it("deletes only old terminal notices in a bounded, repeatable batch", async () => {
     mocks.poolQuery.mockResolvedValueOnce({ rows: [{ deleted: "7" }] });

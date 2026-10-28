@@ -60,6 +60,17 @@ The page also shows the age of the oldest first-attempt notice; both values are
 aggregate only and never identify a recipient. This warning is informational
 and does not pause access changes or alter the automatic delivery worker.
 
+The API service also checks outstanding delivery progress every minute. If any
+pending or confirming notice remains in the queue for five minutes, it writes
+one error-level `access_notification_delivery_stalled` event to the service
+logs. When the oldest outstanding notice falls below that threshold, it writes
+an `access_notification_delivery_recovered` event. A failed health check emits
+`access_notification_health_check_unavailable` once and a recovery event when
+checks resume; it does not clear an active delivery alert while queue state is
+unknown. These operator events contain only aggregate counts and ages, never
+recipient addresses, role names, notification IDs, message contents, or provider
+responses. Monitoring does not pause, retry, or otherwise change delivery.
+
 If notices are retrying or have failed, administrators should check the Resend
 connection and verified sender setup. Provider responses are not shown because
 they can contain private information. Logs expose only generic outcome codes,
