@@ -443,6 +443,29 @@ describe("durable delivery and duplicate protection", () => {
     );
     expect(JSON.stringify(mocks.warn.mock.calls)).not.toMatch(/database connection failed|provider response contained private details/i);
   });
+  it("logs only fixed diagnostic context when the delivery summary query fails", async () => {
+    mocks.authUserId = "admin-user";
+    mocks.getUser.mockResolvedValue({
+      publicMetadata: { role: "admin" }, banned: false, locked: false,
+      primaryEmailAddressId: "primary",
+      emailAddresses: [{ id: "primary", emailAddress: "admin@example.test", verification: { status: "verified" } }],
+    });
+    const rawErrorText =
+      "database host db-private.internal rejected provider response for recipient private@example.test: credential detail";
+    mocks.summaryQuery.mockRejectedValue(new Error(rawErrorText));
+
+    await request(accessApp).get("/api/access/admin");
+
+    expect(mocks.summaryQuery).toHaveBeenCalled();
+    expect(mocks.warn.mock.calls).toEqual([[
+      { event: "access_notification_history_unavailable" },
+      "Email delivery status unavailable",
+    ]]);
+    expect(JSON.stringify(mocks.warn.mock.calls)).not.toContain(rawErrorText);
+    expect(JSON.stringify(mocks.warn.mock.calls)).not.toMatch(
+      /db-private\.internal|provider response|private@example\.test|credential detail/i,
+    );
+  });
   it("keeps the access directory available when uncertain email history cannot be read", async () => {
     mocks.authUserId = "admin-user";
     mocks.getUser.mockResolvedValue({
