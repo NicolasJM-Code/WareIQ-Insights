@@ -56,6 +56,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await Promise.all(children.splice(0).map(kill));
   await database.pool.query("DROP TRIGGER IF EXISTS reject_capture ON access_change_history");
+  await database.pool.query("DROP TRIGGER IF EXISTS reject_diagnostic ON capture_delivery_diagnostics");
 });
 afterAll(() => database.stop());
 
@@ -106,6 +107,45 @@ it("isolates environment and instance, including invalid deliveries before any d
     expect(await other.call("read")).toMatchObject({ delivery: "unknown", lastDeliveryFailureAt: null });
   }
   expect(await writer.call("read")).toMatchObject({ delivery: "delivery_problem" });
+});
+
+it("clears an unpersisted local failure only after a newer recovery on another live worker", async () => {
+  const writer = await replica();
+  const replay = await replica();
+  expect(await writer.call("send")).toBe(204);
+  const historical = await database.pool.query("SELECT * FROM capture_delivery_diagnostics");
+  // Fail the very first write: no pending marker or failure can be persisted.
+  // Both workers still use real PostgreSQL, not a mocked database/client.
+  await database.pool.query(`
+    CREATE OR REPLACE FUNCTION reject_diagnostic() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'synthetic pending-marker failure'; END $$;
+    CREATE TRIGGER reject_diagnostic BEFORE INSERT ON capture_delivery_diagnostics
+      FOR EACH ROW EXECUTE FUNCTION reject_diagnostic()`);
+  expect(await writer.call("send", { eventId: "msg_failedReplay" })).toBe(503);
+  expect((await database.pool.query("SELECT * FROM capture_delivery_diagnostics")).rows).toEqual(historical.rows);
+  const failed = await writer.call("read");
+  expect(failed).toMatchObject({
+    delivery: "delivery_problem", lastDeliveryFailureAt: expect.any(String),
+    lastVerifiedDeliveryAt: expect.any(String),
+  });
+  expect(await replay.call("read")).toMatchObject({ delivery: "verified_delivery" });
+  expect(await writer.call("read")).toEqual(failed);
+  await database.pool.query("DROP TRIGGER reject_diagnostic ON capture_delivery_diagnostics");
+  const pending = await replay.call<string>("begin");
+  expect(await writer.call("read")).toEqual(failed);
+  await replay.call("finish", { attemptId: pending, succeeded: false });
+  expect(await writer.call("read")).toEqual(failed);
+  for (const variant of ["signature", "instance", "environment", "ignored", "role", "malformed"]) {
+    await replay.call("send", { variant });
+    expect(await writer.call("read")).toEqual(failed);
+  }
+  // Re-deliver the same signed event on the other process; neither worker is
+  // restarted, so success must actually retire the first worker's local state.
+  expect(await replay.call("send", { eventId: "msg_failedReplay" })).toBe(204);
+  const recovered = await writer.call("read");
+  expect(recovered).toMatchObject({ delivery: "verified_delivery", lastDeliveryFailureAt: null });
+  expect(await replay.call("read")).toEqual(recovered);
+  expect(await writer.call("read")).toEqual(recovered);
 });
 
 it("preserves interrupted attempts on restart and prevents older replicas overwriting newer outcomes", async () => {

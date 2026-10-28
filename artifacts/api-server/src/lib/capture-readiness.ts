@@ -24,7 +24,11 @@ export type CaptureDiagnostic = {
 // Retain that authenticated failure in this process, scoped independently of
 // signing-key rotation. This is not evidence of persistence across app restarts.
 let attemptSequence = 0;
-const processDeliveries = new Map<string, { sequence: number; failure: CaptureDiagnostic }>();
+const processDeliveries = new Map<string, {
+  sequence: number;
+  failure: { status: "failed"; attemptedAt: Date } | null;
+  failedAt: number;
+}>();
 function processScope(configuration: Configuration) {
   return JSON.stringify([configuration.environment, configuration.instanceId]);
 }
@@ -39,6 +43,7 @@ export function beginProcessCaptureDelivery(configuration: Configuration) {
     if (previous && previous.sequence > sequence) return;
     processDeliveries.set(key, {
       sequence, failure: succeeded ? null : { status: "failed", attemptedAt },
+      failedAt: succeeded ? 0 : Date.now(),
     });
   };
 }
@@ -46,10 +51,23 @@ export function beginProcessCaptureDelivery(configuration: Configuration) {
 export function captureReadiness(
   configuration: Configuration, lastVerifiedDeliveryAt: string | null, diagnostic: CaptureDiagnostic = null,
 ) {
-  // Historical durable success cannot disprove a later failure which storage
-  // was unable to record. Only a subsequent completed delivery clears it here.
+  // A successful durable attempt that STARTED strictly after this failure was
+  // reported proves recovery, including on another worker. A completion time
+  // or historical evidence timestamp would let overlapping/old success hide it.
+  // Equal timestamps are ambiguous, so keep the warning. This comparison relies
+  // on synchronized application/database clocks and errs toward retaining it.
   if (diagnostic !== "unavailable") {
-    diagnostic = processDeliveries.get(processScope(configuration))?.failure ?? diagnostic;
+    const key = processScope(configuration);
+    const local = processDeliveries.get(key);
+    if (local?.failure) {
+      if (diagnostic?.status === "succeeded" && diagnostic.attemptedAt.getTime() > local.failedAt) {
+        // Keep a sequence fence so a delayed local completion cannot restore a
+        // warning superseded by the confirmed cross-worker recovery.
+        processDeliveries.set(key, { sequence: ++attemptSequence, failure: null, failedAt: 0 });
+      } else {
+        diagnostic = local.failure;
+      }
+    }
   }
   return {
     configuration: configuration.configured ? "configured" as const : "not_configured" as const,

@@ -24,7 +24,7 @@ app.use((req, _res, next) => {
 app.use(router);
 
 process.on("message", async (message: {
-  action: string; requestId: number; attemptId?: string; succeeded?: boolean; variant?: string;
+  action: string; requestId: number; attemptId?: string; succeeded?: boolean; variant?: string; eventId?: string;
 }) => {
   try {
     let result: unknown;
@@ -36,7 +36,7 @@ process.on("message", async (message: {
       await finishCaptureDelivery(scope, message.attemptId!, message.succeeded!);
     } else if (message.action === "send") {
       const variant = message.variant;
-      const eventId = `msg_fixture${message.requestId}`;
+      const eventId = message.eventId ?? `msg_fixture${message.requestId}`;
       const timestamp = String(Math.floor(Date.now() / 1000));
       const body = JSON.stringify({
         type: variant === "ignored" ? "user.created" : "user.updated",

@@ -7,7 +7,7 @@ beforeEach(() => {
   vi.stubEnv("CLERK_WEBHOOK_SIGNING_SECRET", "whsec_isolated");
   vi.stubEnv("CLERK_SECRET_KEY", "sk_test_isolated");
 });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); });
 
 it("reports configured but unknown with no delivery, regardless of elapsed time", () => {
   const configuration = captureConfiguration();
@@ -76,4 +76,35 @@ it("does not let delayed earlier completions replace a newer process delivery ou
   expect(captureReadiness(configuration, warning.lastVerifiedDeliveryAt)).toMatchObject({
     delivery: "verified_delivery", lastDeliveryFailureAt: null,
   });
+});
+
+it("requires a strictly newer successful attempt and preserves the failure time until then", () => {
+  vi.useFakeTimers();
+  vi.stubEnv("CLERK_WEBHOOK_INSTANCE_ID", "ins_remoteRecovery");
+  const configuration = captureConfiguration();
+  const start = new Date("2026-10-28T10:00:00.000Z");
+  vi.setSystemTime(start);
+  const finish = beginProcessCaptureDelivery(configuration);
+  vi.setSystemTime(new Date(start.getTime() + 1_000));
+  finish(false);
+  const warning = captureReadiness(configuration, start.toISOString());
+  expect(warning.lastDeliveryFailureAt).toBe(start.toISOString());
+  // Even an attempt newer than the failed attempt's start is not recovery if
+  // it began before the local failure completed.
+  for (const offset of [-1, 500, 1_000]) {
+    expect(captureReadiness(configuration, start.toISOString(), {
+      status: "succeeded", attemptedAt: new Date(start.getTime() + offset),
+    })).toEqual(warning);
+  }
+  const newer = new Date(start.getTime() + 2_000);
+  for (const status of ["pending", "failed"] as const) {
+    expect(captureReadiness(configuration, start.toISOString(), { status, attemptedAt: newer })).toEqual(warning);
+  }
+  expect(captureReadiness(configuration, start.toISOString(), "unavailable").delivery).toBe("diagnostics_unavailable");
+  expect(captureReadiness(configuration, start.toISOString())).toEqual(warning);
+  const delayedFailure = beginProcessCaptureDelivery(configuration);
+  const recovered = captureReadiness(configuration, newer.toISOString(), { status: "succeeded", attemptedAt: newer });
+  expect(recovered).toMatchObject({ delivery: "verified_delivery", lastDeliveryFailureAt: null });
+  delayedFailure(false);
+  expect(captureReadiness(configuration, newer.toISOString())).toEqual(recovered);
 });

@@ -27,8 +27,19 @@ success even though a later authenticated delivery failed before any write.
 
 **How to apply:** Preserve the original failed-attempt timestamp until a later
 delivery succeeds, scope it by environment and instance rather than signing
-key, and reject out-of-order local completions. Do not describe this as a
-cross-process or restart durability guarantee.
+key, and reject out-of-order local completions. Another worker's durable success
+may retire the local warning only when that attempt began strictly after the
+local failure completed; older success, equal timestamps, and pending attempts
+do not establish recovery. Keep the original failure timestamp until then.
+
+**Why:** A delivery that started before the failure completed may represent
+overlapping work, not recovery. Comparing attempt times conservatively requires
+synchronized application/database clocks; clock skew can retain warnings longer.
+This is cross-worker recovery, not restart durability of an unpersisted failure.
+
+**How to apply:** When adopting durable recovery, fence delayed local completions
+as well as clearing the warning. Do not use historical evidence or a diagnostic
+completion timestamp as proof that a newer attempt succeeded.
 
 When testing process-local completion ordering, make the newer failure happen
 before its pending marker commits, and test both delayed success and delayed
@@ -39,4 +50,4 @@ the history endpoint may still report the expected warning for the wrong reason.
 
 **How to apply:** Use deterministic barriers and private PostgreSQL failures,
 then read administrator history after each completion. A process-local warning
-must remain visible even when the durable diagnostic records success.
+must remain visible even when the durable diagnostic records historical success.
