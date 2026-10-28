@@ -41,6 +41,10 @@ const ACCESS_NOTIFICATION_PROGRESS_CHECK_INTERVAL_MS = 60 * 1000;
 let accessNotificationProgressAlertActive = false;
 let accessNotificationHealthCheckAlertActive = false;
 
+// Summary and list reads are separate statements and do not share a snapshot.
+// Each statement sees one committed PostgreSQL snapshot, but a worker commit
+// between requests can move a notice from one count/list category to another.
+
 export async function getAccessNotificationSummary(): Promise<AccessNotificationSummary> {
   const { rows } = await pool.query<{
     queued: number | string;

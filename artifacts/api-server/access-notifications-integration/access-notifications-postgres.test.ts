@@ -31,6 +31,9 @@ import {
   cleanupCompletedAccessNotifications,
   confirmPlatformNotification,
   deliverAccessNotifications,
+  getAccessNotificationSummary,
+  listConfirmedFailedAccessNotifications,
+  listUncertainAccessNotifications,
   preparePlatformNotification,
   queueAccessNotifications,
 } from "../src/lib/access-notifications";
@@ -183,6 +186,8 @@ describe("access notification transaction ordering in private PostgreSQL", () =>
     await pool.query("DROP FUNCTION IF EXISTS notification_claim_barrier()");
     await pool.query("DROP TRIGGER IF EXISTS notification_cleanup_barrier ON wareiq_access_notifications");
     await pool.query("DROP FUNCTION IF EXISTS notification_cleanup_barrier()");
+    await pool.query("DROP TRIGGER IF EXISTS notification_status_barrier ON wareiq_access_notifications");
+    await pool.query("DROP FUNCTION IF EXISTS notification_status_barrier()");
     await pool.query("TRUNCATE wareiq_access_notifications");
     await pool.query(`
       INSERT INTO wareiq_access_notifications
@@ -452,6 +457,74 @@ describe("access notification transaction ordering in private PostgreSQL", () =>
       "wareiq-access/second-notice",
       "wareiq-access/older-notice",
     ]);
+  });
+
+  it.each([
+    { state: "confirmed_failed", count: "failed", list: "confirmed" },
+    { state: "failed", count: "uncertain", list: "uncertain" },
+  ] as const)("keeps the $count count and visible $list list aligned across a state commit", async ({ state, count, list }) => {
+    await pool.query(`
+      UPDATE wareiq_access_notifications SET attempts = 1 WHERE id = $1
+    `, [oldNotice.id]);
+    await pool.query(`
+      CREATE FUNCTION notification_status_barrier() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.state IN ('confirmed_failed', 'failed') AND NEW.state IS DISTINCT FROM OLD.state THEN
+          PERFORM pg_advisory_xact_lock(1618033, 1414213);
+        END IF;
+        RETURN NEW;
+      END
+      $$;
+      CREATE TRIGGER notification_status_barrier
+      BEFORE UPDATE OF state ON wareiq_access_notifications
+      FOR EACH ROW EXECUTE FUNCTION notification_status_barrier()
+    `);
+
+    const blocker = await pool.connect();
+    await blocker.query("SELECT pg_advisory_lock(1618033, 1414213)");
+    const transition = pool.query(
+      "UPDATE wareiq_access_notifications SET state = $1 WHERE id = $2",
+      [state, oldNotice.id],
+    );
+    try {
+      await waitForActivity((activity) =>
+        activity.wait_event_type === "Lock"
+          && activity.wait_event === "advisory"
+          && activity.query.toLowerCase().includes("update wareiq_access_notifications"),
+      );
+
+      // While the transition is uncommitted, each read must observe the prior
+      // committed state; no reader can see a count/list split for this notice.
+      const [duringSummary, duringConfirmed, duringUncertain] = await Promise.all([
+        getAccessNotificationSummary(),
+        listConfirmedFailedAccessNotifications(),
+        listUncertainAccessNotifications(),
+      ]);
+      expect(duringSummary[count]).toBe(0);
+      expect(duringConfirmed.rows).toEqual([]);
+      expect(duringUncertain).toEqual([]);
+
+      await blocker.query("SELECT pg_advisory_unlock(1618033, 1414213)");
+      await transition;
+
+      const [afterSummary, afterConfirmed, afterUncertain] = await Promise.all([
+        getAccessNotificationSummary(),
+        listConfirmedFailedAccessNotifications(),
+        listUncertainAccessNotifications(),
+      ]);
+      expect(afterSummary[count]).toBe(1);
+      if (list === "confirmed") {
+        expect(afterConfirmed.rows.map((notice) => notice.id)).toEqual([oldNotice.id]);
+        expect(afterUncertain).toEqual([]);
+      } else {
+        expect(afterConfirmed.rows).toEqual([]);
+        expect(afterUncertain.map((notice) => notice.id)).toEqual([oldNotice.id]);
+      }
+    } finally {
+      await blocker.query("SELECT pg_advisory_unlock(1618033, 1414213)").catch(() => undefined);
+      blocker.release();
+      await transition.catch(() => undefined);
+    }
   });
 
   it("limits repeated and overlapping cleanup while preserving pending and failed notices", async () => {
