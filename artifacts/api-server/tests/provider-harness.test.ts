@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fork, type ChildProcess } from "node:child_process";
+import { fork, spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -877,6 +878,118 @@ describe("offline provider harness safety", () => {
       expect(check).not.toHaveBeenCalled();
     } finally {
       output.mockRestore();
+    }
+  });
+
+  it("shows safe recovery refusals in provider-test command output", async () => {
+    const providerTestsDirectory = fileURLToPath(new URL("../provider-tests/", import.meta.url));
+    const fixturePath = join(providerTestsDirectory, `refusal-output-${randomUUID()}.test.ts`);
+    const journalPath = join(directory, "command-refusal.json");
+    const responseFixture = [
+      providerDetail,
+      "Bearer synthetic-provider-token",
+      syntheticSecretKey,
+      syntheticPublishableKey,
+    ].join(" ");
+    const fixture = `
+      import { writeFile } from "node:fs/promises";
+      import { it } from "vitest";
+      import { createKeyPairAttestation, runProviderCheck } from "./harness";
+
+      it.skipIf(process.env.PROVIDER_REFUSAL_COMMAND_TEST !== "1")(
+        "prints a safe recovery refusal",
+        async () => {
+          const secretKey = process.env.CLERK_SECRET_KEY!;
+          const publishableKey = process.env.CLERK_PUBLISHABLE_KEY!;
+          const path = process.env.PROVIDER_REFUSAL_JOURNAL_PATH!;
+          const runId = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
+          await writeFile(path, JSON.stringify({
+            state: "intent",
+            runId,
+            email: "wareiq-provider-" + runId + "@example.com",
+          }), { mode: 0o600 });
+
+          const users = {
+            createUser: async () => { throw new Error("Unexpected account creation"); },
+            getUser: async () => { throw new Error("Unexpected account lookup"); },
+            getUserList: async () => ({
+              data: [{
+                id: "user_offline_fixture",
+                privateMetadata: { wareiqProviderTest: process.env.PROVIDER_RESPONSE_FIXTURE },
+                emailAddresses: [{ emailAddress: process.env.PROVIDER_RESPONSE_FIXTURE! }],
+              }],
+              totalCount: 1,
+            }),
+            deleteUser: async () => { throw new Error("Unexpected account deletion"); },
+          };
+
+          await runProviderCheck({
+            NODE_ENV: "test",
+            CLERK_PROVIDER_TESTS: "isolated-development-only",
+            CLERK_SECRET_KEY: secretKey,
+            CLERK_PUBLISHABLE_KEY: publishableKey,
+            CLERK_PROVIDER_KEY_PAIR_ATTESTATION:
+              createKeyPairAttestation(secretKey, publishableKey),
+            CLERK_PROVIDER_CLEANUP_MANIFEST: path,
+          } as NodeJS.ProcessEnv, { users }, async () => {});
+        },
+      );
+    `;
+    await writeFile(fixturePath, fixture, { mode: 0o600 });
+
+    try {
+      const workspaceRoot = fileURLToPath(new URL("../../../", import.meta.url));
+      const command = spawn("pnpm", [
+        "test:auth:provider", "--", fixturePath,
+      ], {
+        cwd: workspaceRoot,
+        env: {
+          PATH: process.env.PATH,
+          HOME: process.env.HOME,
+          NODE_ENV: "test",
+          CLERK_PROVIDER_TESTS: "isolated-development-only",
+          CLERK_SECRET_KEY: syntheticSecretKey,
+          CLERK_PUBLISHABLE_KEY: syntheticPublishableKey,
+          CLERK_PROVIDER_KEY_PAIR_ATTESTATION: safeEnv.CLERK_PROVIDER_KEY_PAIR_ATTESTATION,
+          PROVIDER_REFUSAL_COMMAND_TEST: "1",
+          PROVIDER_REFUSAL_JOURNAL_PATH: journalPath,
+          PROVIDER_RESPONSE_FIXTURE: responseFixture,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let output = "";
+      command.stdout.setEncoding("utf8").on("data", (chunk: string) => { output += chunk; });
+      command.stderr.setEncoding("utf8").on("data", (chunk: string) => { output += chunk; });
+
+      const exitCode = await new Promise<number | null>((resolve, reject) => {
+        const timeout = setTimeout(() => command.kill("SIGKILL"), 60_000);
+        command.once("error", (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        });
+        command.once("exit", (code) => {
+          clearTimeout(timeout);
+          resolve(code);
+        });
+      });
+
+      expect(exitCode).toBe(1);
+      expect(output).toContain(
+        "Recovery refused: the exact generated email did not identify one account with the matching private run marker.",
+      );
+      expect(output).toContain("Retain the intent journal; no account was changed.");
+      expect(output).not.toContain(providerDetail);
+      expect(output).not.toContain("synthetic-provider-token");
+      expect(output).not.toContain(syntheticSecretKey);
+      expect(output).not.toContain(syntheticPublishableKey);
+      expect(output).not.toMatch(/bearer\s+\S+/i);
+      expect(users.getUserList).not.toHaveBeenCalled();
+      expect(users.createUser).not.toHaveBeenCalled();
+      expect(users.getUser).not.toHaveBeenCalled();
+      expect(users.deleteUser).not.toHaveBeenCalled();
+      expect(check).not.toHaveBeenCalled();
+    } finally {
+      await rm(fixturePath, { force: true });
     }
   });
 
