@@ -12,3 +12,4 @@
 - [Authorization database isolation](auth-database-isolation.md) — database-free auth subprocesses must allow ephemeral loopback HTTP for Supertest while blocking external connections and observing PG constructors.
 - [Vitest subprocess boundaries](vitest-subprocess-boundaries.md) — nested Vitest checks need an explicit outer timeout for multiple child-process startups.
 - [Capture diagnostic durability](capture-diagnostic-durability.md) — preserve warnings across key rotation; database outages require explicit uncertainty and ordered attempt completion.
+- [Drizzle optional peers](drizzle-optional-peers.md) — database-driver peer differences can create incompatible Drizzle types across workspace packages.

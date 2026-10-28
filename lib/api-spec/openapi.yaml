@@ -868,6 +868,11 @@ components:
       additionalProperties: false
       required: [host, port, database, schema, username, sslMode, queryTimeoutSec]
       properties:
+        engine:
+          type: string
+          enum: [postgresql, mysql]
+          default: postgresql
+          description: Connection test engine. Omitted values retain PostgreSQL behavior.
         host:
           type: string
           minLength: 1

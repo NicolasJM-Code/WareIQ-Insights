@@ -76,6 +76,7 @@ export * from './platformAccessUserPage';
 export * from './settingsAccess';
 export * from './unauthorizedResponse';
 export * from './wmsConnectionInput';
+export * from './wmsConnectionInputEngine';
 export * from './wmsConnectionInputSslMode';
 export * from './wmsConnectionResult';
 export * from './wmsConnectionResultStatus';

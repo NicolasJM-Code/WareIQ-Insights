@@ -4,56 +4,57 @@ import { checkServerIdentity as pgServerIdentity } from "node:tls";
 import pg from "pg";
 import ipaddr from "ipaddr.js";
 import type { WmsConnectionInput, WmsConnectionResult } from "@workspace/api-zod";
-
-export class ConnectionFailure extends Error {
-  constructor(public readonly code: string, message: string) { super(message); }
-}
+import { ConnectionFailure } from "./wms-connection-error";
+import { testMysqlConnection } from "./wms-mysql-connection";
+export { ConnectionFailure } from "./wms-connection-error";
 
 /** Never include the driver message, query, config, or cause in a response/log. */
 export function safeConnectionFailure(error: unknown): ConnectionFailure {
   if (error instanceof ConnectionFailure) return error;
   const code = (error as { code?: string })?.code;
-  if (code === "28P01" || code === "28000")
-    return new ConnectionFailure("AUTHENTICATION_FAILED", "PostgreSQL rejected the reporting username or server-side password.");
-  if (code === "3D000")
+  if (code === "28P01" || code === "28000" || code === "ER_ACCESS_DENIED_ERROR")
+    return new ConnectionFailure("AUTHENTICATION_FAILED", "The database rejected the reporting username or server-side password.");
+  if (code === "3D000" || code === "ER_BAD_DB_ERROR")
     return new ConnectionFailure("DATABASE_NOT_FOUND", "The database name was not found. Check the Database name field.");
-  if (code === "42501")
+  if (code === "42501" || code === "ER_DBACCESS_DENIED_ERROR" || code === "ER_TABLEACCESS_DENIED_ERROR")
     return new ConnectionFailure("ACCESS_DENIED", "The reporting account cannot access the selected database or schema.");
   if (code === "3F000")
     return new ConnectionFailure("SCHEMA_NOT_FOUND", "The selected reporting schema does not exist. Check the Database schema field.");
   if (code === "ENOTFOUND" || code === "EAI_AGAIN")
     return new ConnectionFailure("HOST_NOT_FOUND", "The database hostname could not be resolved.");
   if (code === "ECONNREFUSED")
-    return new ConnectionFailure("CONNECTION_REFUSED", "The database refused the connection. Check the PostgreSQL port and firewall.");
+    return new ConnectionFailure("CONNECTION_REFUSED", "The database refused the connection. Check the database port and firewall.");
   if (code?.includes("CERT") || code?.includes("TLS") || code?.includes("SSL") ||
       code === "UNABLE_TO_VERIFY_LEAF_SIGNATURE" ||
       /ssl|tls|certificate/i.test(String((error as Error)?.message)))
     return new ConnectionFailure("TLS_FAILED", "Verified TLS could not be established. Check the database certificate and hostname; a private CA must be configured server-side.");
-  if (code === "57014" || code === "ETIMEDOUT" ||
+  if (code === "57014" || code === "ETIMEDOUT" || code === "PROTOCOL_SEQUENCE_TIMEOUT" ||
       /timeout|timed out/i.test(String((error as Error)?.message)))
-    return new ConnectionFailure("TIMEOUT", "The connection or query timed out. Check network access and the PostgreSQL port.");
+    return new ConnectionFailure("TIMEOUT", "The connection or query timed out. Check network access and the database port.");
   return new ConnectionFailure("CONNECTION_FAILED", "The database connection failed. Check the server address, port, database and network access.");
 }
 
 /** Credentials may only reach a destination approved in server configuration.
  * Administrator form fields are untrusted destinations, not an allowlist. */
 function reportingPassword(input: WmsConnectionInput): string {
+  const mysql = input.engine === "mysql";
+  const prefix = mysql ? "WMS_MYSQL" : "WMS";
+  const standalonePassword = process.env[mysql ? "WMS_MYSQL_PASSWORD" : "WMS_PGPASSWORD"];
   type Destination = { host: string; port: number; database: string; username: string };
   let urlDestination: (Destination & { password: string }) | undefined;
   try {
-    const url = new URL(process.env.WMS_DATABASE_URL ?? "");
-    if (!["postgres:", "postgresql:"].includes(url.protocol)) throw new Error();
+    const url = new URL(process.env[`${prefix}_DATABASE_URL`] ?? "");
+    if (!(mysql ? ["mysql:"] : ["postgres:", "postgresql:"]).includes(url.protocol)) throw new Error();
     const username = decodeURIComponent(url.username);
     const database = decodeURIComponent(url.pathname.slice(1));
     if (!username || !database) throw new Error();
-    urlDestination = { host: url.hostname, port: Number(url.port || 5432),
+    urlDestination = { host: url.hostname, port: Number(url.port || (mysql ? 3306 : 5432)),
       database, username, password: decodeURIComponent(url.password) };
   } catch { /* An invalid URL is never an approved destination. */ }
-  const password = process.env.WMS_PGPASSWORD || urlDestination?.password;
+  const password = standalonePassword || urlDestination?.password;
   if (!password) throw new ConnectionFailure("PASSWORD_NOT_CONFIGURED",
     "Configure WMS credentials securely on the server. Passwords are never stored in this browser.");
-  const configured = [process.env.WMS_APPROVED_HOST, process.env.WMS_APPROVED_PORT,
-    process.env.WMS_APPROVED_DATABASE, process.env.WMS_APPROVED_USERNAME];
+  const configured = ["HOST", "PORT", "DATABASE", "USERNAME"].map((key) => process.env[`${prefix}_APPROVED_${key}`]);
   let approved: Destination | undefined;
   if (configured.some((value) => value !== undefined)) {
     const [host, rawPort, database, username] = configured;
@@ -63,7 +64,7 @@ function reportingPassword(input: WmsConnectionInput): string {
         "The approved WMS destination is incomplete. An owner must configure its host, port, database and username on the server.");
     approved = { host, port, database, username };
   } else {
-    // A server-held PostgreSQL URL can itself bind either password source.
+    // An engine-specific server-held URL can itself bind either password source.
     approved = urlDestination;
   }
   if (!approved) throw new ConnectionFailure("DESTINATION_NOT_CONFIGURED",
@@ -72,7 +73,7 @@ function reportingPassword(input: WmsConnectionInput): string {
     destination.host.toLowerCase() === input.host.toLowerCase() &&
     destination.port === input.port && destination.database === input.database &&
     destination.username === input.username;
-  if (!matches(approved) || (!process.env.WMS_PGPASSWORD && (!urlDestination || !matches(urlDestination))))
+  if (!matches(approved) || (!standalonePassword && (!urlDestination || !matches(urlDestination))))
     throw new ConnectionFailure("SECRET_MISMATCH",
       "These fields do not match the server-approved WMS destination. Credentials were not sent. Ask an owner to approve any destination change securely.");
   return password;
@@ -167,9 +168,16 @@ export async function testConnection(
   let pool: pg.Pool | undefined;
   let client: pg.PoolClient | undefined;
   try {
+    if (input.engine === "mysql") {
+      if (input.schema !== input.database)
+        throw new ConnectionFailure("SCHEMA_MISMATCH", "MySQL uses the database name as its schema. Set both fields to the same name.");
+      if (isIP(input.host))
+        throw new ConnectionFailure("TLS_HOSTNAME_REQUIRED", "Use the MySQL DNS hostname matching its TLS certificate, not a numeric IP address.");
+    }
     const password = reportingPassword(input);
     const address = await approvedAddress(input.host, process.env,
       dependencies.resolveHost ?? ((host) => lookup(host, { all: true })));
+    if (input.engine === "mysql") return await testMysqlConnection(input, password, address);
     const timeout = Math.min(input.queryTimeoutSec * 1000, 15000);
     pool = new pg.Pool({
       host: address, port: input.port, database: input.database, user: input.username, password,

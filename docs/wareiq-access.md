@@ -114,6 +114,9 @@ mappings, schedules, alerts and durable audit history are not implemented.
 
 ## WMS credential destination approval
 
+For MySQL 8+ metadata-only connection testing and its separate credentials, see
+[MySQL connection setup](wms-mysql.md). PostgreSQL remains the default.
+
 Connection tests never send credentials to an arbitrary administrator-entered host.
 The server must have a valid matching PostgreSQL `WMS_DATABASE_URL`, or a
 `WMS_PGPASSWORD` plus all four server-only settings: `WMS_APPROVED_HOST`,

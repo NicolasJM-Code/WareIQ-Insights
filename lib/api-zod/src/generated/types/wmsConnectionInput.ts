@@ -5,9 +5,12 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { WmsConnectionInputEngine } from './wmsConnectionInputEngine';
 import type { WmsConnectionInputSslMode } from './wmsConnectionInputSslMode';
 
 export interface WmsConnectionInput {
+  /** Connection test engine. Omitted values retain PostgreSQL behavior. */
+  engine?: WmsConnectionInputEngine;
   /**
      * @minLength 1
      * @maxLength 253

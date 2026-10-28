@@ -659,6 +659,7 @@ export const RunAccessReportResponse = zod.object({
 /**
  * @summary Test a WMS connection without saving credentials or querying warehouse records
  */
+export const testWmsConnectionBodyEngineDefault = `postgresql`;
 export const testWmsConnectionBodyHostMax = 253;
 
 
@@ -683,6 +684,7 @@ export const testWmsConnectionBodyQueryTimeoutSecMax = 300;
 
 
 export const TestWmsConnectionBody = zod.object({
+  "engine": zod.enum(['postgresql', 'mysql']).default(testWmsConnectionBodyEngineDefault).describe('Connection test engine. Omitted values retain PostgreSQL behavior.'),
   "host": zod.string().min(1).max(testWmsConnectionBodyHostMax).regex(testWmsConnectionBodyHostRegExp),
   "port": zod.number().int().min(1).max(testWmsConnectionBodyPortMax),
   "database": zod.string().min(1).max(testWmsConnectionBodyDatabaseMax).regex(testWmsConnectionBodyDatabaseRegExp),

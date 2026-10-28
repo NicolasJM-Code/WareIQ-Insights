@@ -673,6 +673,17 @@ export interface AccessRunResult {
   message: string;
 }
 
+/**
+ * Connection test engine. Omitted values retain PostgreSQL behavior.
+ */
+export type WmsConnectionInputEngine = typeof WmsConnectionInputEngine[keyof typeof WmsConnectionInputEngine];
+
+
+export const WmsConnectionInputEngine = {
+  postgresql: 'postgresql',
+  mysql: 'mysql',
+} as const;
+
 export type WmsConnectionInputSslMode = typeof WmsConnectionInputSslMode[keyof typeof WmsConnectionInputSslMode];
 
 
@@ -681,6 +692,8 @@ export const WmsConnectionInputSslMode = {
 } as const;
 
 export interface WmsConnectionInput {
+  /** Connection test engine. Omitted values retain PostgreSQL behavior. */
+  engine?: WmsConnectionInputEngine;
   /**
      * @minLength 1
      * @maxLength 253

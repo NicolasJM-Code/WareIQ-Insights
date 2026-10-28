@@ -22,14 +22,17 @@ const hostRe = /^(?=.{1,253}$)([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(\.[a
 const ident = /^[a-zA-Z_][a-zA-Z0-9_$]{0,62}$/;
 
 const connSchema = z.object({
+  engine: z.enum(['postgresql', 'mysql']),
   host: z.string().trim().min(1, 'Host is required').regex(hostRe, 'Enter a valid hostname or IPv4 address'),
   port: z.coerce.number({ invalid_type_error: 'Port must be a number' }).int('Whole number').min(1, '1–65535').max(65535, '1–65535'),
   database: z.string().trim().min(1, 'Database name is required').regex(ident, 'Letters, digits and underscores; must not start with a digit'),
   schema: z.string().trim().min(1, 'Schema is required').regex(ident, 'Letters, digits and underscores; must not start with a digit'),
-  username: z.string().trim().min(1, 'Reporting username is required').regex(ident, 'Use a valid PostgreSQL role name'),
+  username: z.string().trim().min(1, 'Reporting username is required').regex(ident, 'Use a valid reporting account name'),
   sslMode: z.literal('verify-full'),
   refreshInterval: z.enum(['1', '5', '15', '30', 'manual']),
   queryTimeoutSec: z.coerce.number({ invalid_type_error: 'Timeout must be a number' }).int('Whole seconds').min(5, 'Minimum 5 seconds').max(300, 'Maximum 300 seconds'),
+}).refine((value) => value.engine !== 'mysql' || value.schema === value.database, {
+  message: 'MySQL schema must match the database name', path: ['schema'],
 });
 type Conn = z.infer<typeof connSchema>;
 
@@ -72,9 +75,15 @@ export default function Settings() {
 
   const form = useForm<Conn>({
     resolver: zodResolver(connSchema),
-    defaultValues: { host: '', port: 5432, database: '', schema: 'public', username: '', sslMode: 'verify-full', refreshInterval: prefs.refreshInterval, queryTimeoutSec: prefs.queryTimeoutSec },
+    defaultValues: { engine: 'postgresql', host: '', port: 5432, database: '', schema: 'public', username: '', sslMode: 'verify-full', refreshInterval: prefs.refreshInterval, queryTimeoutSec: prefs.queryTimeoutSec },
     mode: 'onTouched',
   });
+  const engine = form.watch('engine');
+  const database = form.watch('database');
+  const isMysql = engine === 'mysql';
+  useEffect(() => {
+    if (isMysql) form.setValue('schema', database);
+  }, [isMysql, database, form]);
   useEffect(() => {
     const subscription = form.watch(() => {
       setTestResult(null);
@@ -120,7 +129,7 @@ export default function Settings() {
 
   const copyConfig = async () => {
     const v = form.getValues();
-    const cfg = { host: v.host, port: Number(v.port), database: v.database, schema: v.schema, sslmode: v.sslMode, refreshInterval: v.refreshInterval === 'manual' ? 'manual' : `${v.refreshInterval}m`, queryTimeoutSeconds: Number(v.queryTimeoutSec) };
+    const cfg = { engine: v.engine, host: v.host, port: Number(v.port), database: v.database, schema: v.schema, sslmode: v.sslMode, refreshInterval: v.refreshInterval === 'manual' ? 'manual' : `${v.refreshInterval}m`, queryTimeoutSeconds: Number(v.queryTimeoutSec) };
     try {
       await navigator.clipboard.writeText(JSON.stringify(cfg, null, 2));
       toast({ title: 'Configuration copied', description: 'Non-secret fields only. Username and password are excluded.' });
@@ -175,13 +184,31 @@ export default function Settings() {
 
         <TabsContent value="connection" className="space-y-4">
           <div className="grid gap-4 xl:grid-cols-[1fr_380px]">
-            <Section icon={Server} title="PostgreSQL connection definition">
+            <Section icon={Server} title={`${isMysql ? 'MySQL' : 'PostgreSQL'} connection definition`}>
               <Form {...form}>
                 <form onSubmit={(e) => { e.preventDefault(); void savePrefs(); }} className="space-y-5" autoComplete="off" noValidate>
                   <fieldset disabled={testConnection.isPending} className="space-y-5">
+                  <FormField control={form.control} name="engine" render={({ field }) => (
+                    <FormItem><FormLabel>Database engine</FormLabel>
+                      <Select value={field.value} onValueChange={(value: 'postgresql' | 'mysql') => {
+                        const oldDefault = field.value === 'mysql' ? 3306 : 5432;
+                        if (Number(form.getValues('port')) === oldDefault) form.setValue('port', value === 'mysql' ? 3306 : 5432);
+                        form.setValue('schema', value === 'mysql' ? form.getValues('database') : 'public');
+                        field.onChange(value);
+                        form.clearErrors();
+                      }}>
+                        <FormControl><SelectTrigger data-testid="select-database-engine"><SelectValue /></SelectTrigger></FormControl>
+                        <SelectContent>
+                          <SelectItem value="postgresql">PostgreSQL</SelectItem>
+                          <SelectItem value="mysql">MySQL 8+</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>Connection testing only. Changing engines does not migrate data or enable live reports.</FormDescription>
+                    </FormItem>
+                  )} />
                   <div className="grid sm:grid-cols-[1fr_140px] gap-4">
                     <FormField control={form.control} name="host" render={({ field }) => (
-                      <FormItem><FormLabel>Database host / server address</FormLabel><FormControl><Input placeholder="wms-db.internal.example" className="font-mono" data-testid="input-host" {...field} /></FormControl><FormMessage /></FormItem>
+                      <FormItem><FormLabel>Database host / server address</FormLabel><FormControl><Input placeholder="wms-db.example.com" className="font-mono" data-testid="input-host" {...field} /></FormControl><FormDescription>{isMysql ? 'Use the DNS hostname matching the MySQL TLS certificate, not a numeric IP. Private VPN destinations need the approved network policy below and an existing server route.' : 'Publicly routable host, or an explicitly approved private destination with an existing server route.'}</FormDescription><FormMessage /></FormItem>
                     )} />
                     <FormField control={form.control} name="port" render={({ field }) => (
                       <FormItem><FormLabel>Port</FormLabel><FormControl><Input inputMode="numeric" className="font-mono" data-testid="input-port" {...field} /></FormControl><FormMessage /></FormItem>
@@ -192,7 +219,7 @@ export default function Settings() {
                       <FormItem><FormLabel>Database name</FormLabel><FormControl><Input placeholder="wms_prod" className="font-mono" data-testid="input-database" {...field} /></FormControl><FormMessage /></FormItem>
                     )} />
                     <FormField control={form.control} name="schema" render={({ field }) => (
-                      <FormItem><FormLabel>Database schema</FormLabel><FormControl><Input className="font-mono" data-testid="input-schema" {...field} /></FormControl><FormDescription>Schema containing WMS tables and views.</FormDescription><FormMessage /></FormItem>
+                      <FormItem><FormLabel>Database schema</FormLabel><FormControl><Input className="font-mono" data-testid="input-schema" readOnly={isMysql} {...field} /></FormControl><FormDescription>{isMysql ? 'MySQL uses the database name as its schema; this field follows Database name.' : 'Schema containing WMS tables and views.'}</FormDescription><FormMessage /></FormItem>
                     )} />
                   </div>
                   <div className="grid sm:grid-cols-2 gap-4">
@@ -201,7 +228,7 @@ export default function Settings() {
                     )} />
                     <div className="space-y-2">
                       <div className="text-sm font-medium flex items-center gap-1.5">Server-side password <Lock className="h-3 w-3 text-muted-foreground" /></div>
-                      <p className="text-[0.8rem] text-muted-foreground">An owner must configure the credentials and approve this exact host, port, database and username on the server. Use a matching <code>WMS_DATABASE_URL</code>, or <code>WMS_PGPASSWORD</code> with all four <code>WMS_APPROVED_*</code> settings listed below. The password is never entered or stored in this browser.</p>
+                      <p className="text-[0.8rem] text-muted-foreground">An owner must configure credentials and approve this exact engine, host, port, database and username on the server. Use a matching <code>{isMysql ? 'WMS_MYSQL_DATABASE_URL' : 'WMS_DATABASE_URL'}</code>, or <code>{isMysql ? 'WMS_MYSQL_PASSWORD' : 'WMS_PGPASSWORD'}</code> with all four approval settings below. PostgreSQL credentials are never reused for MySQL. The password is never entered or stored in this browser.</p>
                     </div>
                   </div>
 
@@ -220,7 +247,7 @@ export default function Settings() {
                           ))}
                         </RadioGroup>
                       </FormControl>
-                      <p className="text-[12px] text-muted-foreground">For a private certificate authority, configure <code>WMS_CA_CERT</code> in server Secrets. Certificate verification cannot be disabled.</p>
+                      <p className="text-[12px] text-muted-foreground">For a private certificate authority, configure <code>{isMysql ? 'WMS_MYSQL_CA_CERT' : 'WMS_CA_CERT'}</code> in server Secrets. Certificate verification cannot be disabled.</p>
                       <FormMessage />
                     </FormItem>
                   )} />
@@ -268,9 +295,11 @@ export default function Settings() {
                 <ol className="space-y-3 text-[12.5px]">
                   <li><span className="font-semibold">1. Server-side connection testing is available.</span> The test uses verified TLS and a bounded pool, checks role permissions and schema access, and closes the connection. It reads metadata only.</li>
                   <li><span className="font-semibold">2. Secrets held server-side.</span> Store credentials in environment variables or a secrets manager, not in browser code or source control:
-                    <pre className="mt-1.5 rounded bg-muted p-2.5 font-mono text-[11px] leading-relaxed overflow-x-auto">WMS_DATABASE_URL (approved PostgreSQL URL){'\n'}or WMS_PGPASSWORD with all of:{'\n'}WMS_APPROVED_HOST{'\n'}WMS_APPROVED_PORT{'\n'}WMS_APPROVED_DATABASE{'\n'}WMS_APPROVED_USERNAME{'\n'}WMS_CA_CERT (private CA only)</pre>
+                    <pre className="mt-1.5 rounded bg-muted p-2.5 font-mono text-[11px] leading-relaxed overflow-x-auto">{isMysql
+                      ? 'WMS_MYSQL_DATABASE_URL (approved mysql:// URL)\nor WMS_MYSQL_PASSWORD with all of:\nWMS_MYSQL_APPROVED_HOST\nWMS_MYSQL_APPROVED_PORT\nWMS_MYSQL_APPROVED_DATABASE\nWMS_MYSQL_APPROVED_USERNAME\nWMS_MYSQL_CA_CERT (private CA only)'
+                      : 'WMS_DATABASE_URL (approved PostgreSQL URL)\nor WMS_PGPASSWORD with all of:\nWMS_APPROVED_HOST\nWMS_APPROVED_PORT\nWMS_APPROVED_DATABASE\nWMS_APPROVED_USERNAME\nWMS_CA_CERT (private CA only)'}</pre>
                   </li>
-                  <li><span className="font-semibold">3. A least-privilege role.</span> SELECT only on approved reporting tables and views.</li>
+                  <li><span className="font-semibold">3. A least-privilege role.</span> SELECT only on approved reporting tables and views. MySQL 8+ also needs SHOW VIEW and must not have role grants or grant options.</li>
                   <li><span className="font-semibold">4. Protect the live WMS.</span> Connection pooling, statement timeouts and suitable indexes; a read replica if reporting load grows.</li>
                   <li><span className="font-semibold">5. Safe errors.</span> Users see actionable, sanitized messages. Passwords, connection strings and raw SQL errors are never logged.</li>
                 </ol>
