@@ -89,6 +89,10 @@ afterEach(async () => {
     await exit;
   }));
   await database.pool.query("DROP TRIGGER IF EXISTS reject_finish ON access_change_history");
+  await database.pool.query(`
+    DROP TRIGGER IF EXISTS reject_intent ON access_change_history;
+    DROP TRIGGER IF EXISTS reject_previous ON access_change_history;
+    DROP FUNCTION IF EXISTS reject_early_audit_write()`);
 });
 afterAll(() => database.stop());
 
@@ -248,6 +252,55 @@ it.each<Kind>(["api", "command"])("%s keeps pending intent if PostgreSQL rejects
   await worker.exited;
   expect(worker.messages.some((m) => m.event === "success")).toBe(false);
   expect(await history()).toEqual([entry]);
+});
+
+it.each<Kind>(["api", "command"])("%s never dispatches if PostgreSQL rejects the initial intent INSERT", async (kind) => {
+  await database.pool.query(`
+    CREATE FUNCTION reject_early_audit_write() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'integration intent insert failure'; END $$;
+    CREATE TRIGGER reject_intent BEFORE INSERT ON access_change_history
+      FOR EACH ROW EXECUTE FUNCTION reject_early_audit_write()`);
+  const worker = launch(kind);
+  await worker.wait("failure");
+  await worker.wait("available");
+  await worker.exited;
+  expect(worker.child.exitCode).toBe(0);
+  expect(worker.child.signalCode).toBeNull();
+  expect(worker.messages.some((m) =>
+    m.event === "intent" || m.event === "dispatch" || m.event === "success")).toBe(false);
+  // A rejected INSERT must not fabricate a successful or pending history row.
+  // This uses accessHistoryPage in a new process, not the writer's pool.
+  expect(await history()).toEqual([]);
+});
+
+it.each<Kind>(["api", "command"])("%s never dispatches if PostgreSQL rejects the previous-role UPDATE", async (kind) => {
+  await database.pool.query(`
+    CREATE FUNCTION reject_early_audit_write() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'integration previous role update failure'; END $$;
+    CREATE TRIGGER reject_previous BEFORE UPDATE OF previous_role ON access_change_history
+      FOR EACH ROW EXECUTE FUNCTION reject_early_audit_write()`);
+  const worker = launch(kind);
+  const { id } = await worker.wait("intent");
+  await worker.wait("failure");
+  await worker.wait("available");
+  await worker.exited;
+  expect(worker.child.exitCode).toBe(0);
+  expect(worker.child.signalCode).toBeNull();
+  expect(worker.messages.some((m) => m.event === "dispatch" || m.event === "success")).toBe(false);
+
+  // Reject only previous_role: target resolution and failure finalization must
+  // still commit independently of the rolled-back role-lock transaction.
+  const entries = await history();
+  expect(entries).toHaveLength(1);
+  expect(entries[0]).toMatchObject({
+    id, actorId: kind === "api" ? "user_actor" : "operator:integration",
+    targetId: "user_target", previousRole: null, requestedRole: "supervisor",
+    resultingRole: null, outcome: "failed", reason: "change_not_started",
+    createdAt: expect.any(String), finishedAt: expect.any(String),
+  });
+  expect(Number.isFinite(Date.parse(entries[0].createdAt))).toBe(true);
+  expect(Number.isFinite(Date.parse(entries[0].finishedAt!))).toBe(true);
+  expect(await history()).toEqual(entries);
 });
 
 it.each<Kind>(["api", "command"])("%s survives process interruption after provider dispatch and reads back unchanged", async (kind) => {
