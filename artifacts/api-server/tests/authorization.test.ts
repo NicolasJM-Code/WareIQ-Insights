@@ -380,6 +380,7 @@ describe("membership-based routes mounted ahead of legacy guards", () => {
     } satisfies AccessSession;
     const response = await request(app).get("/api/access/me");
     expect(response.status).toBe(200);
+    expect(response.headers["cache-control"]).toBe("no-store");
     expect(GetAccessSessionResponse.safeParse(response.body).success).toBe(true);
     expect(response.body).toEqual(expected);
   });
