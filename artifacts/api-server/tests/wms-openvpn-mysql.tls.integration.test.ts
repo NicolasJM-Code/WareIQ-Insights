@@ -6,6 +6,8 @@ import { safeConnectionFailure, testConnection, executeApprovedMysqlReport } fro
 import type { WmsSiteScope } from "../src/lib/wms-site-config";
 
 const enabled = process.env.WMS_OPENVPN_MYSQL_TLS_INTEGRATION === "1";
+const fixtureVersion = process.env.WMS_MYSQL_TLS_FIXTURE_VERSION ?? "unknown version";
+const versioned = (name: string) => `MySQL ${fixtureVersion}: ${name}`;
 const siteScope: WmsSiteScope = {
   siteId: "11111111-1111-4111-8111-111111111111",
   clientId: "22222222-2222-4222-8222-222222222222",
@@ -109,7 +111,7 @@ function report() {
   return executeApprovedMysqlReport(mapping, reportScope, undefined, { siteScope });
 }
 
-test.skipIf(!enabled)("the real HTTPS CONNECT and SQL TLS trust chains serve probes and mapped reports", async () => {
+test.skipIf(!enabled)(versioned("real HTTPS CONNECT and SQL TLS trust chains serve probes and mapped reports"), async () => {
   expect(await probe()).toMatchObject({ status: "connected", code: "CONNECTED" });
   expect(await report()).toMatchObject({
     rows: [{ id: 1, label: "disposable fixture row" }],
@@ -117,7 +119,7 @@ test.skipIf(!enabled)("the real HTTPS CONNECT and SQL TLS trust chains serve pro
   });
 }, 30000);
 
-test.skipIf(!enabled)("probes and reports reject connector HTTPS and SQL CAs used in the wrong role", async () => {
+test.skipIf(!enabled)(versioned("probes and reports reject connector HTTPS and SQL CAs used in the wrong role"), async () => {
   // Wrong HTTPS trust stops both operations before the connector can create a
   // tunnel. Keep SQL trust valid to isolate the connector certificate check.
   vi.stubEnv(connectorCaEnv, trustedSqlCa);

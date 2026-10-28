@@ -15,6 +15,8 @@ vi.mock("../src/lib/wms-openvpn", () => ({
 }));
 
 const enabled = process.env.WMS_MYSQL_TLS_INTEGRATION === "1";
+const fixtureVersion = process.env.WMS_MYSQL_TLS_FIXTURE_VERSION ?? "unknown version";
+const versioned = (name: string) => `MySQL ${fixtureVersion}: ${name}`;
 const input: WmsConnectionInput = {
   engine: "mysql",
   host: "mysql.fixture.test",
@@ -82,14 +84,13 @@ async function probe(
     };
   }
 }
-
-test.skipIf(!enabled)("trusted CA, hostname and read-only view access succeed", async () => {
+test.skipIf(!enabled)(versioned("trusted CA, hostname and read-only view access succeed"), async () => {
   const result = await probe();
   expect(result.status).toBe("connected");
   expect(result.code).toBe("CONNECTED");
 });
 
-test.skipIf(!enabled)("untrusted CA and hostname mismatch fail verified TLS", async () => {
+test.skipIf(!enabled)(versioned("untrusted CA and hostname mismatch fail verified TLS"), async () => {
   const badCa = await readFile(
     `${process.env.WMS_MYSQL_TLS_FIXTURE_DIR}/certs/untrusted-ca.pem`,
     "utf8",
@@ -102,18 +103,18 @@ test.skipIf(!enabled)("untrusted CA and hostname mismatch fail verified TLS", as
   expect((await probe({ host: "wrong.fixture.test" })).code).toBe("TLS_FAILED");
 });
 
-test.skipIf(!enabled)("authentication failure is rejected by the real fixture server", async () => {
+test.skipIf(!enabled)(versioned("authentication failure is rejected by the fixture server"), async () => {
   expect((await probe({}, "incorrect-disposable-password")).code).toBe("AUTHENTICATION_FAILED");
 });
 
-test.skipIf(!enabled)("write grants and active roles are rejected", async () => {
+test.skipIf(!enabled)(versioned("write grants and active roles are rejected"), async () => {
   expect((await probe({ username: "fixture_writer" }, fixturePasswords.writer)).code)
     .toBe("READ_ONLY_ROLE_REQUIRED");
   expect((await probe({ username: "fixture_role_reader" }, fixturePasswords.role)).code)
     .toBe("READ_ONLY_ROLE_REQUIRED");
 });
 
-test.skipIf(!enabled)("a schema without reporting views is rejected", async () => {
+test.skipIf(!enabled)(versioned("a schema without reporting views is rejected"), async () => {
   expect((await probe({
     database: "reporting_empty",
     schema: "reporting_empty",
@@ -121,7 +122,7 @@ test.skipIf(!enabled)("a schema without reporting views is rejected", async () =
   }, fixturePasswords.empty)).code).toBe("REPORTING_VIEWS_REQUIRED");
 });
 
-test.skipIf(!enabled)("two warehouses trust only their own private SQL CA for probes and reports", async () => {
+test.skipIf(!enabled)(versioned("two warehouses trust only their own private SQL CA for probes and reports"), async () => {
   const first = {
     siteId: "11111111-1111-4111-8111-111111111111",
     clientId: "22222222-2222-4222-8222-222222222222",
@@ -184,7 +185,7 @@ test.skipIf(!enabled)("two warehouses trust only their own private SQL CA for pr
   }
 }, 30000);
 
-test.skipIf(!enabled)("warehouse SQL CA renewal keeps temporary and final trust isolated", async () => {
+test.skipIf(!enabled)(versioned("warehouse SQL CA renewal keeps temporary and final trust isolated"), async () => {
   const first = {
     siteId: "11111111-1111-4111-8111-111111111111",
     clientId: "22222222-2222-4222-8222-222222222222",
@@ -279,7 +280,7 @@ test.skipIf(!enabled)("warehouse SQL CA renewal keeps temporary and final trust 
   }
 }, 45000);
 
-test.skipIf(!enabled)("a stalled MySQL handshake times out and closes its socket", async () => {
+test.skipIf(!enabled)(versioned("a stalled handshake times out and closes its socket"), async () => {
   const accepted: Socket[] = [];
   let resolveClosed!: () => void;
   const closed = new Promise<void>((resolve) => { resolveClosed = resolve; });

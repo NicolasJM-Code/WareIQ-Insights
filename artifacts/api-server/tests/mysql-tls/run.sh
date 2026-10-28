@@ -89,7 +89,8 @@ recover_stale_fixtures() {
             "$member_fixture" != true ||
             "$member_owner" != "$owner_pid" ||
             "$member_dir" != "$candidate_dir" ||
-            ( "$member_service" != mysql && "$member_service" != mysql-second ) ]]; then
+            ( "$member_service" != mysql && "$member_service" != mysql-second &&
+              "$member_service" != mysql-renewed ) ]]; then
         project_is_owned=false
         break
       fi
@@ -138,7 +139,7 @@ openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 2 \
   -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null
 docker run --rm --user 999:999 --group-add "$fixture_gid" \
   --volume "$certs:/certs" \
-  --entrypoint openssl mysql:8.4 req -newkey rsa:2048 -sha256 -nodes \
+  --entrypoint openssl mysql:8.0 req -newkey rsa:2048 -sha256 -nodes \
   -keyout /certs/server-key.pem -out /certs/server.csr \
   -subj "/CN=mysql.fixture.test" 2>/dev/null
 chmod 755 "$certs"
@@ -184,51 +185,67 @@ openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 2 \
 chmod 644 "$fixture_dir/certs/server-cert.pem" "$fixture_dir/certs/ca.pem" \
   "$fixture_dir/certs/untrusted-ca.pem"
 
-if ! "${compose[@]}" up --detach; then
-  "${compose[@]}" logs >&2 || true
-  exit 1
-fi
-fixture_port=""
-second_fixture_port=""
-renewed_fixture_port=""
-for service in mysql mysql-second mysql-renewed; do
-published_address="$("${compose[@]}" port "$service" 3306 | head -n 1)"
-port="${published_address##*:}"
-if [[ ! "$port" =~ ^[0-9]+$ ]]; then
-  echo "Could not determine the loopback-only fixture port." >&2
-  exit 1
-fi
-case "$service" in
-  mysql) fixture_port="$port" ;;
-  mysql-second) second_fixture_port="$port" ;;
-  mysql-renewed) renewed_fixture_port="$port" ;;
-esac
-container_id="$("${compose[@]}" ps -q "$service")"
-ready=false
-for _ in $(seq 1 120); do
-  if docker logs "$container_id" 2>&1 | grep -q 'ready for connections.*port: 3306'; then
-    ready=true
-    break
+for image in mysql:8.0 mysql:8.4; do
+  export WMS_MYSQL_TLS_IMAGE="$image"
+  echo "Starting secure-connection integration checks on ${image}."
+  if ! "${compose[@]}" up --detach; then
+    echo "MySQL ${image#mysql:} fixture startup failed; raw container logs were withheld." >&2
+    exit 1
   fi
-  sleep 1
-done
-if [[ "$ready" != true ]]; then
-  "${compose[@]}" logs "$service" >&2 || true
-  echo "Disposable MySQL fixture did not become ready within 120 seconds." >&2
-  exit 1
-fi
-done
 
-cd "$repo_root"
-WMS_MYSQL_TLS_INTEGRATION=1 \
-WMS_OPENVPN_MYSQL_TLS_INTEGRATION=1 \
-WMS_MYSQL_TLS_FIXTURE_DIR="$fixture_dir" \
-WMS_MYSQL_TLS_FIXTURE_PORT="$fixture_port" \
-WMS_MYSQL_TLS_SECOND_FIXTURE_PORT="$second_fixture_port" \
-WMS_MYSQL_TLS_RENEWED_FIXTURE_PORT="$renewed_fixture_port" \
-  pnpm exec vitest run --config vitest.config.ts \
-    artifacts/api-server/tests/wms-mysql.tls.integration.test.ts \
-    artifacts/api-server/tests/wms-openvpn-mysql.tls.integration.test.ts || {
-      "${compose[@]}" logs >&2 || true
+  fixture_port=""
+  second_fixture_port=""
+  renewed_fixture_port=""
+  for service in mysql mysql-second mysql-renewed; do
+    published_address="$("${compose[@]}" port "$service" 3306 | head -n 1)"
+    port="${published_address##*:}"
+    if [[ ! "$port" =~ ^[0-9]+$ ]]; then
+      echo "MySQL ${image#mysql:}: could not determine the loopback-only fixture port." >&2
       exit 1
-    }
+    fi
+    case "$service" in
+      mysql) fixture_port="$port" ;;
+      mysql-second) second_fixture_port="$port" ;;
+      mysql-renewed) renewed_fixture_port="$port" ;;
+    esac
+    container_id="$("${compose[@]}" ps -q "$service")"
+    ready=false
+    for _ in $(seq 1 120); do
+      if docker logs "$container_id" 2>&1 | grep -q 'ready for connections.*port: 3306'; then
+        ready=true
+        break
+      fi
+      sleep 1
+    done
+    if [[ "$ready" != true ]]; then
+      echo "MySQL ${image#mysql:}: fixture did not become ready within 120 seconds; raw container logs were withheld." >&2
+      exit 1
+    fi
+  done
+
+  container_id="$("${compose[@]}" ps -q mysql)"
+  server_version="$(docker logs "$container_id" 2>&1 |
+    sed -n "s/.*Version: '\\([0-9][0-9.]*\\)'.*/\\1/p" | head -n 1)"
+  if [[ ! "$server_version" =~ ^8\.(0|4)\.[0-9]+ ]]; then
+    echo "Expected MySQL 8.0 or 8.4 but could not identify the server version for ${image}." >&2
+    exit 1
+  fi
+
+  echo "Running secure-connection assertions against MySQL ${server_version}."
+  cd "$repo_root"
+  if ! WMS_MYSQL_TLS_INTEGRATION=1 \
+    WMS_OPENVPN_MYSQL_TLS_INTEGRATION=1 \
+    WMS_MYSQL_TLS_FIXTURE_DIR="$fixture_dir" \
+    WMS_MYSQL_TLS_FIXTURE_PORT="$fixture_port" \
+    WMS_MYSQL_TLS_SECOND_FIXTURE_PORT="$second_fixture_port" \
+    WMS_MYSQL_TLS_RENEWED_FIXTURE_PORT="$renewed_fixture_port" \
+    WMS_MYSQL_TLS_FIXTURE_VERSION="$server_version" \
+      pnpm exec vitest run --config vitest.config.ts \
+        artifacts/api-server/tests/wms-mysql.tls.integration.test.ts \
+        artifacts/api-server/tests/wms-openvpn-mysql.tls.integration.test.ts; then
+    echo "MySQL ${server_version} secure-connection integration checks failed." >&2
+    exit 1
+  fi
+
+  "${compose[@]}" down --volumes --remove-orphans >/dev/null
+done

@@ -1,6 +1,6 @@
 services:
   mysql: &mysql
-    image: mysql:8.4
+    image: ${WMS_MYSQL_TLS_IMAGE:-mysql:8.4}
     labels:
       com.wareiq.mysql-tls.fixture: "true"
       com.wareiq.mysql-tls.owner-pid: "${WMS_MYSQL_TLS_FIXTURE_PID:?fixture pid is required}"
