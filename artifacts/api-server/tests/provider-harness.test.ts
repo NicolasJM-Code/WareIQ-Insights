@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fork, type ChildProcess } from "node:child_process";
+import { createRequire } from "node:module";
 import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   createKeyPairAttestation, journalIO, runProviderCheck, type Manifest, type ProviderUsers,
 } from "../provider-tests/harness";
@@ -20,6 +23,7 @@ const safeEnv = {
 };
 const providerDetail = "FAKE_PRIVATE_PROVIDER_RESPONSE";
 const outage = () => new Error(providerDetail);
+const tsx = createRequire(new URL("../../../scripts/package.json", import.meta.url)).resolve("tsx");
 const saved: Manifest = {
   userId: "user_offline_fixture",
   runId: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
@@ -35,6 +39,7 @@ function account(manifest: Manifest) {
 
 describe("offline provider harness safety", () => {
   let directory: string;
+  const children: ChildProcess[] = [];
   let user: ReturnType<typeof account>;
   let users: {
     createUser: ReturnType<typeof vi.fn<ProviderUsers["createUser"]>>;
@@ -89,7 +94,15 @@ describe("offline provider harness safety", () => {
     check.mockReset().mockResolvedValue(undefined);
     info.mockReset();
   });
-  afterEach(async () => { await rm(directory, { recursive: true, force: true }); });
+  afterEach(async () => {
+    await Promise.all(children.splice(0).map(async (child) => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+      child.kill("SIGKILL");
+      await exited;
+    }));
+    await rm(directory, { recursive: true, force: true });
+  });
 
   it.each([
     ["missing opt-in", { CLERK_PROVIDER_TESTS: undefined }],
@@ -276,6 +289,60 @@ describe("offline provider harness safety", () => {
     expect(users.createUser).not.toHaveBeenCalled();
     expect(check).not.toHaveBeenCalled();
     expect(await readdir(directory)).toEqual([]);
+  });
+
+  it("excludes recovery in separate processes while the first fake provider call is paused", async () => {
+    const env = await seed();
+    const pausedPath = join(directory, "holder-paused");
+    const releasePath = join(directory, "release-holder");
+    const holderResultPath = join(directory, "holder-result.json");
+    const contenderResultPath = join(directory, "contender-result.json");
+    const workerPath = fileURLToPath(new URL("../provider-tests/recovery-lock-worker.ts", import.meta.url));
+    const launch = (role: "holder" | "contender", resultPath: string) => {
+      const child = fork(workerPath, [
+        role,
+        env.CLERK_PROVIDER_CLEANUP_MANIFEST,
+        directory,
+        resultPath,
+        pausedPath,
+        releasePath,
+      ], {
+        execArgv: ["--import", tsx],
+        // Do not inherit workspace credentials; the worker uses synthetic keys.
+        env: { NODE_ENV: "test" },
+        stdio: ["ignore", "ignore", "pipe", "ipc"],
+      });
+      children.push(child);
+      let stderr = "";
+      child.stderr?.on("data", (chunk) => { stderr += chunk; });
+      const exited = new Promise<number | null>((resolve) => {
+        child.once("exit", (code) => resolve(code));
+      });
+      return { child, exited, getStderr: () => stderr };
+    };
+    const holder = launch("holder", holderResultPath);
+
+    await expect.poll(async () => {
+      if (holder.child.exitCode !== null) throw new Error(`Holder exited early: ${holder.getStderr()}`);
+      try { await readFile(pausedPath, "utf8"); return true; } catch { return false; }
+    }, { timeout: 10_000, interval: 25 }).toBe(true);
+    expect(await readFile(join(directory, "holder-provider-called"), "utf8")).toBe("called");
+
+    const contender = launch("contender", contenderResultPath);
+    expect(await contender.exited).toBe(0);
+    const contenderResult = JSON.parse(await readFile(contenderResultPath, "utf8"));
+    expect(contenderResult.error).toContain("Recovery already in progress");
+    expect(contenderResult.error).toContain("no provider calls made");
+    await expect(readFile(join(directory, "contender-provider-called"), "utf8"))
+      .rejects.toMatchObject({ code: "ENOENT" });
+    await retained(env.CLERK_PROVIDER_CLEANUP_MANIFEST);
+    expect(await readFile(pausedPath, "utf8")).toBe("paused");
+
+    await writeFile(releasePath, "release");
+    expect(await holder.exited).toBe(0);
+    const holderResult = JSON.parse(await readFile(holderResultPath, "utf8"));
+    expect(holderResult.error).toContain("Cleanup failed or ownership check refused deletion");
+    await retained(env.CLERK_PROVIDER_CLEANUP_MANIFEST);
   });
 
   it("reports an active recovery and refuses to clear its lock", async () => {
