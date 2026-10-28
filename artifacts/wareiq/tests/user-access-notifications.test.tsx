@@ -122,7 +122,7 @@ describe("admin failed access email retries", () => {
     queryClient.clear();
   });
 
-  it("keeps access controls usable when notification history is unavailable", () => {
+  it("shows unavailable delivery status instead of zero-valued counts", () => {
     fixtures.adminData = {
       clients: [],
       sites: [],
@@ -150,7 +150,13 @@ describe("admin failed access email retries", () => {
       </QueryClientProvider>,
     );
 
-    expect(screen.getByText(/Delivery status and some email history are currently unavailable/)).toBeInTheDocument();
+    const deliveryStatus = screen.getByTestId("access-email-status");
+    expect(deliveryStatus).toHaveTextContent(
+      "Delivery status and some email history are currently unavailable.",
+    );
+    for (const label of ["queued", "retrying", "accepted", "failed", "uncertain"]) {
+      expect(deliveryStatus.querySelector(`[data-testid="notification-count-${label}"]`)).toBeNull();
+    }
     expect(screen.getByTestId("text-uncertain-notifications-unavailable")).toBeInTheDocument();
     expect(screen.queryByTestId("text-no-uncertain-notifications")).not.toBeInTheDocument();
     expect(screen.getByTestId("button-new-client")).toBeEnabled();
