@@ -539,6 +539,44 @@ describe("offline provider harness safety", () => {
     expect(await readdir(directory)).toEqual([path.split("/").at(-1)]);
   });
 
+  it("prints distinct, safe recovery results through the default command output", async () => {
+    const output = vi.spyOn(console, "info").mockImplementation(() => {});
+    const defaultDependencies = { users, journalDirectory: directory };
+    try {
+      const fixtureEnv = await seed();
+      await runProviderCheck(fixtureEnv, defaultDependencies, check);
+
+      const absentPath = join(directory, "absent-intent.json");
+      await writeFile(
+        absentPath,
+        JSON.stringify({ state: "intent", runId: saved.runId, email: saved.email }),
+        { mode: 0o600 },
+      );
+      users.getUserList.mockResolvedValueOnce({ data: [], totalCount: 0 });
+      await runProviderCheck(
+        { ...safeEnv, CLERK_PROVIDER_CLEANUP_MANIFEST: absentPath },
+        defaultDependencies,
+        check,
+      );
+
+      const messages = output.mock.calls.map(([message]) => String(message));
+      expect(messages).toEqual([
+        "Recovery complete: verified generated fixture deleted.",
+        "Recovery complete: exact-email lookup found no account; intent journal removed. No account was changed.",
+      ]);
+      expect(new Set(messages).size).toBe(2);
+      const printed = messages.join("\n");
+      expect(printed).not.toContain(providerDetail);
+      expect(printed).not.toContain(syntheticSecretKey);
+      expect(printed).not.toContain(syntheticPublishableKey);
+      expect(printed).not.toMatch(/(?:bearer\s+\S+|\b(?:jwt|token)\b)/i);
+      expect(users.createUser).not.toHaveBeenCalled();
+      expect(check).not.toHaveBeenCalled();
+    } finally {
+      output.mockRestore();
+    }
+  });
+
   it("retains an intent when exact-email recovery cannot reach the provider", async () => {
     const path = join(directory, "lookup-outage-intent.json");
     await writeFile(path, JSON.stringify({ state: "intent", runId: saved.runId, email: saved.email }), { mode: 0o600 });
