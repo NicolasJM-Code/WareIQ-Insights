@@ -33,6 +33,7 @@ export const ACCESS_NOTIFICATION_QUEUE_WARNING_AFTER_SECONDS = 5 * 60;
 const COMPLETED_NOTIFICATION_RETENTION_DAYS = 90;
 const COMPLETED_NOTIFICATION_CLEANUP_BATCH_SIZE = 500;
 const COMPLETED_NOTIFICATION_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const COMPLETED_NOTIFICATION_CLEANUP_FAILURE_ALERT_THRESHOLD = 3;
 
 export async function getAccessNotificationSummary(): Promise<AccessNotificationSummary> {
   const { rows } = await pool.query<{
@@ -332,6 +333,7 @@ export async function deliverAccessNotifications(): Promise<void> {
 export function startAccessNotifications() {
   let running = false;
   let cleanupRunning = false;
+  let consecutiveCleanupFailures = 0;
   const tick = async () => {
     if (running) return;
     running = true;
@@ -342,9 +344,19 @@ export function startAccessNotifications() {
   const cleanup = async () => {
     if (cleanupRunning) return;
     cleanupRunning = true;
-    try { await cleanupCompletedAccessNotifications(); }
+    try {
+      await cleanupCompletedAccessNotifications();
+      consecutiveCleanupFailures = 0;
+    }
     catch {
+      consecutiveCleanupFailures += 1;
       logger.warn({ event: "access_notification_cleanup_failed" }, "Completed access email cleanup unavailable");
+      if (consecutiveCleanupFailures === COMPLETED_NOTIFICATION_CLEANUP_FAILURE_ALERT_THRESHOLD) {
+        logger.error({
+          event: "access_notification_cleanup_stalled",
+          consecutive_failures: consecutiveCleanupFailures,
+        }, "Completed access email cleanup has failed repeatedly; check database availability and retention backlog");
+      }
     } finally {
       cleanupRunning = false;
     }

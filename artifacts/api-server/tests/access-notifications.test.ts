@@ -7,7 +7,7 @@ import { changeRole } from "../src/lib/role-management";
 
 const mocks = vi.hoisted(() => ({
   query: vi.fn(), poolQuery: vi.fn(), release: vi.fn(), send: vi.fn(), getUser: vi.fn(),
-  insert: vi.fn(), update: vi.fn(), select: vi.fn(), warn: vi.fn(), summaryQuery: vi.fn(),
+  insert: vi.fn(), update: vi.fn(), select: vi.fn(), warn: vi.fn(), error: vi.fn(), summaryQuery: vi.fn(),
   authUserId: null as string | null,
 }));
 vi.mock("@workspace/db", async () => ({
@@ -27,13 +27,13 @@ vi.mock("@clerk/express", () => ({
   clerkClient: { users: { getUser: mocks.getUser } },
 }));
 vi.mock("../src/lib/role-lock", () => ({ withRoleLock: async (fn: () => Promise<unknown>) => fn() }));
-vi.mock("../src/lib/logger", () => ({ logger: { warn: mocks.warn } }));
+vi.mock("../src/lib/logger", () => ({ logger: { warn: mocks.warn, error: mocks.error } }));
 
 import {
   cleanupCompletedAccessNotifications, deliverAccessNotifications, getAccessNotificationSummary, listConfirmedFailedAccessNotifications,
   listUncertainAccessNotifications,
   queueAccessNotifications, retryAllowed, retryConfirmedFailedAccessNotification,
-  preparePlatformNotification, confirmPlatformNotification,
+  preparePlatformNotification, confirmPlatformNotification, startAccessNotifications,
 } from "../src/lib/access-notifications";
 import accessRouter from "../src/routes/access";
 
@@ -184,6 +184,63 @@ describe("durable delivery and duplicate protection", () => {
     expect(params).toEqual([90, 500]);
     expect(statement).not.toMatch(/state\s+IN\s*\([^)]*pending/i);
     expect(statement).not.toMatch(/state\s+IN\s*\([^)]*failed/i);
+  });
+  it("alerts after repeated cleanup failures without logging error details and resets after recovery", async () => {
+    const intervalCallbacks: Array<{ callback: () => void; delay: number }> = [];
+    vi.stubGlobal("setInterval", (callback: () => void, delay: number) => {
+      const timer = { unref: vi.fn() };
+      intervalCallbacks.push({ callback, delay });
+      return timer;
+    });
+    let cleanupAttempts = 0;
+    const cleanupError = new Error("recipient@example.test: provider response secret");
+    mocks.poolQuery.mockImplementation(async () => {
+      cleanupAttempts += 1;
+      if ([1, 2, 3, 4, 6, 7, 8].includes(cleanupAttempts)) throw cleanupError;
+      return { rows: [{ deleted: 0 }] };
+    });
+
+    const flushCleanup = async (expectedWarnings: number) => {
+      await vi.waitFor(() => expect(mocks.warn).toHaveBeenCalledTimes(expectedWarnings));
+    };
+    startAccessNotifications();
+    vi.unstubAllGlobals();
+    const cleanupTimer = intervalCallbacks.find(({ delay }) => delay === 24 * 60 * 60 * 1000);
+    expect(cleanupTimer).toBeDefined();
+    await flushCleanup(1);
+
+    const runScheduledCleanup = async (expectedCalls: number) => {
+      cleanupTimer!.callback();
+      await vi.waitFor(() => expect(mocks.poolQuery).toHaveBeenCalledTimes(expectedCalls));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    };
+    await runScheduledCleanup(2);
+    await flushCleanup(2);
+    expect(mocks.error).not.toHaveBeenCalled();
+
+    await runScheduledCleanup(3);
+    await flushCleanup(3);
+    expect(mocks.error).toHaveBeenCalledOnce();
+    expect(mocks.error).toHaveBeenCalledWith({
+      event: "access_notification_cleanup_stalled",
+      consecutive_failures: 3,
+    }, expect.stringContaining("check database availability and retention backlog"));
+
+    await runScheduledCleanup(4);
+    await flushCleanup(4);
+    expect(mocks.error).toHaveBeenCalledOnce();
+
+    await runScheduledCleanup(5);
+    expect(mocks.error).toHaveBeenCalledOnce();
+    await runScheduledCleanup(6);
+    await flushCleanup(5);
+    await runScheduledCleanup(7);
+    await flushCleanup(6);
+    await runScheduledCleanup(8);
+    await flushCleanup(7);
+    expect(mocks.error).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify([...mocks.warn.mock.calls, ...mocks.error.mock.calls]))
+      .not.toMatch(/recipient@example\.test|provider response secret/);
   });
   it("denies delivery-summary access to signed-out and non-admin users", async () => {
     expect((await request(accessApp).get("/api/access/admin")).status).toBe(401);
