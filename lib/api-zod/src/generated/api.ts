@@ -660,6 +660,62 @@ export const RunAccessReportResponse = zod.object({
 
 
 /**
+ * @summary Read the server-selected MySQL connection path without secrets
+ */
+export const GetWmsNetworkConfigResponse = zod.object({
+  "path": zod.enum(['direct', 'openvpn']),
+  "configured": zod.boolean(),
+  "message": zod.string()
+})
+
+
+/**
+ * @summary Verify the approved connector has an OpenVPN route before SQL
+ */
+export const testWmsVpnBodyEngineDefault = `postgresql`;
+export const testWmsVpnBodyHostMax = 253;
+
+
+export const testWmsVpnBodyHostRegExp = new RegExp('^[A-Za-z0-9][A-Za-z0-9.-]*$');
+export const testWmsVpnBodyPortMax = 65535;
+
+export const testWmsVpnBodyDatabaseMax = 63;
+
+
+export const testWmsVpnBodyDatabaseRegExp = new RegExp('^[A-Za-z_][A-Za-z0-9_$]*$');
+export const testWmsVpnBodySchemaMax = 63;
+
+
+export const testWmsVpnBodySchemaRegExp = new RegExp('^[A-Za-z_][A-Za-z0-9_$]*$');
+export const testWmsVpnBodyUsernameMax = 63;
+
+
+export const testWmsVpnBodyUsernameRegExp = new RegExp('^[A-Za-z_][A-Za-z0-9_$]*$');
+export const testWmsVpnBodyQueryTimeoutSecMin = 5;
+export const testWmsVpnBodyQueryTimeoutSecMax = 300;
+
+
+
+export const TestWmsVpnBody = zod.object({
+  "engine": zod.enum(['postgresql', 'mysql']).default(testWmsVpnBodyEngineDefault).describe('Connection test engine. Omitted values retain PostgreSQL behavior.'),
+  "host": zod.string().min(1).max(testWmsVpnBodyHostMax).regex(testWmsVpnBodyHostRegExp),
+  "port": zod.number().int().min(1).max(testWmsVpnBodyPortMax),
+  "database": zod.string().min(1).max(testWmsVpnBodyDatabaseMax).regex(testWmsVpnBodyDatabaseRegExp),
+  "schema": zod.string().min(1).max(testWmsVpnBodySchemaMax).regex(testWmsVpnBodySchemaRegExp),
+  "username": zod.string().min(1).max(testWmsVpnBodyUsernameMax).regex(testWmsVpnBodyUsernameRegExp),
+  "sslMode": zod.enum(['verify-full']),
+  "queryTimeoutSec": zod.number().int().min(testWmsVpnBodyQueryTimeoutSecMin).max(testWmsVpnBodyQueryTimeoutSecMax)
+})
+
+export const TestWmsVpnResponse = zod.object({
+  "status": zod.enum(['ready', 'error']),
+  "code": zod.string(),
+  "message": zod.string(),
+  "testedAt": zod.string()
+})
+
+
+/**
  * @summary Test a WMS connection without saving credentials or querying warehouse records
  */
 export const testWmsConnectionBodyEngineDefault = `postgresql`;

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -12,7 +12,8 @@ import { PageHeader, Pill } from '@/components/report-kit';
 import { useReport, useDocTitle, type Prefs, type RefreshInterval, type RangeDays } from '@/lib/report-context';
 import { toast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
-import { useTestWmsConnection, type WmsConnectionResult } from '@workspace/api-client-react';
+import { useTestWmsConnection, useGetWmsNetworkConfig, useTestWmsVpn, type WmsConnectionResult, type WmsNetworkResult } from '@workspace/api-client-react';
+import { WmsVpnSteps } from '@/components/wms-vpn-steps';
 import { useUser, UserButton } from '@clerk/react';
 import { Link } from 'wouter';
 import { AccessManagement } from '@/components/access-management';
@@ -61,6 +62,13 @@ export default function Settings() {
   const { prefs, setPrefs, resetPrefs } = useReport();
   const { user, isSignedIn } = useUser();
   const testConnection = useTestWmsConnection();
+  const vpnTest = useTestWmsVpn();
+  const network = useGetWmsNetworkConfig({ query: {
+    enabled: !!isSignedIn, queryKey: ['wms-network', user?.id], refetchInterval: 15000,
+  } });
+  const [vpnResult, setVpnResult] = useState<WmsNetworkResult | null>(null);
+  const [vpnReady, setVpnReady] = useState(false);
+  const vpnEpoch = useRef(0);
   const [requestError, setRequestError] = useState<string | null>(null);
   const [lastSuccessfulAt, setLastSuccessfulAt] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<WmsConnectionResult | 'invalid' | null>(null);
@@ -71,6 +79,8 @@ export default function Settings() {
     setRequestError(null);
     setLastSuccessfulAt(null);
     setLog([]);
+    vpnEpoch.current += 1;
+    setVpnResult(null); setVpnReady(false);
   }, [user?.id]);
 
   const form = useForm<Conn>({
@@ -81,6 +91,17 @@ export default function Settings() {
   const engine = form.watch('engine');
   const database = form.watch('database');
   const isMysql = engine === 'mysql';
+  const requiresVpn = isMysql && network.data?.path === 'openvpn';
+  const networkUnavailable = network.isError || !network.data;
+  const sqlLocked = isMysql && (networkUnavailable || (requiresVpn && (!network.data?.configured || !vpnReady)));
+  useEffect(() => {
+    setVpnReady(false); setVpnResult(null); vpnEpoch.current += 1;
+  }, [network.data?.path, network.data?.configured, network.isError]);
+  useEffect(() => {
+    if (!vpnReady) return;
+    const timer = setTimeout(() => { setVpnReady(false); setVpnResult(null); }, 60000);
+    return () => clearTimeout(timer);
+  }, [vpnReady]);
   useEffect(() => {
     if (isMysql) form.setValue('schema', database);
   }, [isMysql, database, form]);
@@ -88,12 +109,31 @@ export default function Settings() {
     const subscription = form.watch(() => {
       setTestResult(null);
       setRequestError(null);
+      setVpnResult(null); setVpnReady(false); vpnEpoch.current += 1;
     });
     return () => subscription.unsubscribe();
   }, [form]);
 
+  const onVpnTest = async () => {
+    if (vpnTest.isPending || testConnection.isPending) return;
+    setVpnReady(false); setVpnResult(null);
+    if (!await form.trigger()) return;
+    const epoch = ++vpnEpoch.current;
+    const { refreshInterval: _interval, ...input } = form.getValues();
+    try {
+      const result = await vpnTest.mutateAsync({ data: input });
+      if (epoch !== vpnEpoch.current) return;
+      setVpnResult(result); setVpnReady(result.status === 'ready');
+    } catch {
+      if (epoch !== vpnEpoch.current) return;
+      setVpnResult({ status: 'error', code: 'VPN_CHECK_FAILED',
+        message: 'VPN readiness could not be verified. Check administrator access and connector configuration, then retry.',
+        testedAt: new Date().toISOString() });
+    }
+  };
+
   const onTest = async () => {
-    if (testConnection.isPending) return;
+    if (testConnection.isPending || vpnTest.isPending || sqlLocked) return;
     setRequestError(null);
     const ok = await form.trigger();
     if (!ok) {
@@ -102,12 +142,19 @@ export default function Settings() {
     }
     setTestResult(null);
     const { refreshInterval: _refreshInterval, ...input } = form.getValues();
+    const epoch = ++vpnEpoch.current;
     try {
       const result = await testConnection.mutateAsync({ data: input });
+      if (epoch !== vpnEpoch.current) return;
       setTestResult(result);
+      if (result.status === 'error' && result.code.startsWith('VPN_')) {
+        setVpnReady(false);
+        setVpnResult({ ...result, status: 'error' });
+      }
       if (result.lastSuccessfulAt) setLastSuccessfulAt(result.lastSuccessfulAt);
       setLog((l) => [{ at: result.testedAt, host: `${input.host}:${input.port}`, outcome: `${result.code}: ${result.message}` }, ...l].slice(0, 20));
     } catch (error) {
+      if (epoch !== vpnEpoch.current) return;
       // Display only messages defined by this API, never an arbitrary proxy/driver body.
       const status = (error as { status?: number }).status;
       const message = status === 401 ? 'Sign in before testing the database connection.'
@@ -187,7 +234,7 @@ export default function Settings() {
             <Section icon={Server} title={`${isMysql ? 'MySQL' : 'PostgreSQL'} connection definition`}>
               <Form {...form}>
                 <form onSubmit={(e) => { e.preventDefault(); void savePrefs(); }} className="space-y-5" autoComplete="off" noValidate>
-                  <fieldset disabled={testConnection.isPending} className="space-y-5">
+                  <fieldset disabled={testConnection.isPending || vpnTest.isPending} className="space-y-5">
                   <FormField control={form.control} name="engine" render={({ field }) => (
                     <FormItem><FormLabel>Database engine</FormLabel>
                       <Select value={field.value} onValueChange={(value: 'postgresql' | 'mysql') => {
@@ -206,9 +253,11 @@ export default function Settings() {
           <FormDescription>Changing engines never migrates data. MySQL reports run only when server-approved credentials and view mappings are configured.</FormDescription>
                     </FormItem>
                   )} />
+                  {isMysql && <WmsVpnSteps config={network.data} unavailable={network.isError}
+                    pending={vpnTest.isPending} ready={vpnReady} result={vpnResult} onCheck={onVpnTest} />}
                   <div className="grid sm:grid-cols-[1fr_140px] gap-4">
                     <FormField control={form.control} name="host" render={({ field }) => (
-                      <FormItem><FormLabel>Database host / server address</FormLabel><FormControl><Input placeholder="wms-db.example.com" className="font-mono" data-testid="input-host" {...field} /></FormControl><FormDescription>{isMysql ? 'Use the DNS hostname matching the MySQL TLS certificate, not a numeric IP. Private VPN destinations need the approved network policy below and an existing server route.' : 'Publicly routable host, or an explicitly approved private destination with an existing server route.'}</FormDescription><FormMessage /></FormItem>
+                      <FormItem><FormLabel>Database host / server address</FormLabel><FormControl><Input placeholder="wms-db.example.com" className="font-mono" data-testid="input-host" {...field} /></FormControl><FormDescription>{isMysql ? 'Use the DNS hostname matching the MySQL TLS certificate, not a numeric IP. For OpenVPN, use the connector path above; direct private routes require the network policy below.' : 'Publicly routable host, or an explicitly approved private destination with an existing server route.'}</FormDescription><FormMessage /></FormItem>
                     )} />
                     <FormField control={form.control} name="port" render={({ field }) => (
                       <FormItem><FormLabel>Port</FormLabel><FormControl><Input inputMode="numeric" className="font-mono" data-testid="input-port" {...field} /></FormControl><FormMessage /></FormItem>
@@ -280,7 +329,7 @@ export default function Settings() {
                   {requestError && <div role="alert" className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{requestError}</div>}
 
                   <div className="flex flex-wrap gap-2 pt-1">
-                    <button type="button" onClick={onTest} disabled={!isSignedIn || testConnection.isPending} className="h-9 px-4 rounded-md bg-primary text-primary-foreground text-[13px] font-medium inline-flex items-center gap-2 hover:opacity-90 active:scale-[.98] transition disabled:opacity-50" data-testid="button-test-connection"><PlugZap className="h-4 w-4" /> {testConnection.isPending ? 'Testing…' : 'Test connection'}</button>
+                    <button type="button" onClick={onTest} disabled={!isSignedIn || testConnection.isPending || vpnTest.isPending || sqlLocked} className="h-9 px-4 rounded-md bg-primary text-primary-foreground text-[13px] font-medium inline-flex items-center gap-2 hover:opacity-90 active:scale-[.98] transition disabled:opacity-50" data-testid="button-test-connection"><PlugZap className="h-4 w-4" /> {testConnection.isPending ? 'Testing…' : requiresVpn ? 'Test SQL connection' : 'Test connection'}</button>
                     <button type="button" onClick={copyConfig} className="h-9 px-4 rounded-md border bg-background text-[13px] font-medium inline-flex items-center gap-2 hover:border-primary/50 transition" data-testid="button-copy-config"><Copy className="h-4 w-4" /> Copy configuration</button>
                     <button type="submit" className="h-9 px-4 rounded-md border bg-background text-[13px] font-medium inline-flex items-center gap-2 hover:border-primary/50 transition" data-testid="button-save-prefs"><Save className="h-4 w-4" /> Save report preferences</button>
                   </div>
@@ -305,6 +354,7 @@ export default function Settings() {
                 </ol>
               </Section>
               <Section icon={Server} title="Deployment network access">
+                <p className="mb-3 text-sm"><span className="font-semibold">OpenVPN → MySQL connector.</span> Run the supplied connector on your existing Linux VPN-connected server, then enable the server-owned OpenVPN path. It checks the tunnel interface and database route before SQL and preserves end-to-end MySQL TLS. Follow <code>docs/openvpn-connector.md</code>. WareIQ does not start OpenVPN inside Replit.</p>
                 <div className="space-y-3 text-[12.5px]">
                   <p><span className="font-semibold">Fixed outbound IP allowlisting.</span> Run the API in an environment that provides a fixed outbound IP, then have the WMS owner allowlist that IP in the database firewall. Replit deployments do not provide a static outbound IP, so this Repl cannot supply one.</p>
                   <p><span className="font-semibold">Existing private VPN route.</span> The app cannot create a VPN or private route. Replit documents no deployment option for attaching one; this works only in a runtime where the network route is already established outside the app. An owner must then set these server-only values:</p>

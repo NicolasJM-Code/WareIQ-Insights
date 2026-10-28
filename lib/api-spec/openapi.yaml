@@ -392,6 +392,35 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AccessRunResult" }
+  /wms/connection/network:
+    get:
+      operationId: getWmsNetworkConfig
+      summary: Read the server-selected MySQL connection path without secrets
+      security: [{ clerkSession: [] }]
+      responses:
+        "200":
+          description: Server-selected connection path
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WmsNetworkConfig" }
+        default: { $ref: "#/components/responses/AccessFailure" }
+  /wms/connection/vpn-test:
+    post:
+      operationId: testWmsVpn
+      summary: Verify the approved connector has an OpenVPN route before SQL
+      security: [{ clerkSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WmsConnectionInput" }
+      responses:
+        "200":
+          description: Actual VPN readiness result, not a SQL login
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WmsNetworkResult" }
+        default: { $ref: "#/components/responses/AccessFailure" }
   /wms/connection/test:
     post:
       operationId: testWmsConnection
@@ -875,6 +904,21 @@ components:
                 - { type: boolean }
                 - { type: "null" }
         truncated: { type: boolean }
+    WmsNetworkConfig:
+      type: object
+      required: [path, configured, message]
+      properties:
+        path: { type: string, enum: [direct, openvpn] }
+        configured: { type: boolean }
+        message: { type: string }
+    WmsNetworkResult:
+      type: object
+      required: [status, code, message, testedAt]
+      properties:
+        status: { type: string, enum: [ready, error] }
+        code: { type: string }
+        message: { type: string }
+        testedAt: { type: string }
     WmsConnectionInput:
       type: object
       additionalProperties: false

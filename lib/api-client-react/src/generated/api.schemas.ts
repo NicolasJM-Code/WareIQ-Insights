@@ -679,6 +679,35 @@ export interface AccessRunResult {
   truncated: boolean;
 }
 
+export type WmsNetworkConfigPath = typeof WmsNetworkConfigPath[keyof typeof WmsNetworkConfigPath];
+
+
+export const WmsNetworkConfigPath = {
+  direct: 'direct',
+  openvpn: 'openvpn',
+} as const;
+
+export interface WmsNetworkConfig {
+  path: WmsNetworkConfigPath;
+  configured: boolean;
+  message: string;
+}
+
+export type WmsNetworkResultStatus = typeof WmsNetworkResultStatus[keyof typeof WmsNetworkResultStatus];
+
+
+export const WmsNetworkResultStatus = {
+  ready: 'ready',
+  error: 'error',
+} as const;
+
+export interface WmsNetworkResult {
+  status: WmsNetworkResultStatus;
+  code: string;
+  message: string;
+  testedAt: string;
+}
+
 /**
  * Connection test engine. Omitted values retain PostgreSQL behavior.
  */

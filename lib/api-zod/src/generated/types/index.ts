@@ -82,3 +82,7 @@ export * from './wmsConnectionInputSslMode';
 export * from './wmsConnectionResult';
 export * from './wmsConnectionResultStatus';
 export * from './wmsError';
+export * from './wmsNetworkConfig';
+export * from './wmsNetworkConfigPath';
+export * from './wmsNetworkResult';
+export * from './wmsNetworkResultStatus';

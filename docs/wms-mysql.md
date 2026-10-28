@@ -1,5 +1,9 @@
 # MySQL reporting setup
 
+For **OpenVPN first, then MySQL**, see [the connector setup](openvpn-connector.md).
+That path uses your existing Linux VPN-connected server; it does not start a
+VPN inside Replit.
+
 Settings → Database connection now offers PostgreSQL (the unchanged default)
 and MySQL 8+. MySQL can execute approved report mappings against server-approved
 views. Connection testing remains metadata-only. The application's own

@@ -3,7 +3,8 @@ import { isIP } from "node:net";
 import { checkServerIdentity as pgServerIdentity } from "node:tls";
 import pg from "pg";
 import ipaddr from "ipaddr.js";
-import type { WmsConnectionInput, WmsConnectionResult } from "@workspace/api-zod";
+import type { WmsConnectionInput, WmsConnectionResult, WmsNetworkResult } from "@workspace/api-zod";
+import { checkOpenVpn, mysqlConnectionPath, openVpnMysqlStream } from "./wms-openvpn";
 import { ConnectionFailure } from "./wms-connection-error";
 import { runMysqlReport, testMysqlConnection, type MysqlReportMapping, type MysqlReportScope } from "./wms-mysql-connection";
 export { ConnectionFailure } from "./wms-connection-error";
@@ -36,7 +37,7 @@ export function safeConnectionFailure(error: unknown): ConnectionFailure {
 
 /** Credentials may only reach a destination approved in server configuration.
  * Administrator form fields are untrusted destinations, not an allowlist. */
-function reportingPassword(input: WmsConnectionInput): string {
+function reportingPassword(input: WmsConnectionInput, requireCredentials = true): string {
   const mysql = input.engine === "mysql";
   const prefix = mysql ? "WMS_MYSQL" : "WMS";
   const standalonePassword = process.env[mysql ? "WMS_MYSQL_PASSWORD" : "WMS_PGPASSWORD"];
@@ -52,7 +53,7 @@ function reportingPassword(input: WmsConnectionInput): string {
       database, username, password: decodeURIComponent(url.password) };
   } catch { /* An invalid URL is never an approved destination. */ }
   const password = standalonePassword || urlDestination?.password;
-  if (!password) throw new ConnectionFailure("PASSWORD_NOT_CONFIGURED",
+  if (requireCredentials && !password) throw new ConnectionFailure("PASSWORD_NOT_CONFIGURED",
     "Configure WMS credentials securely on the server. Passwords are never stored in this browser.");
   const configured = ["HOST", "PORT", "DATABASE", "USERNAME"].map((key) => process.env[`${prefix}_APPROVED_${key}`]);
   let approved: Destination | undefined;
@@ -73,10 +74,10 @@ function reportingPassword(input: WmsConnectionInput): string {
     destination.host.toLowerCase() === input.host.toLowerCase() &&
     destination.port === input.port && destination.database === input.database &&
     destination.username === input.username;
-  if (!matches(approved) || (!standalonePassword && (!urlDestination || !matches(urlDestination))))
+  if (!matches(approved) || (requireCredentials && !standalonePassword && (!urlDestination || !matches(urlDestination))))
     throw new ConnectionFailure("SECRET_MISMATCH",
       "These fields do not match the server-approved WMS destination. Credentials were not sent. Ask an owner to approve any destination change securely.");
-  return password;
+  return password ?? "";
 }
 
 /** Build report credentials only from the server's MySQL secret/approval settings. */
@@ -210,9 +211,30 @@ export async function executeApprovedMysqlReport(
   if (isIP(input.host))
     throw new ConnectionFailure("TLS_HOSTNAME_REQUIRED", "Use an approved MySQL DNS hostname matching its TLS certificate.");
   const password = reportingPassword(input);
+  if (mysqlConnectionPath() === "openvpn") {
+    const stream = await openVpnMysqlStream(input);
+    try { return await runMysqlReport(input, password, input.host, mapping, scope, fields, stream); }
+    finally { stream.destroy(); }
+  }
   const address = await approvedAddress(input.host, process.env,
     dependencies.resolveHost ?? ((host) => lookup(host, { all: true })));
   return runMysqlReport(input, password, address, mapping, scope, fields);
+}
+
+export async function testWmsVpn(input: WmsConnectionInput): Promise<WmsNetworkResult> {
+  try {
+    if (input.engine !== "mysql")
+      throw new ConnectionFailure("VPN_ENGINE_UNSUPPORTED", "The OpenVPN connector path currently supports MySQL only.");
+    if (isIP(input.host))
+      throw new ConnectionFailure("TLS_HOSTNAME_REQUIRED", "Use the MySQL DNS hostname matching its TLS certificate.");
+    reportingPassword(input, false); // Approval only: VPN checks need no SQL password.
+    await checkOpenVpn(input);
+    return { status: "ready", code: "VPN_READY", testedAt: new Date().toISOString(),
+      message: "The authenticated connector confirms its OpenVPN interface, database route and TCP reachability. You can now test SQL. No SQL login was attempted." };
+  } catch (error) {
+    const safe = safeConnectionFailure(error);
+    return { status: "error", code: safe.code, message: safe.message, testedAt: new Date().toISOString() };
+  }
 }
 
 export async function testConnection(
@@ -229,6 +251,11 @@ export async function testConnection(
         throw new ConnectionFailure("TLS_HOSTNAME_REQUIRED", "Use the MySQL DNS hostname matching its TLS certificate, not a numeric IP address.");
     }
     const password = reportingPassword(input);
+    if (input.engine === "mysql" && mysqlConnectionPath() === "openvpn") {
+      const stream = await openVpnMysqlStream(input);
+      try { return await testMysqlConnection(input, password, input.host, stream); }
+      finally { stream.destroy(); }
+    }
     const address = await approvedAddress(input.host, process.env,
       dependencies.resolveHost ?? ((host) => lookup(host, { all: true })));
     if (input.engine === "mysql") return await testMysqlConnection(input, password, address);

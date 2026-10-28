@@ -13,3 +13,4 @@
 - [Vitest subprocess boundaries](vitest-subprocess-boundaries.md) — nested Vitest checks need an explicit outer timeout for multiple child-process startups.
 - [Capture diagnostic durability](capture-diagnostic-durability.md) — preserve warnings across key rotation; database outages require explicit uncertainty and ordered attempt completion.
 - [Drizzle optional peers](drizzle-optional-peers.md) — database-driver peer differences can create incompatible Drizzle types across workspace packages.
+- [Warehouse VPN requirements](warehouse-vpn.md) — user confirmed OpenVPN with an existing VPN-connected server and wants VPN established before SQL.

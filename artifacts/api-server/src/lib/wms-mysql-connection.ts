@@ -1,4 +1,5 @@
 import { createConnection as createSocket } from "node:net";
+import type { Duplex } from "node:stream";
 import mysql, { type RowDataPacket } from "mysql2";
 import type { WmsConnectionInput, WmsConnectionResult } from "@workspace/api-zod";
 import { ConnectionFailure } from "./wms-connection-error";
@@ -88,6 +89,7 @@ export async function runMysqlReport(
   mapping: MysqlReportMapping,
   scope: MysqlReportScope,
   selectedFields?: string[],
+  stream?: Duplex,
 ): Promise<{ columns: string[]; rows: Array<Record<string, string | number | boolean | null>>; truncated: boolean }> {
   const fields = selectedFields ?? Object.keys(mapping.columns);
   if (!fields.length || fields.length > 50 || fields.some((field) => !Object.hasOwn(mapping.columns, field)))
@@ -101,7 +103,7 @@ export async function runMysqlReport(
   const connection = mysql.createConnection({
     host: input.host, port: input.port, database: input.database,
     user: input.username, password,
-    stream: () => createSocket({ host: address, port: input.port }),
+    stream: () => stream ?? createSocket({ host: address, port: input.port }),
     ssl: {
       rejectUnauthorized: true, verifyIdentity: true,
       ...(process.env.WMS_MYSQL_CA_CERT ? { ca: process.env.WMS_MYSQL_CA_CERT } : {}),
@@ -142,6 +144,7 @@ export async function runMysqlReport(
 /** MySQL 8+ metadata probe only; never executes user SQL or reads WMS records. */
 export async function testMysqlConnection(
   input: WmsConnectionInput, password: string, address: string,
+  stream?: Duplex,
 ): Promise<WmsConnectionResult> {
   const timeout = Math.min(input.queryTimeoutSec * 1000, 15000);
   const connection = mysql.createConnection({
@@ -149,7 +152,7 @@ export async function testMysqlConnection(
     // socket uses only the previously approved and pinned network address.
     host: input.host, port: input.port, database: input.database,
     user: input.username, password,
-    stream: () => createSocket({ host: address, port: input.port }),
+    stream: () => stream ?? createSocket({ host: address, port: input.port }),
     ssl: {
       rejectUnauthorized: true, verifyIdentity: true,
       ...(process.env.WMS_MYSQL_CA_CERT ? { ca: process.env.WMS_MYSQL_CA_CERT } : {}),

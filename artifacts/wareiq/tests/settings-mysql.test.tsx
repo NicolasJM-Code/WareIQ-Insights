@@ -3,13 +3,18 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import '@testing-library/jest-dom/vitest';
 import type { ReactNode } from 'react';
 
-const state = vi.hoisted(() => ({ test: vi.fn() }));
+const state = vi.hoisted(() => ({
+  test: vi.fn(), vpn: vi.fn(),
+  network: { path: 'direct' as 'direct' | 'openvpn', configured: true, message: 'Direct connection' },
+}));
 vi.mock('@clerk/react', () => ({
   useUser: () => ({ isSignedIn: true, user: { id: 'user_fixture_admin' } }),
   UserButton: () => null,
 }));
 vi.mock('@workspace/api-client-react', () => ({
   useTestWmsConnection: () => ({ mutateAsync: state.test, isPending: false }),
+  useGetWmsNetworkConfig: () => ({ data: state.network, isError: false }),
+  useTestWmsVpn: () => ({ mutateAsync: state.vpn, isPending: false }),
 }));
 vi.mock('../src/lib/report-context', () => ({
   useDocTitle: () => {},
@@ -36,7 +41,10 @@ beforeAll(() => vi.stubGlobal('ResizeObserver', class {
   observe() {} unobserve() {} disconnect() {}
 }));
 afterAll(() => vi.unstubAllGlobals());
-afterEach(() => { cleanup(); vi.clearAllMocks(); });
+afterEach(() => {
+  cleanup(); vi.clearAllMocks();
+  state.network = { path: 'direct', configured: true, message: 'Direct connection' };
+});
 
 it('defaults to PostgreSQL and switches MySQL port, schema and secret guidance', async () => {
   render(<Settings />);
@@ -78,4 +86,38 @@ it('preserves an explicitly chosen non-default port when switching engines', () 
   fireEvent.change(screen.getByTestId('input-port'), { target: { value: '13306' } });
   fireEvent.change(screen.getAllByRole('combobox')[0], { target: { value: 'mysql' } });
   expect(screen.getByTestId('input-port')).toHaveValue('13306');
+});
+
+it('requires VPN readiness before SQL and clears it when connection fields change', async () => {
+  state.network = { path: 'openvpn', configured: true, message: 'VPN required before SQL' };
+  state.vpn.mockResolvedValue({ status: 'ready', code: 'VPN_READY', message: 'VPN verified',
+    testedAt: '2026-10-28T00:00:00Z' });
+  render(<Settings />);
+  fireEvent.change(screen.getAllByRole('combobox')[0], { target: { value: 'mysql' } });
+  for (const [id, value] of [
+    ['input-host', 'wms.example.test'], ['input-database', 'reporting'], ['input-username', 'reporter'],
+  ]) fireEvent.change(screen.getByTestId(id), { target: { value } });
+  expect(screen.getByTestId('button-test-connection')).toBeDisabled();
+  fireEvent.click(screen.getByTestId('button-test-vpn'));
+  await waitFor(() => expect(screen.getByTestId('button-test-connection')).toBeEnabled());
+  expect(state.test).not.toHaveBeenCalled();
+  expect(screen.getByTestId('status-vpn-result')).toHaveTextContent('VPN_READY');
+  fireEvent.change(screen.getByTestId('input-host'), { target: { value: 'different.example.test' } });
+  await waitFor(() => expect(screen.getByTestId('button-test-connection')).toBeDisabled());
+  expect(screen.queryByTestId('status-vpn-result')).not.toBeInTheDocument();
+});
+
+it('keeps SQL locked when the VPN check fails', async () => {
+  state.network = { path: 'openvpn', configured: true, message: 'VPN required before SQL' };
+  state.vpn.mockResolvedValue({ status: 'error', code: 'VPN_NOT_READY',
+    message: 'The route is unavailable.', testedAt: '2026-10-28T00:00:00Z' });
+  render(<Settings />);
+  fireEvent.change(screen.getAllByRole('combobox')[0], { target: { value: 'mysql' } });
+  for (const [id, value] of [
+    ['input-host', 'wms.example.test'], ['input-database', 'reporting'], ['input-username', 'reporter'],
+  ]) fireEvent.change(screen.getByTestId(id), { target: { value } });
+  fireEvent.click(screen.getByTestId('button-test-vpn'));
+  expect(await screen.findByTestId('status-vpn-result')).toHaveTextContent('VPN_NOT_READY');
+  expect(screen.getByTestId('button-test-connection')).toBeDisabled();
+  expect(state.test).not.toHaveBeenCalled();
 });
