@@ -199,6 +199,26 @@ describe("full-app origin protection for saved reports", () => {
     }
   });
 
+  it("rejects a conflicting same-origin batch without persisting any reports", async () => {
+    const before = await snapshot();
+    const response = await mutation("post", importPath, {
+      origin: "https://wareiq.test",
+      fetchSite: "same-origin",
+    }).send({
+      ...importBody,
+      reports: [
+        { ...definition, name: "Would be partially imported" },
+        { ...definition, name: "Same-origin report" },
+      ],
+    });
+
+    expect(response.status).toBe(409);
+    expect(response.body).toEqual({
+      error: "This entry already exists. Use a unique name or email.",
+    });
+    expect(await snapshot()).toEqual(before);
+  });
+
   it("allows a same-origin DELETE to remove a report through the full application", async () => {
     const before = await snapshot();
     const response = await mutation("delete", `${path}/original`, {
