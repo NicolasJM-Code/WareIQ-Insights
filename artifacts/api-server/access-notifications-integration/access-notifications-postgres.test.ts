@@ -645,4 +645,55 @@ describe("access notification transaction ordering in private PostgreSQL", () =>
       { id: oldNotice.id, state: "pending" },
     ]);
   });
+
+  it("keeps failed-notice pages stable when a newer confirmed failure arrives", async () => {
+    expect(pool.options.host).toBe(socketDirectory);
+    await pool.query(`
+      INSERT INTO wareiq_access_notifications
+        (id, recipient, role_name, kind, state, attempts, created_at)
+      SELECT 'old-failure-' || lpad(series::text, 3, '0'),
+             'member@example.test',
+             'Supervisor',
+             'reporting',
+             'confirmed_failed',
+             2,
+             TIMESTAMPTZ '2026-10-28 12:00:00.123456+00'
+               + (series / 7) * INTERVAL '1 microsecond'
+      FROM generate_series(0, 204) AS series
+    `);
+
+    const expectedOlderIds = Array.from({ length: 205 }, (_, index) =>
+      `old-failure-${String(index).padStart(3, "0")}`,
+    ).reverse();
+    const firstPage = await listConfirmedFailedAccessNotifications();
+    expect(firstPage.rows.map((notice) => notice.id)).toEqual(expectedOlderIds.slice(0, 100));
+    expect(firstPage.nextCursor).not.toBeNull();
+
+    await pool.query(`
+      INSERT INTO wareiq_access_notifications
+        (id, recipient, role_name, kind, state, attempts, created_at)
+      VALUES (
+        'newer-failure',
+        'member@example.test',
+        'Supervisor',
+        'reporting',
+        'confirmed_failed',
+        2,
+        TIMESTAMPTZ '2026-10-28 12:01:00.000001+00'
+      )
+    `);
+
+    const walkedIds = [...firstPage.rows.map((notice) => notice.id)];
+    let cursor = firstPage.nextCursor;
+    while (cursor) {
+      const page = await listConfirmedFailedAccessNotifications(cursor);
+      walkedIds.push(...page.rows.map((notice) => notice.id));
+      cursor = page.nextCursor;
+    }
+
+    expect(walkedIds).toEqual(expectedOlderIds);
+    expect(new Set(walkedIds).size).toBe(expectedOlderIds.length);
+    const refreshedFirstPage = await listConfirmedFailedAccessNotifications();
+    expect(refreshedFirstPage.rows[0]?.id).toBe("newer-failure");
+  });
 });
