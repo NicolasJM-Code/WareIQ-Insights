@@ -211,17 +211,22 @@ describe("durable delivery and duplicate protection", () => {
       emailAddresses: [{ id: "primary", emailAddress: "admin@example.test", verification: { status: "verified" } }],
     });
     mocks.summaryQuery.mockResolvedValue({
-      rows: [{ queued: "2", retrying: "1", accepted: "4", failed: "3" }],
+      rows: [{
+        queued: "2", queued_over_threshold: "1", oldest_queued_age_seconds: "420",
+        retrying: "1", accepted: "4", failed: "3",
+      }],
     });
 
     const response = await request(accessApp).get("/api/access/admin");
 
     expect(response.status).toBe(200);
     expect(response.body.notificationSummary).toEqual({
-      status: "available", queued: 2, retrying: 1, accepted: 4, failed: 3,
+      status: "available", queued: 2, queuedOverThreshold: 1, oldestQueuedAgeSeconds: 420,
+      queueWarningAfterSeconds: 300, retrying: 1, accepted: 4, failed: 3,
     });
     expect(Object.keys(response.body.notificationSummary).sort()).toEqual([
-      "accepted", "failed", "queued", "retrying", "status",
+      "accepted", "failed", "oldestQueuedAgeSeconds", "queueWarningAfterSeconds", "queued",
+      "queuedOverThreshold", "retrying", "status",
     ]);
     expect(JSON.stringify(response.body.notificationSummary)).not.toMatch(
       /recipient|role.?name|notification.?id|provider|admin@example\.test/i,

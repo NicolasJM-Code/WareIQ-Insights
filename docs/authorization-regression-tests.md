@@ -416,6 +416,33 @@ ID-scoped journal. If provider deletion succeeds but journal removal fails, the
 runner explicitly reports that the account **was deleted** and tells you to
 confirm absence and remove the journal manually, not rerun recovery.
 
+If recovery reports that its lock already exists, inspect it before any
+cleanup. Use the same development-only opt-in and exact journal path:
+
+```sh
+CLERK_PROVIDER_TESTS=isolated-development-only \
+CLERK_PROVIDER_CLEANUP_MANIFEST=.cache/clerk-provider/<uuid>.json \
+CLERK_PROVIDER_RECOVERY_LOCK_ACTION=inspect \
+pnpm test:auth:provider
+```
+
+Inspection reports whether the recorded process is active, confirmed absent, or
+uncertain. Only when it explicitly reports a confirmed abandoned lock, run the
+separate explicit clear action:
+
+```sh
+CLERK_PROVIDER_TESTS=isolated-development-only \
+CLERK_PROVIDER_CLEANUP_MANIFEST=.cache/clerk-provider/<uuid>.json \
+CLERK_PROVIDER_RECOVERY_LOCK_ACTION=clear-abandoned \
+pnpm test:auth:provider
+```
+
+The clear action checks the owner again immediately before removing the lock.
+Active, malformed, unreadable, or otherwise uncertain locks are never removed;
+investigate them rather than deleting them manually. These actions do not
+contact Clerk, change the journal, or modify an account. After a confirmed
+abandoned lock is cleared, rerun the recovery command above.
+
 If creation fails before returning an ID (for example, a timed-out response),
 the account's existence is unknown. The prewritten intent journal remains
 available; explicitly run the recovery command above against the same

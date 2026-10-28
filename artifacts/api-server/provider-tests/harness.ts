@@ -31,7 +31,14 @@ type Dependencies = {
   journal?: typeof journalIO;
   journalDirectory?: string;
   info?: (message: string) => void;
+  processProbe?: (pid: number) => RecoveryProcessState;
 };
+type RecoveryProcessState = "active" | "abandoned" | "uncertain";
+type RecoveryLockStatus =
+  | { state: "absent" }
+  | { state: "active"; pid: number }
+  | { state: "abandoned"; pid: number; contents: string }
+  | { state: "uncertain"; reason: string };
 
 // Clerk's secret key does not expose its instance ID locally. This fingerprint
 // binds the exact pair an operator has verified in the Clerk dashboard.
@@ -64,6 +71,88 @@ export function preflight(env: NodeJS.ProcessEnv) {
 export async function provider<T>(label: string, action: () => Promise<T>): Promise<T> {
   try { return await action(); }
   catch { throw new Error(`Clerk development check failed during ${label}; provider details suppressed.`); }
+}
+
+function probeRecoveryProcess(pid: number): RecoveryProcessState {
+  try {
+    process.kill(pid, 0);
+    return "active";
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EPERM") return "active";
+    if (code === "ESRCH") return "abandoned";
+    return "uncertain";
+  }
+}
+
+async function recoveryLockStatus(
+  lockPath: string,
+  journal: typeof journalIO,
+  processProbe: (pid: number) => RecoveryProcessState,
+): Promise<RecoveryLockStatus> {
+  let contents: string;
+  try {
+    contents = await journal.readFile(lockPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { state: "absent" };
+    return { state: "uncertain", reason: "the lock file could not be read" };
+  }
+  let lock: unknown;
+  try { lock = JSON.parse(contents); }
+  catch { return { state: "uncertain", reason: "the lock file is malformed" }; }
+  if (!lock || typeof lock !== "object") {
+    return { state: "uncertain", reason: "the lock file is malformed" };
+  }
+  const { pid, token } = lock as { pid?: unknown; token?: unknown };
+  if (!Number.isSafeInteger(pid) || (pid as number) < 1
+    || typeof token !== "string"
+    || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(token)) {
+    return { state: "uncertain", reason: "the lock file has an invalid owner record" };
+  }
+  const processState = processProbe(pid as number);
+  if (processState === "active") return { state: "active", pid: pid as number };
+  if (processState === "abandoned") return { state: "abandoned", pid: pid as number, contents };
+  return { state: "uncertain", reason: "the recorded process state could not be confirmed" };
+}
+
+function recoveryLockMessage(status: RecoveryLockStatus, lockPath: string) {
+  switch (status.state) {
+    case "absent":
+      return `No recovery lock exists at ${lockPath}.`;
+    case "active":
+      return `Recovery lock is active: process ${status.pid} is still running. Do not clear it.`;
+    case "abandoned":
+      return `Recovery lock is confirmed abandoned: process ${status.pid} is not running. Use CLERK_PROVIDER_RECOVERY_LOCK_ACTION=clear-abandoned in a separate command to clear it.`;
+    case "uncertain":
+      return `Recovery lock status is uncertain because ${status.reason}. Do not clear it; investigate manually.`;
+  }
+}
+
+async function handleRecoveryLockAction(
+  action: "inspect" | "clear-abandoned",
+  lockPath: string,
+  journal: typeof journalIO,
+  processProbe: (pid: number) => RecoveryProcessState,
+  info: (message: string) => void,
+) {
+  const status = await recoveryLockStatus(lockPath, journal, processProbe);
+  if (action === "inspect") {
+    info(recoveryLockMessage(status, lockPath));
+    return;
+  }
+  if (status.state !== "abandoned") {
+    throw new Error(`${recoveryLockMessage(status, lockPath)} The lock was not removed.`);
+  }
+  const confirmation = await recoveryLockStatus(lockPath, journal, processProbe);
+  if (confirmation.state !== "abandoned" || confirmation.contents !== status.contents) {
+    throw new Error(`${recoveryLockMessage(confirmation, lockPath)} The lock changed during confirmation and was not removed.`);
+  }
+  try {
+    await journal.unlink(lockPath);
+  } catch {
+    throw new Error(`Confirmed abandoned lock could not be removed at ${lockPath}; no provider calls made.`);
+  }
+  info(`Confirmed abandoned recovery lock removed at ${lockPath}. No journal or provider account was changed.`);
 }
 
 function parseRecoveryRecord(text: string): RecoveryRecord {
@@ -102,6 +191,14 @@ export async function runProviderCheck(
   preflight(env);
   const { users, journal = journalIO, info = console.info } = dependencies;
   const recovery = env.CLERK_PROVIDER_CLEANUP_MANIFEST;
+  const lockAction = env.CLERK_PROVIDER_RECOVERY_LOCK_ACTION;
+  if (lockAction === "inspect" || lockAction === "clear-abandoned") {
+    if (!recovery) {
+      throw new Error("Set CLERK_PROVIDER_CLEANUP_MANIFEST to the recovery journal whose lock should be inspected.");
+    }
+  } else if (lockAction !== undefined) {
+    throw new Error("Invalid CLERK_PROVIDER_RECOVERY_LOCK_ACTION; use inspect or clear-abandoned.");
+  }
   let manifest: Manifest | undefined;
   let journalWritten = false;
   let recoveryLockPath: string | undefined;
@@ -110,6 +207,17 @@ export async function runProviderCheck(
   const path = recovery
     ? resolve(recovery)
     : resolve(dependencies.journalDirectory ?? ".cache/clerk-provider", `${runId}.json`);
+  const processProbe = dependencies.processProbe ?? probeRecoveryProcess;
+  if (lockAction === "inspect" || lockAction === "clear-abandoned") {
+    await handleRecoveryLockAction(
+      lockAction,
+      `${path}.recovery.lock`,
+      journal,
+      processProbe,
+      info,
+    );
+    return;
+  }
 
   async function cleanup() {
     if (!manifest) return;
@@ -153,7 +261,7 @@ export async function runProviderCheck(
         recoveryLockAcquired = true;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-          throw new Error(`Recovery already in progress or a prior recovery lock remains at ${recoveryLockPath}; no provider calls made and the journal at ${path} was retained. Retry only after verifying no recovery is running; do not remove the lock while one may be active.`);
+          throw new Error(`Recovery already in progress or a prior recovery lock remains at ${recoveryLockPath}; no provider calls made and the journal at ${path} was retained. Inspect it with CLERK_PROVIDER_RECOVERY_LOCK_ACTION=inspect. Only after it reports a confirmed abandoned process may you explicitly clear it with CLERK_PROVIDER_RECOVERY_LOCK_ACTION=clear-abandoned. Never clear an active or uncertain lock.`);
         }
         throw new Error(`Could not acquire the recovery lock at ${recoveryLockPath}; no provider calls made and the journal at ${path} was retained.`);
       }

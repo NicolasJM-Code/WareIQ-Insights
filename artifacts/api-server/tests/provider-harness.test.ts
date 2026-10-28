@@ -48,6 +48,11 @@ describe("offline provider harness safety", () => {
   const recoveryEnv = () => ({
     ...safeEnv, CLERK_PROVIDER_CLEANUP_MANIFEST: join(directory, "recovery.json"),
   });
+  const lockPath = (env: ReturnType<typeof recoveryEnv>) =>
+    `${env.CLERK_PROVIDER_CLEANUP_MANIFEST}.recovery.lock`;
+  const lockActionEnv = (action: string) => ({
+    ...recoveryEnv(), CLERK_PROVIDER_RECOVERY_LOCK_ACTION: action,
+  });
   async function seed(text = JSON.stringify(saved)) {
     const env = recoveryEnv();
     await writeFile(env.CLERK_PROVIDER_CLEANUP_MANIFEST, text, { mode: 0o600 });
@@ -271,6 +276,73 @@ describe("offline provider harness safety", () => {
     expect(users.createUser).not.toHaveBeenCalled();
     expect(check).not.toHaveBeenCalled();
     expect(await readdir(directory)).toEqual([]);
+  });
+
+  it("reports an active recovery and refuses to clear its lock", async () => {
+    const inspectEnv = lockActionEnv("inspect");
+    const lock = lockPath(inspectEnv);
+    await writeFile(lock, JSON.stringify({ pid: process.pid, token: saved.runId }), { mode: 0o600 });
+
+    await runProviderCheck(inspectEnv, dependencies(), check);
+    expect(info).toHaveBeenCalledExactlyOnceWith(expect.stringContaining(`active: process ${process.pid}`));
+    expect(await readFile(lock, "utf8")).toContain(`"pid":${process.pid}`);
+
+    await expect(runProviderCheck(
+      { ...inspectEnv, CLERK_PROVIDER_RECOVERY_LOCK_ACTION: "clear-abandoned" },
+      dependencies(),
+      check,
+    )).rejects.toThrow("The lock was not removed");
+    expect(await readFile(lock, "utf8")).toContain(`"pid":${process.pid}`);
+    expect(users.getUser).not.toHaveBeenCalled();
+    expect(users.deleteUser).not.toHaveBeenCalled();
+    expect(users.getUserList).not.toHaveBeenCalled();
+    expect(users.createUser).not.toHaveBeenCalled();
+    expect(check).not.toHaveBeenCalled();
+  });
+
+  it("clears a lock only after an explicit action confirms its owner is gone", async () => {
+    const inspectEnv = lockActionEnv("inspect");
+    const lock = lockPath(inspectEnv);
+    const contents = JSON.stringify({ pid: 2_147_483_647, token: saved.runId });
+    await writeFile(lock, contents, { mode: 0o600 });
+    const processProbe = vi.fn(() => "abandoned" as const);
+    const deps = { ...dependencies(), processProbe };
+
+    await runProviderCheck(inspectEnv, deps, check);
+    expect(info).toHaveBeenCalledExactlyOnceWith(expect.stringContaining("confirmed abandoned"));
+    expect(await readFile(lock, "utf8")).toBe(contents);
+
+    info.mockClear();
+    await runProviderCheck(
+      { ...inspectEnv, CLERK_PROVIDER_RECOVERY_LOCK_ACTION: "clear-abandoned" },
+      deps,
+      check,
+    );
+    expect(processProbe).toHaveBeenCalledTimes(3); // Inspection, clear check, and immediate recheck.
+    expect(info).toHaveBeenCalledExactlyOnceWith(expect.stringContaining("No journal or provider account was changed"));
+    await expect(readFile(lock, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(users.getUser).not.toHaveBeenCalled();
+    expect(users.deleteUser).not.toHaveBeenCalled();
+    expect(users.getUserList).not.toHaveBeenCalled();
+    expect(users.createUser).not.toHaveBeenCalled();
+    expect(check).not.toHaveBeenCalled();
+  });
+
+  it("retains a lock when its process state is uncertain", async () => {
+    const env = lockActionEnv("clear-abandoned");
+    const lock = lockPath(env);
+    const contents = JSON.stringify({ pid: 2_147_483_647, token: saved.runId });
+    await writeFile(lock, contents, { mode: 0o600 });
+
+    await expect(runProviderCheck(
+      env, { ...dependencies(), processProbe: () => "uncertain" }, check,
+    )).rejects.toThrow("status is uncertain");
+    expect(await readFile(lock, "utf8")).toBe(contents);
+    expect(users.getUser).not.toHaveBeenCalled();
+    expect(users.deleteUser).not.toHaveBeenCalled();
+    expect(users.getUserList).not.toHaveBeenCalled();
+    expect(users.createUser).not.toHaveBeenCalled();
+    expect(check).not.toHaveBeenCalled();
   });
 
   it("recovers an interrupted creation by exact email and marker without creating an account", async () => {
