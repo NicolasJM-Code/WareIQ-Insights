@@ -377,6 +377,9 @@ export async function runProviderCheck(
           throw new Error("Recovery refused: provider returned an invalid exact-email result. Retain the intent journal; no account was changed.");
         }
         await assertRecoveryJournalUnchanged(path, recordContents, journal);
+        if (result.totalCount !== result.data.length) {
+          throw new Error("Recovery refused: exact-email lookup count did not match its result list. Retain the intent journal; no account was changed.");
+        }
         if (result.totalCount === 0 && result.data.length === 0) {
           try { await journal.unlink(path); }
           catch {

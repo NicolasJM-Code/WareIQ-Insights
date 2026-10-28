@@ -744,6 +744,37 @@ describe("offline provider harness safety", () => {
     expect(await readdir(directory)).toEqual([]);
   });
 
+  it.each([
+    ["empty results with a positive count", { data: [], totalCount: 1 }],
+    ["non-empty results with a zero count", { data: [account(saved)], totalCount: 0 }],
+  ] satisfies Array<[string, Awaited<ReturnType<ProviderUsers["getUserList"]>>]>)(
+    "retains an intent when recovery returns %s",
+    async (_description, result) => {
+      const path = join(directory, "conflicting-intent.json");
+      const intentContents = JSON.stringify({ state: "intent", runId: saved.runId, email: saved.email });
+      await writeFile(path, intentContents, { mode: 0o600 });
+      users.getUserList.mockResolvedValueOnce(result);
+      const message = await failure(runProviderCheck(
+        { ...safeEnv, CLERK_PROVIDER_CLEANUP_MANIFEST: path },
+        dependencies(),
+        check,
+      ));
+
+      expect(message).toContain("count did not match its result list");
+      expect(message).toContain("Retain the intent journal");
+      expect(message).toContain("no account was changed");
+      expect(message).not.toContain("Recovery complete");
+      expect(users.getUserList).toHaveBeenCalledExactlyOnceWith({ emailAddress: [saved.email], limit: 2 });
+      expect(users.createUser).not.toHaveBeenCalled();
+      expect(users.deleteUser).not.toHaveBeenCalled();
+      expect(users.getUser).not.toHaveBeenCalled();
+      expect(check).not.toHaveBeenCalled();
+      expect(info).not.toHaveBeenCalled();
+      expect(await readFile(path, "utf8")).toBe(intentContents);
+      expect(await readdir(directory)).toEqual(["conflicting-intent.json"]);
+    },
+  );
+
   it("retains an absent intent and reports journal removal failure without provider details", async () => {
     const path = join(directory, "absent-intent-unlink-failure.json");
     const intent = { state: "intent", runId: saved.runId, email: saved.email };
