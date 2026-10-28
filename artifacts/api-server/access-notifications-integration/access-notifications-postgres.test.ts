@@ -87,6 +87,10 @@ async function waitForCleanupWaiters(count: number) {
   }, { timeout: 5_000, interval: 10 }).toBe(count);
 }
 
+async function waitForSendCount(count: number) {
+  await expect.poll(() => mocks.send.mock.calls.length, { timeout: 5_000, interval: 10 }).toBe(count);
+}
+
 async function queueLatestNotice() {
   return db.transaction((tx) => queueAccessNotifications(tx, [newNotice]));
 }
@@ -357,6 +361,97 @@ describe("access notification transaction ordering in private PostgreSQL", () =>
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({ id: eventId, state: "sent", platform_role: "supervisor" });
     expect(rows[1]).toMatchObject({ state: "pending", platform_role: "admin" });
+  });
+
+  it("lets concurrent workers skip a locked notice and send each eligible notice once", async () => {
+    expect(pool.options.host).toBe(socketDirectory);
+    await pool.query(
+      "UPDATE wareiq_access_notifications SET created_at = now() - interval '1 second' WHERE id = $1",
+      [oldNotice.id],
+    );
+    await pool.query(`
+      INSERT INTO wareiq_access_notifications
+        (id, recipient, role_name, kind, state, target_id, attempts, next_attempt_at)
+      VALUES ('second-notice', 'second@example.test', 'Manager', 'reporting', 'pending', 'member-2', 0, now())
+    `);
+    await pool.query(`
+      CREATE FUNCTION notification_claim_barrier() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.id = 'older-notice' AND NEW.attempts > OLD.attempts THEN
+          PERFORM pg_advisory_xact_lock(271828, 182845);
+        END IF;
+        RETURN NEW;
+      END
+      $$;
+      CREATE TRIGGER notification_claim_barrier
+      BEFORE UPDATE ON wareiq_access_notifications
+      FOR EACH ROW EXECUTE FUNCTION notification_claim_barrier()
+    `);
+
+    type ProviderResponse = { ok: true; json: () => Promise<{ id: string }> };
+    const idempotencyKeys: string[] = [];
+    const pendingResponses: Array<(response: ProviderResponse) => void> = [];
+    let autoResolveResponses = false;
+    const confirmedResponse = (): ProviderResponse => ({
+      ok: true,
+      json: async () => ({ id: "provider-id" }),
+    });
+    const releaseProviderResponses = () => {
+      autoResolveResponses = true;
+      for (const resolve of pendingResponses.splice(0)) resolve(confirmedResponse());
+    };
+    mocks.send.mockImplementation((_url: string, init: { headers: Record<string, string> }) => {
+      idempotencyKeys.push(init.headers["Idempotency-Key"]!);
+      return new Promise<ProviderResponse>((resolve) => {
+        if (autoResolveResponses) resolve(confirmedResponse());
+        else pendingResponses.push(resolve);
+      });
+    });
+
+    const blocker = await pool.connect();
+    await blocker.query("SELECT pg_advisory_lock(271828, 182845)");
+    const firstWorker = deliverAccessNotifications();
+    let secondWorker: Promise<void> | undefined;
+    try {
+      await waitForActivity((activity) =>
+        activity.wait_event_type === "Lock"
+          && activity.wait_event === "advisory"
+          && activity.query.includes("first_attempt_at = coalesce"));
+
+      secondWorker = deliverAccessNotifications();
+      await waitForSendCount(1);
+      expect(idempotencyKeys).toEqual(["wareiq-access/second-notice"]);
+
+      await blocker.query("SELECT pg_advisory_unlock(271828, 182845)");
+      await waitForSendCount(2);
+      expect(idempotencyKeys).toEqual([
+        "wareiq-access/second-notice",
+        "wareiq-access/older-notice",
+      ]);
+      releaseProviderResponses();
+      await Promise.all([firstWorker, secondWorker]);
+    } finally {
+      await blocker.query("SELECT pg_advisory_unlock(271828, 182845)").catch(() => undefined);
+      releaseProviderResponses();
+      blocker.release();
+      await Promise.all([
+        firstWorker.catch(() => undefined),
+        ...(secondWorker ? [secondWorker.catch(() => undefined)] : []),
+      ]);
+    }
+
+    const { rows } = await pool.query<{ id: string; state: string; attempts: number }>(
+      "SELECT id, state, attempts FROM wareiq_access_notifications ORDER BY id",
+    );
+    expect(rows).toEqual([
+      { id: "older-notice", state: "sent", attempts: 1 },
+      { id: "second-notice", state: "sent", attempts: 1 },
+    ]);
+    expect(mocks.send).toHaveBeenCalledTimes(2);
+    expect(idempotencyKeys).toEqual([
+      "wareiq-access/second-notice",
+      "wareiq-access/older-notice",
+    ]);
   });
 
   it("limits repeated and overlapping cleanup while preserving pending and failed notices", async () => {
