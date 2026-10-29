@@ -444,6 +444,52 @@ describe("access notification transaction ordering in private PostgreSQL", () =>
     expect(afterRestart.rows).toEqual([{ id: eventId, state: "sent" }]);
   });
 
+  it("retries a provider response loss with the same notice identity", async () => {
+    const idempotencyKeys: string[] = [];
+    mocks.send.mockImplementationOnce((_url: string, init: { headers: Record<string, string> }) => {
+      idempotencyKeys.push(init.headers["Idempotency-Key"]!);
+      // The provider may have accepted this request, but its response was lost.
+      return Promise.reject(new Error("Provider response connection lost"));
+    }).mockImplementationOnce((_url: string, init: { headers: Record<string, string> }) => {
+      idempotencyKeys.push(init.headers["Idempotency-Key"]!);
+      return Promise.resolve({ ok: true, json: async () => ({ id: "provider-id" }) });
+    });
+
+    await deliverAccessNotifications();
+
+    const afterLostResponse = await pool.query<{
+      id: string; state: string; attempts: number; first_attempt_at: Date | null;
+    }>(
+      "SELECT id, state, attempts, first_attempt_at FROM wareiq_access_notifications WHERE id = $1",
+      [oldNotice.id],
+    );
+    expect(afterLostResponse.rows).toHaveLength(1);
+    expect(afterLostResponse.rows[0]).toMatchObject({
+      id: oldNotice.id,
+      state: "pending",
+      attempts: 1,
+    });
+    expect(afterLostResponse.rows[0]?.first_attempt_at).toBeInstanceOf(Date);
+    expect(idempotencyKeys).toEqual([`wareiq-access/${oldNotice.id}`]);
+
+    // Move the durable notice into its retry window without waiting.
+    await pool.query(
+      "UPDATE wareiq_access_notifications SET next_attempt_at = now() WHERE id = $1",
+      [oldNotice.id],
+    );
+    await deliverAccessNotifications();
+
+    const afterRetry = await pool.query<{ id: string; state: string; attempts: number }>(
+      "SELECT id, state, attempts FROM wareiq_access_notifications",
+    );
+    expect(afterRetry.rows).toEqual([{ id: oldNotice.id, state: "sent", attempts: 2 }]);
+    expect(mocks.send).toHaveBeenCalledTimes(2);
+    expect(idempotencyKeys).toEqual([
+      `wareiq-access/${oldNotice.id}`,
+      `wareiq-access/${oldNotice.id}`,
+    ]);
+  });
+
   it.each([
     { mismatch: "role", currentRole: "admin", currentEventId: "interrupted-role-change" },
     { mismatch: "event ID", currentRole: "supervisor", currentEventId: "newer-platform-event" },
