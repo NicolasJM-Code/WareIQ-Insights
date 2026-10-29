@@ -16,3 +16,4 @@
 - [Warehouse VPN requirements](warehouse-vpn.md) — use the existing OpenVPN path before SQL and pause proactive suggestions until SQL connects.
 - [Download archive encoding](download-archive-encoding.md) — Vite can auto-decode gzip downloads; verify actual HTTP bytes, or use ZIP bundles.
 - [Docker fixture readiness](docker-fixture-readiness.md) — wait for the database listener in container logs; an open host port may precede readiness, and container exec may be unavailable.
+- [Forwarded-origin trust](forwarded-origin-trust.md) — forwarded host/protocol are trusted only from explicitly configured ingress peer ranges; unset configuration rejects them.

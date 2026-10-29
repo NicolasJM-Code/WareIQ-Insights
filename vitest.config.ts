@@ -15,6 +15,9 @@ export const env = {
   WMS_MYSQL_CONNECTION_PATH: "direct",
   WMS_OPENVPN_CONNECTOR_URL: "",
   WMS_OPENVPN_CONNECTOR_TOKEN: "",
+  // Supertest reaches the app over loopback, which stands in for the trusted
+  // ingress in app-level forwarded-origin tests.
+  TRUSTED_PROXY_CIDRS: "127.0.0.0/8,::1/128",
   DATABASE_URL: "",
   PGHOST: "",
   PGPORT: "",

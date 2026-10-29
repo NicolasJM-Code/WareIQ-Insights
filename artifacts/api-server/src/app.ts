@@ -6,7 +6,12 @@ import clerkEventsRouter from "./routes/clerk-events";
 import { logger } from "./lib/logger";
 import { clerkMiddleware } from "@clerk/express";
 import { publishableKeyFromHost } from "@clerk/shared/keys";
-import { CLERK_PROXY_PATH, clerkProxyMiddleware, getClerkProxyHost } from "./middlewares/clerkProxyMiddleware";
+import {
+  CLERK_PROXY_PATH,
+  clerkProxyMiddleware,
+  forwardedOriginTrustMiddleware,
+  getClerkProxyHost,
+} from "./middlewares/clerkProxyMiddleware";
 
 const app: Express = express();
 
@@ -30,6 +35,9 @@ app.use(
   }),
 );
 app.disable("x-powered-by");
+// X-Forwarded-Host/Proto are trusted only from explicitly configured ingress
+// networks; direct callers cannot supply an alternate public origin.
+app.use(forwardedOriginTrustMiddleware());
 app.use("/api", clerkEventsRouter);
 app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
 // Browser clients are same-origin. Do not allow arbitrary sites to read APIs.

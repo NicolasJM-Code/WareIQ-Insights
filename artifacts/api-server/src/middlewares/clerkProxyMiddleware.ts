@@ -22,14 +22,66 @@
 import type { IncomingHttpHeaders } from 'http';
 import type { RequestHandler } from 'express';
 import { createProxyMiddleware } from 'http-proxy-middleware';
+import ipaddr from "ipaddr.js";
 
 const CLERK_FAPI = 'https://frontend-api.clerk.dev';
 export const CLERK_PROXY_PATH = '/api/__clerk';
 
+type TrustedProxyNetwork = ReturnType<typeof ipaddr.parseCIDR>;
+
+/**
+ * Forwarded host/protocol are trusted only when supplied by a configured
+ * ingress proxy. Configure TRUSTED_PROXY_CIDRS with the network ranges used
+ * by the ingress that connects to this API. An empty value trusts no proxy.
+ */
+export function parseTrustedProxyCidrs(value = process.env.TRUSTED_PROXY_CIDRS): TrustedProxyNetwork[] {
+  if (!value?.trim()) return [];
+  return value.split(",").map((entry) => {
+    const cidr = entry.trim();
+    if (!cidr) throw new Error("TRUSTED_PROXY_CIDRS contains an empty network.");
+    try {
+      return ipaddr.parseCIDR(cidr);
+    } catch {
+      throw new Error(`TRUSTED_PROXY_CIDRS contains an invalid network: "${cidr}".`);
+    }
+  });
+}
+
+function isTrustedProxyAddress(address: string | undefined, networks: TrustedProxyNetwork[]): boolean {
+  if (!address || networks.length === 0) return false;
+  try {
+    const parsedAddress = ipaddr.process(address);
+    return networks.some(([network, prefix]) =>
+      parsedAddress.kind() === network.kind() && parsedAddress.match(network, prefix));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Reject client-provided forwarded origin headers unless the TCP peer is an
+ * explicitly configured ingress proxy. The ingress is responsible for
+ * replacing client-supplied X-Forwarded-Host and X-Forwarded-Proto values.
+ */
+export function forwardedOriginTrustMiddleware(
+  networks = parseTrustedProxyCidrs(),
+): RequestHandler {
+  return (req, res, next) => {
+    const hasForwardedOrigin = req.headers["x-forwarded-host"] !== undefined
+      || req.headers["x-forwarded-proto"] !== undefined;
+    if (!hasForwardedOrigin || isTrustedProxyAddress(req.socket.remoteAddress, networks)) {
+      next();
+      return;
+    }
+    res.status(403).json({ error: "Forwarded origin headers require a trusted proxy." });
+  };
+}
+
 /**
  * Returns the first effective public hostname for the given request,
  * preferring x-forwarded-host over the Host header so callers behind a
- * proxy see the original client-facing host.
+ * proxy see the original client-facing host. The app must mount
+ * forwardedOriginTrustMiddleware before consuming this value.
  *
  * x-forwarded-host can take three shapes:
  *   - undefined (no proxy involved)
