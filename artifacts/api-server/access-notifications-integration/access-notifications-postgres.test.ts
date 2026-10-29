@@ -130,6 +130,21 @@ async function insertPlatformNotice(id: string, role: string) {
   );
 }
 
+async function stageInterruptedPlatformNotice(role: "admin" | "supervisor" | "unassigned" = "supervisor") {
+  const id = await preparePlatformNotification({
+    recipient: "member@example.test",
+    roleName: role === "admin" ? "Administrator" : role === "supervisor" ? "Legacy Supervisor" : "No platform role",
+    kind: "platform",
+  }, "member-1", role);
+  if (!id) throw new Error("Unable to stage platform notice for integration test");
+  await pool.query(`
+    UPDATE wareiq_access_notifications
+    SET created_at = now() - interval '1 minute', next_attempt_at = now()
+    WHERE id = $1 AND state = 'confirming'
+  `, [id]);
+  return id;
+}
+
 async function waitForRoleLockWaiter() {
   await expect.poll(async () => {
     const { rows } = await pool.query<{ count: number }>(`
@@ -399,6 +414,57 @@ describe("access notification transaction ordering in private PostgreSQL", () =>
       [eventId],
     );
     expect(rows).toEqual([{ id: eventId, state: "cancelled" }]);
+  });
+
+  it("recovers and sends a confirming platform notice after a worker restart", async () => {
+    const eventId = await stageInterruptedPlatformNotice();
+    const beforeRestart = await pool.query<{ id: string; state: string }>(
+      "SELECT id, state FROM wareiq_access_notifications WHERE id = $1",
+      [eventId],
+    );
+    expect(beforeRestart.rows).toEqual([{ id: eventId, state: "confirming" }]);
+
+    vi.mocked(clerkClient.users.getUser).mockResolvedValue(
+      makeUser("member-1", "member@example.test", "supervisor", eventId),
+    );
+    mocks.send.mockResolvedValue({ ok: true, json: async () => ({ id: "provider-id" }) });
+
+    // A later worker sees the durable row left behind by the stopped worker.
+    await deliverAccessNotifications();
+
+    expect(clerkClient.users.getUser).toHaveBeenCalledWith("member-1");
+    expect(mocks.send).toHaveBeenCalledOnce();
+    expect(mocks.send.mock.calls[0]?.[1]).toMatchObject({
+      headers: { "Idempotency-Key": `wareiq-access/${eventId}` },
+    });
+    const afterRestart = await pool.query<{ id: string; state: string }>(
+      "SELECT id, state FROM wareiq_access_notifications WHERE id = $1",
+      [eventId],
+    );
+    expect(afterRestart.rows).toEqual([{ id: eventId, state: "sent" }]);
+  });
+
+  it.each([
+    { mismatch: "role", currentRole: "admin", currentEventId: "interrupted-role-change" },
+    { mismatch: "event ID", currentRole: "supervisor", currentEventId: "newer-platform-event" },
+  ] as const)("cancels a confirming notice after restart when its $mismatch is stale", async ({
+    currentRole,
+    currentEventId,
+  }) => {
+    const eventId = await stageInterruptedPlatformNotice();
+    vi.mocked(clerkClient.users.getUser).mockResolvedValue(
+      makeUser("member-1", "member@example.test", currentRole, currentEventId),
+    );
+
+    await deliverAccessNotifications();
+
+    expect(clerkClient.users.getUser).toHaveBeenCalledWith("member-1");
+    expect(mocks.send).not.toHaveBeenCalled();
+    const recovered = await pool.query<{ id: string; state: string }>(
+      "SELECT id, state FROM wareiq_access_notifications WHERE id = $1",
+      [eventId],
+    );
+    expect(recovered.rows).toEqual([{ id: eventId, state: "cancelled" }]);
   });
 
   it("sends a platform email under the role lock before a waiting role change", async () => {
