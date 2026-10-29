@@ -9,6 +9,7 @@
     "test:access-notifications:typecheck": "pnpm run typecheck:libs && pnpm --filter @workspace/api-server exec tsc -p tsconfig.access-integration.json",
     "test:reports": "vitest run --config vitest.reports.config.ts",
     "test:openvpn": "node --test connectors/openvpn/connector.test.mjs && vitest run --config vitest.config.ts artifacts/api-server/tests/wms-openvpn*.test.ts artifacts/api-server/tests/wms-mysql.test.ts artifacts/wareiq/tests/settings-mysql.test.tsx artifacts/wareiq/tests/wms-vpn-monitor.test.tsx",
+    "test:wms:mysql-tls": "pnpm --filter @workspace/api-server run test:wms:mysql-tls",
     "test:auth": "vitest run --config vitest.config.ts",
     "test:auth:provider": "vitest run --config vitest.provider.config.ts",
     "auth:provider:fingerprint": "pnpm --filter @workspace/scripts exec tsx ../artifacts/api-server/provider-tests/key-pair-fingerprint.ts",

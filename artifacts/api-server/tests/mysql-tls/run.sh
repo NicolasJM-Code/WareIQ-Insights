@@ -240,7 +240,8 @@ for image in mysql:8.0 mysql:8.4; do
     WMS_MYSQL_TLS_SECOND_FIXTURE_PORT="$second_fixture_port" \
     WMS_MYSQL_TLS_RENEWED_FIXTURE_PORT="$renewed_fixture_port" \
     WMS_MYSQL_TLS_FIXTURE_VERSION="$server_version" \
-      pnpm exec vitest run --config vitest.config.ts \
+      pnpm exec vitest run --config vitest.mysql-tls.config.ts \
+        artifacts/api-server/tests/mysql-tls/runner.test.ts \
         artifacts/api-server/tests/wms-mysql.tls.integration.test.ts \
         artifacts/api-server/tests/wms-openvpn-mysql.tls.integration.test.ts; then
     echo "MySQL ${server_version} secure-connection integration checks failed." >&2

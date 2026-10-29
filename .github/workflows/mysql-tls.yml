@@ -1,0 +1,45 @@
+name: MySQL TLS compatibility
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mysql-tls:
+    name: MySQL 8.0 and 8.4 secure-connection checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.26.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Mask disposable fixture passwords
+        run: |
+          echo "::add-mask::disposable-fixture-root-password"
+          echo "::add-mask::disposable-reader-password"
+          echo "::add-mask::disposable-writer-password"
+          echo "::add-mask::disposable-role-password"
+          echo "::add-mask::disposable-empty-password"
+          echo "::add-mask::incorrect-disposable-password"
+
+      - name: Run MySQL TLS compatibility matrix
+        run: pnpm test:wms:mysql-tls
