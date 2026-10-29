@@ -384,8 +384,11 @@ export async function deliverAccessNotifications(): Promise<void> {
         if (row.kind === "platform") {
           const user = await clerkClient.users.getUser(row.target_id!);
           assertRoleLockConnected();
+          const primaryEmail = user.emailAddresses.find((email) => email.id === user.primaryEmailAddressId);
           if (user.privateMetadata.wareiqRoleNotificationId !== row.id ||
-              user.publicMetadata.role !== row.platform_role) {
+              user.publicMetadata.role !== row.platform_role ||
+              !verifiedPrimaryEmail(user) ||
+              primaryEmail?.emailAddress !== row.recipient) {
             await connection.query("BEGIN");
             await connection.query(
               "UPDATE wareiq_access_notifications SET state = 'cancelled' WHERE id = $1 AND state = 'pending'",

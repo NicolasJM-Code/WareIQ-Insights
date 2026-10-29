@@ -99,7 +99,7 @@ async function queueLatestNotice() {
   return db.transaction((tx) => queueAccessNotifications(tx, [newNotice]));
 }
 
-function makeUser(id: string, email: string, role: string, eventId?: string) {
+function makeUser(id: string, email: string, role: string, eventId?: string, verified = true) {
   return {
     id,
     firstName: "Test",
@@ -108,7 +108,7 @@ function makeUser(id: string, email: string, role: string, eventId?: string) {
     emailAddresses: [{
       id: "primary",
       emailAddress: email,
-      verification: { status: "verified" },
+      verification: { status: verified ? "verified" : "unverified" },
     }],
     publicMetadata: { role },
     privateMetadata: eventId ? { wareiqRoleNotificationId: eventId } : {},
@@ -378,6 +378,27 @@ describe("access notification transaction ordering in private PostgreSQL", () =>
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({ id: oldEventId, state: "cancelled", platform_role: "supervisor" });
     expect(rows[1]).toMatchObject({ state: "pending", platform_role: "admin" });
+  });
+
+  it.each([
+    { change: "primary email changed", currentEmail: "new-address@example.test", verified: true },
+    { change: "primary email is no longer verified", currentEmail: "member@example.test", verified: false },
+  ])("cancels a queued platform notice when the $change", async ({ currentEmail, verified }) => {
+    const eventId = `platform-stale-email-${verified ? "changed" : "unverified"}`;
+    await insertPlatformNotice(eventId, "supervisor");
+    const currentIdentity = makeUser("member-1", currentEmail, "supervisor", eventId, verified);
+    vi.mocked(clerkClient.users.getUser).mockImplementation(async (id) =>
+      id === "member-1" ? currentIdentity : makeUser(id, "admin@example.test", "admin"),
+    );
+
+    await deliverAccessNotifications();
+
+    expect(mocks.send).not.toHaveBeenCalled();
+    const { rows } = await pool.query<{ id: string; state: string }>(
+      "SELECT id, state FROM wareiq_access_notifications WHERE id = $1",
+      [eventId],
+    );
+    expect(rows).toEqual([{ id: eventId, state: "cancelled" }]);
   });
 
   it("sends a platform email under the role lock before a waiting role change", async () => {

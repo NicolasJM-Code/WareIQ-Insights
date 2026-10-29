@@ -573,6 +573,12 @@ describe("durable delivery and duplicate protection", () => {
         : [],
     }));
     mocks.getUser.mockResolvedValue({
+      primaryEmailAddressId: "primary",
+      emailAddresses: [{
+        id: "primary",
+        emailAddress: member.email,
+        verification: { status: "verified" },
+      }],
       privateMetadata: { wareiqRoleNotificationId: "newer-event" },
       publicMetadata: { role: "admin" },
     });
