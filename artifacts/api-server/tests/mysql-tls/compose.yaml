@@ -19,6 +19,7 @@ services:
         published: "0"
         protocol: tcp
     volumes:
+      - mysql-data:/var/lib/mysql
       - type: bind
         source: ${WMS_MYSQL_TLS_FIXTURE_DIR:?fixture directory is required}/certs
         target: /etc/mysql/certs
@@ -30,6 +31,7 @@ services:
   mysql-second:
     <<: *mysql
     volumes:
+      - mysql-second-data:/var/lib/mysql
       - type: bind
         source: ${WMS_MYSQL_TLS_FIXTURE_DIR:?fixture directory is required}/certs-second
         target: /etc/mysql/certs
@@ -41,6 +43,7 @@ services:
   mysql-renewed:
     <<: *mysql
     volumes:
+      - mysql-renewed-data:/var/lib/mysql
       - type: bind
         source: ${WMS_MYSQL_TLS_FIXTURE_DIR:?fixture directory is required}/certs-renewed
         target: /etc/mysql/certs
@@ -49,3 +52,23 @@ services:
         source: ./init.sql
         target: /docker-entrypoint-initdb.d/001-fixture.sql
         read_only: true
+
+volumes:
+  mysql-data:
+    labels:
+      com.wareiq.mysql-tls.fixture: "true"
+      com.wareiq.mysql-tls.owner-pid: "${WMS_MYSQL_TLS_FIXTURE_PID:?fixture pid is required}"
+      com.wareiq.mysql-tls.fixture-dir: "${WMS_MYSQL_TLS_FIXTURE_DIR:?fixture directory is required}"
+      com.wareiq.mysql-tls.service: "mysql"
+  mysql-second-data:
+    labels:
+      com.wareiq.mysql-tls.fixture: "true"
+      com.wareiq.mysql-tls.owner-pid: "${WMS_MYSQL_TLS_FIXTURE_PID:?fixture pid is required}"
+      com.wareiq.mysql-tls.fixture-dir: "${WMS_MYSQL_TLS_FIXTURE_DIR:?fixture directory is required}"
+      com.wareiq.mysql-tls.service: "mysql-second"
+  mysql-renewed-data:
+    labels:
+      com.wareiq.mysql-tls.fixture: "true"
+      com.wareiq.mysql-tls.owner-pid: "${WMS_MYSQL_TLS_FIXTURE_PID:?fixture pid is required}"
+      com.wareiq.mysql-tls.fixture-dir: "${WMS_MYSQL_TLS_FIXTURE_DIR:?fixture directory is required}"
+      com.wareiq.mysql-tls.service: "mysql-renewed"
