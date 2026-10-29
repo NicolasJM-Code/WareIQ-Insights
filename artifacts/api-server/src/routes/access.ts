@@ -495,10 +495,48 @@ router.post("/access/reports/:id/run", handler(async (req, res) => {
     }));
     return;
   }
-  const result = await executeApprovedMysqlReport(mapping, {
-    clientKey: access.client.companyNumber,
-    siteKey: site.sourceId,
-  }, fields, { siteScope: { siteId: site.id, clientId: access.client.id } });
+  // Recheck at the warehouse execution boundary. Do not hold authorization-row
+  // locks while waiting on external network/SQL work; revocations after this
+  // boundary apply to later report runs, while this run may finish.
+  const executionAccess = await accessFor(req);
+  requireMemberAccess(executionAccess);
+  if (executionAccess.actor.userId !== access.actor.userId ||
+      executionAccess.member?.id !== access.member?.id ||
+      executionAccess.client?.id !== access.client.id)
+    throw new AccessError(403, "Your administrator must approve an active client and role before you can use reports.");
+  const executionSite = executionAccess.session.sites.find((candidate) => candidate.id === siteId);
+  if (!executionSite)
+    throw new AccessError(403, "This site is not assigned to you.");
+  if (!executionAccess.session.reportIds.includes(id)) {
+    const [own] = await db.select().from(ownReportsTable).where(and(
+      eq(ownReportsTable.id, id), eq(ownReportsTable.ownerId, executionAccess.actor.userId),
+      eq(ownReportsTable.clientId, executionAccess.member!.clientId)));
+    if (!own || !executionAccess.session.ownReportSections.includes(own.definition.section))
+      throw new AccessError(403, "Your role does not grant access to this report.");
+    mappingKey = `own:${own.definition.section}:${own.definition.dataset}`;
+    fields = own.definition.fields;
+  }
+  const executionMapping = getMysqlReportMapping(mappingKey);
+  if (!executionMapping) {
+    res.json(RunAccessReportResponse.parse({
+      status: "not_connected",
+      message: "Access is authorised, but this report has no server-approved MySQL reporting-view mapping.",
+      columns: [], rows: [], truncated: false,
+    }));
+    return;
+  }
+  if (!executionAccess.client?.companyNumber || !executionSite.sourceId) {
+    res.json(RunAccessReportResponse.parse({
+      status: "not_connected",
+      message: "A client reporting key and WMS site mapping are required before this report can run safely.",
+      columns: [], rows: [], truncated: false,
+    }));
+    return;
+  }
+  const result = await executeApprovedMysqlReport(executionMapping, {
+    clientKey: executionAccess.client.companyNumber,
+    siteKey: executionSite.sourceId,
+  }, fields, { siteScope: { siteId: executionSite.id, clientId: executionAccess.client.id } });
   if (!result) {
     res.json(RunAccessReportResponse.parse({
       status: "not_connected",

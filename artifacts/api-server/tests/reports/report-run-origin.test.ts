@@ -123,6 +123,8 @@ let memberFixture = member;
 let clientFixture: Omit<typeof client, keyof typeof clientBrandings[number]["fields"]>
   & Record<keyof typeof clientBrandings[number]["fields"], string | null> = client;
 let roleFixture = role;
+let identityReadCount = 0;
+let deactivateMemberOnRevalidation = false;
 const privateReports = [
   {
     id: "another-owner-report",
@@ -167,23 +169,30 @@ function runRequest(options: {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("WMS_MYSQL_REPORT_MAPPINGS", undefined);
+  identityReadCount = 0;
+  deactivateMemberOnRevalidation = false;
   provider.userId = "reporter-a";
   provider.sessionId = "session-a";
   memberFixture = member;
   clientFixture = client;
   roleFixture = role;
   siteFixtures = [site];
-  provider.getUser.mockImplementation(async () => ({
-    banned: false,
-    locked: false,
-    publicMetadata: {},
-    primaryEmailAddressId: "verified",
-    emailAddresses: [{
-      id: "verified",
-      emailAddress: emailByUserId[provider.userId] ?? member.email,
-      verification: { status: "verified" },
-    }],
-  }));
+  provider.getUser.mockImplementation(async () => {
+    identityReadCount++;
+    if (deactivateMemberOnRevalidation && identityReadCount === 2)
+      memberFixture = { ...member, active: false };
+    return {
+      banned: false,
+      locked: false,
+      publicMetadata: {},
+      primaryEmailAddressId: "verified",
+      emailAddresses: [{
+        id: "verified",
+        emailAddress: emailByUserId[provider.userId] ?? member.email,
+        verification: { status: "verified" },
+      }],
+    };
+  });
   provider.getSession.mockImplementation(async () => ({ status: "active", userId: provider.userId }));
   database.select.mockImplementation(() => ({
     from: (table: unknown) => ({
@@ -403,6 +412,8 @@ describe("full-app authorization for report runs", () => {
 
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({ status: "completed", columns: ["id"], rows: [{ id: "GRN-1" }] });
+    expect(provider.getUser).toHaveBeenCalledTimes(2);
+    expect(database.select).toHaveBeenCalledTimes(8);
     expect(executeMysqlReport).toHaveBeenCalledOnce();
     expect(executeMysqlReport).toHaveBeenCalledWith(
       expect.objectContaining({ view: "v_receipts" }),
@@ -410,6 +421,26 @@ describe("full-app authorization for report runs", () => {
       undefined,
       { siteScope: { siteId: "site-a", clientId: "client-a" } },
     );
+    expect(poolConstructor).not.toHaveBeenCalled();
+  });
+
+  it("does not start a report query when the member is deactivated before warehouse execution", async () => {
+    deactivateMemberOnRevalidation = true;
+    vi.stubEnv("WMS_MYSQL_REPORT_MAPPINGS", JSON.stringify({
+      "inbound-1": {
+        view: "v_receipts", clientColumn: "client_code", siteColumn: "warehouse_code",
+        columns: { id: "receipt_id" },
+      },
+    }));
+
+    const response = await runRequest({ origin: "https://wareiq.test", fetchSite: "same-origin" });
+
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({
+      error: "Your administrator must approve an active client and role before you can use reports.",
+    });
+    expect(provider.getUser).toHaveBeenCalledTimes(2);
+    expect(executeMysqlReport).not.toHaveBeenCalled();
     expect(poolConstructor).not.toHaveBeenCalled();
   });
 
