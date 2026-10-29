@@ -36,6 +36,7 @@ import {
   listUncertainAccessNotifications,
   preparePlatformNotification,
   queueAccessNotifications,
+  retryConfirmedFailedAccessNotification,
   startAccessNotifications,
 } from "../src/lib/access-notifications";
 import { withRoleLock } from "../src/lib/role-lock";
@@ -488,6 +489,44 @@ describe("access notification transaction ordering in private PostgreSQL", () =>
       `wareiq-access/${oldNotice.id}`,
       `wareiq-access/${oldNotice.id}`,
     ]);
+  });
+
+  it("does not retry a definitively rejected notice until explicitly requested", async () => {
+    mocks.send
+      .mockResolvedValueOnce({ ok: false, status: 422 })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: "provider-id" }) });
+
+    await deliverAccessNotifications();
+
+    const afterRejection = await pool.query<{
+      id: string; state: string; attempts: number; first_attempt_at: Date | null;
+    }>(
+      "SELECT id, state, attempts, first_attempt_at FROM wareiq_access_notifications WHERE id = $1",
+      [oldNotice.id],
+    );
+    expect(afterRejection.rows).toHaveLength(1);
+    expect(afterRejection.rows[0]).toMatchObject({
+      id: oldNotice.id,
+      state: "confirmed_failed",
+      attempts: 1,
+    });
+    expect(afterRejection.rows[0]?.first_attempt_at).toBeInstanceOf(Date);
+    expect(mocks.send).toHaveBeenCalledOnce();
+
+    await deliverAccessNotifications();
+
+    expect(mocks.send).toHaveBeenCalledOnce();
+    await expect(retryConfirmedFailedAccessNotification(oldNotice.id)).resolves.toBe(true);
+    await deliverAccessNotifications();
+
+    const afterExplicitRetry = await pool.query<{ id: string; state: string; attempts: number }>(
+      "SELECT id, state, attempts FROM wareiq_access_notifications WHERE id = $1",
+      [oldNotice.id],
+    );
+    expect(afterExplicitRetry.rows).toEqual([
+      { id: oldNotice.id, state: "sent", attempts: 2 },
+    ]);
+    expect(mocks.send).toHaveBeenCalledTimes(2);
   });
 
   it.each([
