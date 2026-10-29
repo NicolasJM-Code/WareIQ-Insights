@@ -194,7 +194,8 @@ beforeEach(() => {
         }
         if (table === clientsTable) return [clientFixture];
         if (table === rolesTable) return [roleFixture];
-        if (table === sitesTable) return siteFixtures.filter((site) => site.active);
+        if (table === sitesTable)
+          return siteFixtures.filter((site) => site.clientId === clientFixture.id && site.active);
         if (table === ownReportsTable) {
           const query = new PgDialect().sqlToQuery(condition);
           const constraints = new Map<string, unknown>();
@@ -570,6 +571,36 @@ describe("full-app authorization for report runs", () => {
     expect(response.body).toEqual({ error: "This site is not assigned to you." });
     expect(provider.getSession).toHaveBeenCalledOnce();
     expect(provider.getUser).toHaveBeenCalledOnce();
+    expect(executeMysqlReport).not.toHaveBeenCalled();
+    expect(poolConstructor).not.toHaveBeenCalled();
+  });
+
+  it("denies an assigned warehouse from another client before opening reporting connections", async () => {
+    const foreignClientSite = {
+      ...site,
+      id: "site-client-b",
+      clientId: "client-b",
+      sourceId: "WAREHOUSE-CLIENT-B",
+      name: "Other client's active warehouse",
+    };
+    memberFixture = { ...member, siteIds: [site.id, foreignClientSite.id] };
+    siteFixtures = [site, foreignClientSite];
+    vi.stubEnv("WMS_MYSQL_REPORT_MAPPINGS", JSON.stringify({
+      "inbound-1": {
+        view: "v_receipts", clientColumn: "client_code", siteColumn: "warehouse_code",
+        columns: { id: "receipt_id" },
+      },
+    }));
+
+    const response = await runRequest({
+      origin: "https://wareiq.test",
+      fetchSite: "same-origin",
+      siteId: foreignClientSite.id,
+    });
+
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({ error: "This site is not assigned to you." });
+    expect(database.select).toHaveBeenCalledTimes(4);
     expect(executeMysqlReport).not.toHaveBeenCalled();
     expect(poolConstructor).not.toHaveBeenCalled();
   });
