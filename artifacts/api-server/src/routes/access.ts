@@ -461,10 +461,10 @@ router.delete("/access/own-reports/:id", handler(async (req, res) => {
   res.sendStatus(204);
 }));
 router.post("/access/reports/:id/run", handler(async (req, res) => {
+  const { siteId } = parsed(RunAccessReportBody.strict(), req.body);
   const access = await accessFor(req);
   requireMemberAccess(access);
   const { id } = parsed(RunAccessReportParams, req.params);
-  const { siteId } = parsed(RunAccessReportBody.strict(), req.body);
   const site = access.session.sites.find((candidate) => candidate.id === siteId);
   if (!site)
     throw new AccessError(403, "This site is not assigned to you.");

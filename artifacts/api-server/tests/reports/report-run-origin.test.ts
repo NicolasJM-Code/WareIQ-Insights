@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import { PgDialect } from "drizzle-orm/pg-core";
+import { RunAccessReportBody } from "@workspace/api-zod";
 
 const provider = vi.hoisted(() => ({
   userId: "reporter-a",
@@ -378,6 +379,7 @@ describe("full-app authorization for report runs", () => {
 
   it.each([
     ["an empty string", { siteId: "" }],
+    ["a whitespace-only string", { siteId: "   " }],
     ["a number", { siteId: 42 }],
     ["null", { siteId: null }],
     ["an object", { siteId: { id: "site-a" } }],
@@ -397,6 +399,8 @@ describe("full-app authorization for report runs", () => {
 
     expect(response.status).toBe(400);
     expect(response.body).toEqual({ error: "Check all required fields and selections." });
+    expect(RunAccessReportBody.safeParse(body).success).toBe(false);
+    expect(database.select).not.toHaveBeenCalled();
     expect(executeMysqlReport).not.toHaveBeenCalled();
     expect(poolConstructor).not.toHaveBeenCalled();
   });

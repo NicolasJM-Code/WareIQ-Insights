@@ -647,7 +647,7 @@ export const RunAccessReportParams = zod.object({
 
 
 export const RunAccessReportBody = zod.object({
-  "siteId": zod.string().min(1)
+  "siteId": zod.string().min(1).refine((siteId) => siteId.trim().length > 0)
 })
 
 export const RunAccessReportResponse = zod.object({
