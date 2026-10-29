@@ -191,7 +191,7 @@ must each have the intended settings. Existing direct-route
 
 ## 4. Test in WareIQ Settings
 
-1. Select your assigned warehouse in the site selector, then **MySQL 8+**, and enter the approved DNS hostname, port, database and
+1. Select your assigned warehouse in the site selector, then **MySQL 8.4 LTS**, and enter the approved DNS hostname, port, database and
    reporting username.
 2. Click **Check VPN connection**. The authenticated connector must confirm its
    VPN interface, actual kernel route and TCP reachability of the pinned database

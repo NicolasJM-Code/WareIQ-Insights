@@ -114,7 +114,7 @@ mappings, schedules, alerts and durable audit history are not implemented.
 
 ## WMS credential destination approval
 
-For MySQL 8+ metadata-only connection testing and its separate credentials, see
+For MySQL 8.4 LTS metadata-only connection testing and its separate credentials, see
 [MySQL connection setup](wms-mysql.md). PostgreSQL remains the default.
 
 Connection tests never send credentials to an arbitrary administrator-entered host.

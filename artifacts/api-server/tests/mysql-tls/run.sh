@@ -9,6 +9,12 @@ fixture_dir=""
 fixture_lock_fd=""
 project_name="wareiq-mysql-tls-$$"
 compose=(docker compose --project-name "$project_name" -f "$compose_file")
+# Reviewed 2026-10-29: test vendor-maintained MySQL 8 release lines only.
+# MySQL 8.0 reached EOL with 8.0.46 in April 2026; 8.4 is the supported 8.x LTS.
+# Recheck these sources when the vendor support policy changes:
+# https://dev.mysql.com/doc/relnotes/mysql/8.0/en/
+# https://dev.mysql.com/doc/refman/8.4/en/mysql-releases.html
+mysql_release_lines=(8.4)
 
 cleanup() {
   if [[ -n "$fixture_dir" ]]; then
@@ -139,7 +145,7 @@ openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 2 \
   -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null
 docker run --rm --user 999:999 --group-add "$fixture_gid" \
   --volume "$certs:/certs" \
-  --entrypoint openssl mysql:8.0 req -newkey rsa:2048 -sha256 -nodes \
+  --entrypoint openssl "mysql:${mysql_release_lines[0]}" req -newkey rsa:2048 -sha256 -nodes \
   -keyout /certs/server-key.pem -out /certs/server.csr \
   -subj "/CN=mysql.fixture.test" 2>/dev/null
 chmod 755 "$certs"
@@ -185,7 +191,8 @@ openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 2 \
 chmod 644 "$fixture_dir/certs/server-cert.pem" "$fixture_dir/certs/ca.pem" \
   "$fixture_dir/certs/untrusted-ca.pem"
 
-for image in mysql:8.0 mysql:8.4; do
+for release_line in "${mysql_release_lines[@]}"; do
+  image="mysql:$release_line"
   export WMS_MYSQL_TLS_IMAGE="$image"
   echo "Starting secure-connection integration checks on ${image}."
   if ! "${compose[@]}" up --detach; then
@@ -226,8 +233,9 @@ for image in mysql:8.0 mysql:8.4; do
   container_id="$("${compose[@]}" ps -q mysql)"
   server_version="$(docker logs "$container_id" 2>&1 |
     sed -n "s/.*Version: '\\([0-9][0-9.]*\\)'.*/\\1/p" | head -n 1)"
-  if [[ ! "$server_version" =~ ^8\.(0|4)\.[0-9]+ ]]; then
-    echo "Expected MySQL 8.0 or 8.4 but could not identify the server version for ${image}." >&2
+  if [[ ! "$server_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ||
+        "${server_version%.*}" != "$release_line" ]]; then
+    echo "Expected MySQL ${release_line}.x but could not identify the server version for ${image}." >&2
     exit 1
   fi
 

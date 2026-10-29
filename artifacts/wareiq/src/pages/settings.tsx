@@ -249,7 +249,7 @@ export default function Settings() {
                         <FormControl><SelectTrigger data-testid="select-database-engine"><SelectValue /></SelectTrigger></FormControl>
                         <SelectContent>
                           <SelectItem value="postgresql">PostgreSQL</SelectItem>
-                          <SelectItem value="mysql">MySQL 8+</SelectItem>
+                          <SelectItem value="mysql">MySQL 8.4 LTS</SelectItem>
                         </SelectContent>
                       </Select>
           <FormDescription>Changing engines never migrates data. MySQL reports run only when server-approved credentials and view mappings are configured.</FormDescription>

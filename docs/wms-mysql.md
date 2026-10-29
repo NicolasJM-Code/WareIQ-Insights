@@ -5,9 +5,16 @@ That path uses your existing Linux VPN-connected server; it does not start a
 VPN inside Replit.
 
 Settings → Database connection now offers PostgreSQL (the unchanged default)
-and MySQL 8+. MySQL can execute approved report mappings against server-approved
-views. Connection testing remains metadata-only. The application's own
+and MySQL 8.4 LTS. MySQL can execute approved report mappings against
+server-approved views. Connection testing remains metadata-only. The application's own
 PostgreSQL database is unchanged and is not used for warehouse report data.
+
+WareIQ supports actively maintained MySQL 8 release lines. As of October 29,
+2026, MySQL 8.4 LTS is the supported MySQL 8 line; MySQL 8.0 reached end of
+life with 8.0.46 in April 2026. Review this policy and the TLS integration
+matrix at least quarterly and whenever Oracle updates its release lifecycle:
+[MySQL 8.0 release notes](https://dev.mysql.com/doc/relnotes/mysql/8.0/en/)
+and [MySQL release model](https://dev.mysql.com/doc/refman/8.4/en/mysql-releases.html).
 
 ## Configure a MySQL destination
 
@@ -28,7 +35,7 @@ a URL is available. All form fields must match that approval. A URL used as the
 password source must also match the form fields. Partial or mismatched settings
 fail before DNS lookup or connection creation.
 
-Select **MySQL 8+** in Settings, enter the approved hostname, port (normally
+Select **MySQL 8.4 LTS** in Settings, enter the approved hostname, port (normally
 3306), database and reporting username, then select **Test connection**. The
 schema follows the database name automatically. Connection values are not saved
 in the browser; only existing report preferences are saved by Save preferences.
@@ -128,8 +135,9 @@ pnpm --filter @workspace/scripts exec tsx --test ../artifacts/api-server/src/lib
 A live MySQL report run has not been verified. It requires an approved
 reachable server, views containing the approved client/site keys, a read-only
 account, secure credentials, and mappings tested against the real view schema.
-An opt-in isolated integration harness provisions two disposable MySQL 8.4
-servers, creates temporary CA/server certificates and synthetic users/views,
+An opt-in isolated integration harness provisions three disposable MySQL 8.4
+servers for each supported release line, creates temporary CA/server
+certificates and synthetic users/views,
 then removes the containers and certificates when the run ends. It binds the
 fixture databases only to `127.0.0.1`; it does not read or use configured WMS
 credentials or connect to a configured destination. Docker with Compose and
